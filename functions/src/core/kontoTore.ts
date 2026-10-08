@@ -70,10 +70,12 @@ export function abgleichSperreAusVermerk(vermerk: unknown, jetzt: Date): boolean
  */
 export function symbolSperreAusVermerk(vermerk: unknown, symbol: string, jetzt: Date): boolean {
   if (typeof vermerk !== 'object' || vermerk === null) return false;
-  const v = vermerk as { at?: unknown; abweichungen?: unknown };
+  const v = vermerk as { at?: unknown; abweichungen?: unknown; abweichungSymbole?: unknown };
   if (typeof v.at !== 'string') return false;
   const alter = jetzt.getTime() - Date.parse(v.at);
   if (!Number.isFinite(alter) || alter > KAPITAL_DECKEL_STD * 3_600_000) return false;
+  // Vollständige Liste (seit 08.10.) zuerst; Altbestand hat nur die ersten 10.
+  if (Array.isArray(v.abweichungSymbole) && v.abweichungSymbole.includes(symbol)) return true;
   if (!Array.isArray(v.abweichungen)) return false;
   return v.abweichungen.some((a) => typeof a === 'object' && a !== null && (a as { symbol?: unknown }).symbol === symbol);
 }

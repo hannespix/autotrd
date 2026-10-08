@@ -953,17 +953,18 @@ export async function executeTrade(
       },
     );
     /* Ist der Rest der Stop-Order tot, ist die Order VERBRAUCHT — die
-     * Verknüpfung an der Position muss weg, BEVOR gebucht wird (Red-Team
-     * 08.10., H1): Sonst sammelte der nächste Puls dieselbe gefüllte Order
-     * wieder ein, fand ihren Fill schon gebucht — und kam nie bis zum
-     * Routing des Rests. Der Rest wäre dauerhaft unverkäuflich gewesen. */
-    if (aufhebung.stand === 'gefuellt' && aufhebung.restStorniert === true) {
-      await schutzVerknuepfungLoesen(req.uid, req.symbol);
-    }
+     * Verknüpfung an der Position muss weg (Red-Team 08.10., H1): Sonst
+     * sammelte der nächste Puls dieselbe gefüllte Order wieder ein, fand
+     * ihren Fill schon gebucht — und kam nie bis zum Routing des Rests. Der
+     * Rest wäre dauerhaft unverkäuflich gewesen. Gelöst wird NACH der
+     * gelungenen Buchung (Nachprüfung M-B): Scheitert sie, soll der nächste
+     * Lauf den Fill über den Link erneut finden und die Buchung wiederholen
+     * — nicht den Rest mit der ungebuchten Menge verkaufen. */
     if (aufhebung.stand === 'gefuellt' && await fillSchonGebucht(req.uid, aufhebung.orderId)) {
       // Schon gebucht (vom Scan oder einem früheren Puls): nichts doppelt
       // buchen — aber NICHT aufhören. Der Rest der Position geht jetzt
       // regulär ins Routing, wie jeder andere Exit.
+      if (aufhebung.restStorniert === true) await schutzVerknuepfungLoesen(req.uid, req.symbol);
       logger.info(`executeTrade ${req.uid} ${req.symbol}: Stop-Fill ${aufhebung.orderId} war schon gebucht — Rest wird regulär geschlossen`);
     } else if (aufhebung.stand === 'gefuellt') {
       const aufhebungsBuchung = await executePaperTrade(
@@ -1008,6 +1009,11 @@ export async function executeTrade(
           aufhebungsBuchung.reason ?? 'unbekannt',
           aufhebung.restStorniert === true,
         );
+      } else if (aufhebung.restStorniert === true && aufhebungsBuchung.trade?.teilSchluss === true) {
+        // Teilschluss gebucht: Die Stop-Order ist verbraucht, der Rest lebt
+        // im Buch weiter — ohne Link, damit der nächste Lauf ihn regulär
+        // schließt statt die alte Order wieder einzusammeln.
+        await schutzVerknuepfungLoesen(req.uid, req.symbol);
       }
       return aufhebungsBuchung;
     }
@@ -1259,8 +1265,10 @@ export async function merkeOffeneOrder(
       versuche: 0,
     });
   } catch {
+    // Nur die Broker-Kennung nachtragen — der Zähler des Nachlaufs darf von
+    // einem späteren Lauf mit 0 nicht gesenkt werden (Nachprüfung 08.10.).
     await ref
-      .set({ ...(offen.orderId ? { orderId: offen.orderId } : {}), gebuchteMenge: mengen.gebucht }, { merge: true })
+      .set({ ...(offen.orderId ? { orderId: offen.orderId } : {}) }, { merge: true })
       .catch((err: unknown) => logger.warn(`offeneOrders ${uid} ${symbol}: Vermerk nicht geschrieben`, err));
   }
   logger.warn(`OFFENE ORDER ${uid} ${symbol} ${side} (${offen.art}) — wird im nächsten Scan nachgefragt`);
@@ -1361,6 +1369,11 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
            * den ersten Teilfill derselben Order und löschte den Eintrag ohne
            * Buchung — die Differenz wäre still verschwunden. Nach
            * NACHLAUF_MAX_TAGE wird laut aufgegeben (unten). */
+          if (alter > NACHLAUF_MAX_TAGE * 86_400_000) {
+            logger.error(`offeneOrders ${uid} ${d.symbol}: ${neu} Stück seit ${NACHLAUF_MAX_TAGE} Tagen nicht buchbar (${r.reason ?? 'unbekannt'}) — aufgegeben, Fall für die Übernahme`);
+            await doc.ref.delete().catch(() => undefined);
+            continue;
+          }
           logger.error(`NACHLAUF ${uid} ${d.symbol}: ${neu} Stück NICHT gebucht — ${r.reason ?? 'unbekannt'} (Vermerk bleibt)`);
           offen += 1;
           await doc.ref.set({ versuche: zahl(d.versuche) + 1, letzterVersuch: new Date().toISOString(), letzterGrund: (r.reason ?? 'unbekannt').slice(0, 200), orderId: stand.id }, { merge: true })
@@ -1606,6 +1619,18 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
   return db.runTransaction(async (tx) => {
     const [userSnap, posSnap] = await Promise.all([tx.get(userRef), tx.get(posRef)]);
     if (!userSnap.exists) return { executed: false, reason: 'kein_profil' };
+    /* Doppelbuchungs-Sperre INNERHALB der Transaktion (Red-Team 08.10., N1):
+     * Puls und Scan können dieselbe gefüllte Stop-Order gleichzeitig
+     * entdecken; ihre Prüfungen davor sind zwei getrennte Schritte. Hier
+     * sieht die zweite Transaktion die erste. Eine Order wird genau einmal
+     * gebucht — außer der Aufrufer bucht ausdrücklich eine DIFFERENZ
+     * (`aufstockung`, Nachlauf teilgefüllter Einstiege). */
+    if (req.brokerOrderId && req.aufstockung !== true) {
+      const schon = await tx.get(
+        userRef.collection('trades').where('brokerOrderId', '==', req.brokerOrderId).limit(1),
+      );
+      if (!schon.empty) return { executed: false, reason: 'fill_schon_gebucht' };
+    }
     const balance = (userSnap.get('wallet.paperBalance') as number | undefined) ?? 0;
     const now = new Date().toISOString();
     /* Einstiege rechnen mit dem GEDECKELTEN Kapital (siehe kapitalDeckel):

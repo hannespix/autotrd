@@ -101,6 +101,11 @@ describe('symbolSperreAusVermerk — die Symbol-Sperre aus dem Vermerk (Drift-Pa
     expect(symbolSperreAusVermerk(vermerk, 'CCG', jetzt)).toBe(true);
     expect(symbolSperreAusVermerk(vermerk, 'AAPL', jetzt)).toBe(false);
   });
+  it('liest die vollständige Symbolliste (N2) — auch ein 11. Symbol sperrt', () => {
+    const voll = { at: vermerk.at, abweichungen: [], abweichungSymbole: ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'A10', 'ELF'] };
+    expect(symbolSperreAusVermerk(voll, 'ELF', jetzt)).toBe(true);
+    expect(symbolSperreAusVermerk(voll, 'ZWOELF', jetzt)).toBe(false);
+  });
   it('ein alter Vermerk sperrt nicht; Unlesbares sperrt nicht', () => {
     expect(symbolSperreAusVermerk({ ...vermerk, at: '2026-10-06T09:55:00Z' }, 'CCG', jetzt)).toBe(false);
     expect(symbolSperreAusVermerk(undefined, 'CCG', jetzt)).toBe(false);

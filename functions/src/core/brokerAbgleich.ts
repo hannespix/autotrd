@@ -368,6 +368,10 @@ export async function abgleichFuerKonto(
     // Bewusst gedeckelt: Der Vermerk ist eine Meldung, kein zweites Depot.
     // Bei 50 Abweichungen sagt die Zahl alles, was zählt.
     abweichungen: abweichungen.slice(0, 10),
+    // Die SYMBOLE vollständig (Nachprüfung 08.10., N2): Die Symbol-Sperre
+    // für Momentum, Sockel und Handeingabe liest sie — ein 11. Symbol darf
+    // nicht durchrutschen, nur weil die Anzeige bei 10 Zeilen aufhört.
+    abweichungSymbole: abweichungen.map((a) => a.symbol).slice(0, 200),
     verglichen: relevante.length,
     brokerPositionen: brokerPositionen.length,
     // Kontostand mit in den Vermerk: Die Broker-Karte und der Heartbeat

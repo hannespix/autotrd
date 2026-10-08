@@ -274,14 +274,15 @@ describe('Quelltext-Wächter: die Verdrahtung', () => {
 
   it('H1: Die verbrauchte Stop-Order wird VOR der Buchung von der Position gelöst — und ein schon gebuchter Fill beendet den Exit nicht', () => {
     const et = broker.slice(broker.indexOf('export async function executeTrade'), broker.indexOf('export async function merkeOffeneOrder'));
-    const loesen = et.indexOf("if (aufhebung.stand === 'gefuellt' && aufhebung.restStorniert === true) {\n      await schutzVerknuepfungLoesen(req.uid, req.symbol);");
     const schon = et.indexOf("if (aufhebung.stand === 'gefuellt' && await fillSchonGebucht(req.uid, aufhebung.orderId)) {");
     const buchung = et.indexOf("} else if (aufhebung.stand === 'gefuellt') {");
     const routing = et.indexOf('const routing = await routeOrder(');
-    expect(loesen).toBeGreaterThan(0);
-    expect(loesen).toBeLessThan(schon);
+    expect(schon).toBeGreaterThan(0);
     expect(schon).toBeLessThan(buchung);
     expect(buchung).toBeLessThan(routing);
+    // Gelöst wird NACH gelungener Teilschluss-Buchung (M-B) — und im „schon gebucht"-Zweig
+    expect(anzahl(et, 'await schutzVerknuepfungLoesen(req.uid, req.symbol);')).toBe(2);
+    expect(et).toContain("} else if (aufhebung.restStorniert === true && aufhebungsBuchung.trade?.teilSchluss === true) {");
     // im „schon gebucht"-Zweig gibt es KEIN return — der Rest geht ins Routing
     const zweig = et.slice(schon, buchung);
     expect(zweig).not.toContain('return ');
@@ -301,6 +302,25 @@ describe('Quelltext-Wächter: die Verdrahtung', () => {
     const m = broker.slice(broker.indexOf('export async function merkeOffeneOrder'), broker.indexOf('export async function bucheOffeneOrders'));
     expect(m).toContain('await ref.create({');
     expect(m).not.toContain('versuche: 0,\n      },\n      { merge: true }');
+  });
+
+  it('N1: die Doppelbuchungs-Sperre sitzt INNERHALB der Transaktion — nur Differenzen (aufstockung) dürfen dieselbe Order erneut buchen', () => {
+    const b = broker.slice(broker.indexOf('export async function executePaperTrade'));
+    expect(b).toContain("if (req.brokerOrderId && req.aufstockung !== true) {");
+    expect(b).toContain("userRef.collection('trades').where('brokerOrderId', '==', req.brokerOrderId).limit(1),");
+    expect(b.indexOf("reason: 'fill_schon_gebucht'")).toBeLessThan(b.indexOf('const echterFill ='));
+  });
+
+  it('M-A: auch eine dauerhaft scheiternde Differenz wird nach NACHLAUF_MAX_TAGE laut aufgegeben', () => {
+    const f = broker.slice(broker.indexOf('export async function bucheOffeneOrders'));
+    expect(f).toContain('Tagen nicht buchbar (${r.reason ?? \'unbekannt\'}) — aufgegeben, Fall für die Übernahme');
+  });
+
+  it('N2: die Symbol-Sperre liest die VOLLSTÄNDIGE Symbolliste, nicht die 10 Anzeige-Zeilen', () => {
+    const abgleich = lies('core', 'brokerAbgleich.ts');
+    expect(abgleich).toContain('abweichungSymbole: abweichungen.map((a) => a.symbol).slice(0, 200),');
+    const tore = lies('core', 'kontoTore.ts');
+    expect(tore).toContain('if (Array.isArray(v.abweichungSymbole) && v.abweichungSymbole.includes(symbol)) return true;');
   });
 
   it('M2: ein echter Fill darf einen bestehenden Short vergrößern — sonst bleibt das Verbot', () => {
