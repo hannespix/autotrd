@@ -84,6 +84,7 @@ import {
   type KurvenWahl,
   benchmarkKurve,
   benchmarkSatz,
+  volDurchschnittFrisch,
 } from '@autotrd/shared';
 import type { Unsubscribe } from 'firebase/firestore';
 import {
@@ -8233,7 +8234,7 @@ function kennzahlenRaster(kz: MarketDocData['kennzahlen']): string {
       <div><dt>${t('dt.tagesspanne')}</dt><dd>${spanne(kz.tagTief, kz.tagHoch)}</dd></div>
       <div><dt>${t('dt.spanne52w')}</dt><dd>${spanne(kz.w52Tief, kz.w52Hoch)}</dd></div>
       <div><dt>${t('dt.volumen')}</dt><dd>${volKompakt(kz.volumen)}</dd></div>
-      <div><dt>${t('dt.volDurchschnitt')}</dt><dd>${volKompakt(kz.volDurchschnitt3M)}</dd></div>
+      <div><dt>${t('dt.volDurchschnitt')}</dt><dd>${volDurchschnittFrisch(kz.volDurchschnittAt) ? volKompakt(kz.volDurchschnitt3M) : '—'}</dd></div>
       <div><dt>${t('dt.boerse')}</dt><dd>${text(kz.boerse)}</dd></div>
       <div><dt>${t('dt.waehrung')}</dt><dd>${text(kz.waehrung)}</dd></div>
     </dl>`;

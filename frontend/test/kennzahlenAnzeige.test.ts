@@ -61,6 +61,8 @@ describe('Kennzahlen — Detail-Sheet', () => {
     expect(r).toContain("const wert = (v: number | null | undefined): string => (typeof v === 'number' ? fmtNum(v) : '—');");
     expect(r).toContain('${fmtNum(a)} – ${fmtNum(b)}');
     expect(r).toContain('volKompakt(kz.volumen)');
+    // Ø-Volumen nur, solange es frisch ist — sonst stünde eine eingefrorene Zahl neben einem frischen Tagesvolumen (Red-Team M1)
+    expect(r).toContain("volDurchschnittFrisch(kz.volDurchschnittAt) ? volKompakt(kz.volDurchschnitt3M) : '—'");
     const o = fn('openDetail', 5200);
     for (const k of ['dt.schlagzeilen', 'dt.vorMin', 'dt.vorStd']) expect(o).toContain(`t('${k}')`);
     expect(o).toContain('${kennzahlenRaster(data?.kennzahlen)}');

@@ -120,14 +120,22 @@ async function fetchYahoo(symbol: string, range: string): Promise<MarketSnapshot
   for (let i = 0; i < ts.length; i++) {
     const close = quote?.close[i];
     if (close === null || close === undefined) continue; // Feiertags-/Lückenzeilen
-    bars.push({
+    const bar: DailyBar = {
       date: fmtDate(ts[i]!, tz),
       open: quote!.open[i] ?? close,
       high: quote!.high[i] ?? close,
       low: quote!.low[i] ?? close,
       close,
       volume: quote!.volume[i] ?? 0,
-    });
+    };
+    /* Yahoo liefert bei FX für den laufenden Tag ZWEI Zeilen (Tageszeile
+     * 23:00Z und Live-Tick) — heute hat die Tageszeile close null und fällt
+     * oben heraus. Trägt sie einmal einen close, gäbe es zwei Kerzen eines
+     * Datums: Vortag = eigener Schluss, changePct falsch, bars/{date}
+     * doppelt. Je Datum gewinnt die SPÄTERE Zeile (Red-Team M3). */
+    const vorige = bars[bars.length - 1];
+    if (vorige && vorige.date === bar.date) bars[bars.length - 1] = bar;
+    else bars.push(bar);
   }
   if (bars.length === 0) throw new Error(`Yahoo ${symbol}: leere Bar-Serie`);
 

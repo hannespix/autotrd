@@ -5,26 +5,43 @@
  * aus dem Abruf, den der Scan ohnehin macht — kein zweiter Request, keine
  * neue Quelle, kein Schlüssel.
  *
- * Zwei Fallen aus der Bestandsaufnahme:
+ * Drei Fallen aus Bestandsaufnahme und Red-Team (08.10.):
  *  - `chartPreviousClose` ist NICHT der Vortag, sondern der Schluss VOR dem
  *    Abruf-Fenster (bei range=1y der Kurs von vor einem Jahr; gemessen AAPL
- *    5d: 330,32 statt 336,67). Der Vortag ist `bars[n-2].close`.
- *  - FX und Indizes liefern Volumen 0 — das ist „unbekannt", nicht null.
+ *    5d: 330,32 statt 336,67). Der Vortag ist `bars[n-2].close` — genauer:
+ *    der Schluss der Session VOR der letzten gelieferten Kerze. Am Samstag
+ *    oder vorbörslich ist die letzte Kerze die letzte SESSION; „Vortag" ist
+ *    dann wie Yahoos „Previous Close" der Tag davor — konsistent mit
+ *    `changePct`, das genauso rechnet.
+ *  - FX liefert Volumen 0 — das ist „unbekannt", nicht null. Indizes tragen
+ *    in `regularMarketVolume` einen ANDEREN Maßstab als ihre Tageskerzen
+ *    (^NDX: 805 M gegen 7,9 Mrd.); deshalb kommt `volumen` aus der Kerze,
+ *    aus derselben Quelle wie das Ø — Meta ist nur der Rückfall.
+ *  - Ein 5d-Abruf (Katalog-Rotation, quoteNow alle 45 s) kennt kein
+ *    Ø-Volumen und kann degradiert antworten; `kennzahlenFelder` schreibt
+ *    deshalb NUR gefüllte Felder ins merge — null löscht nie einen
+ *    Scan-Wert.
  */
 
 export interface Kennzahlen {
-  /** Schlusskurs des Vortags (vorletzte Tageskerze). */
+  /** Schluss der Session VOR der letzten Kerze (Yahoo „Previous Close"). */
   vortag: number | null;
-  /** Eröffnung des laufenden Tages (letzte Tageskerze). */
+  /** Eröffnung der letzten Session (letzte Tageskerze). */
   oeffnen: number | null;
   tagHoch: number | null;
   tagTief: number | null;
   w52Hoch: number | null;
   w52Tief: number | null;
-  /** Volumen des laufenden Tages; 0 (FX, Indizes) wird zu null. */
+  /** Volumen der letzten Session aus der Kerze (Rückfall Meta); 0 (FX) wird zu null. */
   volumen: number | null;
   /** Ø Tagesvolumen der letzten VOL_DURCHSCHNITT_TAGE abgeschlossenen Tage. */
   volDurchschnitt3M: number | null;
+  /**
+   * Wann das Ø zuletzt gerechnet wurde — nur der 1y-Scan (≤ 40 Symbole)
+   * rechnet es; das Sheet zeigt es nur, solange es frisch ist, sonst „—"
+   * neben einem frischen Tagesvolumen wäre eine eingefrorene Zahl.
+   */
+  volDurchschnittAt: string | null;
   name: string | null;
   boerse: string | null;
   waehrung: string | null;
@@ -62,6 +79,10 @@ const positiv = (v: unknown): number | null => {
   const z = zahl(v);
   return z !== null && z > 0 ? z : null;
 };
+const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
+
+/** Ø-Volumen gilt als frisch, solange es jünger ist als so viele Tage (Wochenende inklusive). */
+export const VOL_DURCHSCHNITT_FRISCH_TAGE = 4;
 
 /**
  * Ø Tagesvolumen der letzten `tage` ABGESCHLOSSENEN Kerzen (die letzte,
@@ -85,6 +106,7 @@ export function durchschnittsVolumen(
 export function kennzahlenAus(meta: KennzahlenMeta, bars: readonly KennzahlenBar[], updatedAt: string): Kennzahlen {
   const letzte = bars[bars.length - 1];
   const vorletzte = bars.length >= 2 ? bars[bars.length - 2] : undefined;
+  const avg = durchschnittsVolumen(bars);
   return {
     vortag: positiv(vorletzte?.close),
     oeffnen: positiv(letzte?.open),
@@ -92,22 +114,37 @@ export function kennzahlenAus(meta: KennzahlenMeta, bars: readonly KennzahlenBar
     tagTief: positiv(meta.regularMarketDayLow) ?? positiv(letzte?.low),
     w52Hoch: positiv(meta.fiftyTwoWeekHigh),
     w52Tief: positiv(meta.fiftyTwoWeekLow),
-    volumen: positiv(meta.regularMarketVolume) ?? positiv(letzte?.volume),
-    volDurchschnitt3M: durchschnittsVolumen(bars),
-    name: typeof meta.longName === 'string' && meta.longName ? meta.longName : typeof meta.shortName === 'string' && meta.shortName ? meta.shortName : null,
-    boerse: typeof meta.fullExchangeName === 'string' && meta.fullExchangeName ? meta.fullExchangeName : typeof meta.exchangeName === 'string' && meta.exchangeName ? meta.exchangeName : null,
-    waehrung: typeof meta.currency === 'string' && meta.currency ? meta.currency : null,
+    volumen: positiv(letzte?.volume) ?? positiv(meta.regularMarketVolume),
+    volDurchschnitt3M: avg,
+    volDurchschnittAt: avg === null ? null : updatedAt,
+    name: text(meta.longName) ?? text(meta.shortName),
+    boerse: text(meta.fullExchangeName) ?? text(meta.exchangeName),
+    waehrung: text(meta.currency),
     updatedAt,
   };
 }
 
+/** Ist das Ø-Volumen noch frisch genug fürs Sheet? */
+export function volDurchschnittFrisch(at: string | null | undefined, jetztMs = Date.now()): boolean {
+  if (typeof at !== 'string') return false;
+  const t = Date.parse(at);
+  return Number.isFinite(t) && jetztMs - t <= VOL_DURCHSCHNITT_FRISCH_TAGE * 86_400_000;
+}
+
 /**
- * Felder fürs merge-Schreiben: Ein 5d-Abruf (Katalog-Rotation, quoteNow)
- * kennt kein Ø-Volumen — er darf den 1y-Wert des Scans nicht mit null
- * überschreiben. Firestore `set(…, {merge:true})` mischt verschachtelte
- * Maps feldweise, also fehlt das Feld hier einfach.
+ * Felder fürs merge-Schreiben: NUR gefüllte Felder (plus updatedAt). Ein
+ * 5d-Abruf (Katalog-Rotation, quoteNow alle 45 s) kennt kein Ø-Volumen und
+ * kann degradiert antworten (eine Kerze, kein fiftyTwoWeek*) — null würde
+ * bei `set(…, {merge:true})` den Scan-Wert LÖSCHEN und das Sheet flackern
+ * lassen (Red-Team M2). Firestore mischt verschachtelte Maps feldweise,
+ * also fehlt das Feld hier einfach. `undefined` (Mock ohne kennzahlen)
+ * ergibt ein leeres Objekt statt eines Absturzes.
  */
-export function kennzahlenFelder(k: Kennzahlen): Partial<Kennzahlen> {
-  const { volDurchschnitt3M, ...rest } = k;
-  return volDurchschnitt3M === null ? rest : { ...rest, volDurchschnitt3M };
+export function kennzahlenFelder(k: Kennzahlen | null | undefined): Partial<Kennzahlen> {
+  if (!k) return {};
+  const out: Partial<Kennzahlen> = {};
+  for (const [key, value] of Object.entries(k) as [keyof Kennzahlen, Kennzahlen[keyof Kennzahlen]][]) {
+    if (value !== null && value !== undefined) (out as Record<string, unknown>)[key] = value;
+  }
+  return out;
 }
