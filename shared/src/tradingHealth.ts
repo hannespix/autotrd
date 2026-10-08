@@ -29,6 +29,7 @@
  * Nutzer registriert — und dann ist es zu spät, die Schwelle nachzurüsten.
  */
 
+import { quelleBekannt } from './tradeQuelle.js';
 import type {
   AttributionSlice,
   CostProfile,
@@ -113,20 +114,30 @@ export interface KlassenBefund {
    * Dieselbe Klasse nach EINSTIEGSWEG (Task 17): konfluenz · regelbaum ·
    * momentum · sockel · ki_probe · hand · sync · unbekannt. Nur Anzahl,
    * Konten und VERHÄLTNISSE (Netto-Kante, Gebührenquote je gehandeltem
-   * Dollar) — keine Beträge, auch nicht oberhalb der Schwelle: Die Frage
-   * „welcher Pfad verbrennt Krypto?" braucht keinen Dollarwert, und eine
-   * Quelle mit einem Konto gäbe sonst dessen Zahlen preis.
+   * Dollar) — keine Beträge. Und die Verhältnisse erst ab
+   * MIN_ACCOUNTS_PUBLIC Konten IN DIESER QUELLE (Red-Team 08.10., H3):
+   * `meta/tradeFilter.buckets.*.pnlSum` ist ein öffentlicher Geldbetrag je
+   * Steckbrief, und die Quellen sind Steckbrief-Signaturklassen — bei einem
+   * Konto ergäbe pnlSum ÷ kantePct dessen gehandeltes Volumen. Das
+   * ungekürzte Bild steht privat im Konto (`stats/main.byClassQuelle`).
    */
   quellen?: Record<string, QuellenBefund>;
+  /**
+   * Anteil der Buchungen dieser Klasse mit BEKANNTEM Einstiegsweg (0…100).
+   * `sync` und `unbekannt` sind Lücken der Messung, keine Pfade — eine
+   * Quellen-Tabelle mit 40 % Deckung beantwortet „welcher Pfad verliert"
+   * nicht, und das muss vor der Zahl stehen, nicht dahinter.
+   */
+  deckungPct?: number | null;
 }
 
-/** Eine Einstiegs-Quelle innerhalb einer Klasse — nur Verhältnisse. */
+/** Eine Einstiegs-Quelle innerhalb einer Klasse — nur Verhältnisse, und die erst ab der Konten-Schwelle. */
 export interface QuellenBefund {
   n: number;
   konten: number;
-  /** Nettorendite je gehandeltem Dollar in Prozent; null ohne Volumen. */
+  /** Nettorendite je gehandeltem Dollar in Prozent; null ohne Volumen oder unter MIN_ACCOUNTS_PUBLIC Konten. */
   kantePct: number | null;
-  /** Roundtrip-Gebühr je gehandeltem Dollar in Prozent; null ohne Volumen. */
+  /** Roundtrip-Gebühr je gehandeltem Dollar in Prozent; null ohne Volumen oder unter MIN_ACCOUNTS_PUBLIC Konten. */
   gebuehrPct: number | null;
 }
 
@@ -382,13 +393,19 @@ export function aggregateTradingHealth(
     const geldOeffentlich = k.konten >= minAccountsPublic;
     const quellenJe = quellenRoh[name];
     const quellen: Record<string, QuellenBefund> = {};
+    let buchungen = 0;
+    let bekannt = 0;
     for (const [quelle, s] of Object.entries(quellenJe ?? {})) {
-      // Nur Verhältnisse — bewusst KEIN pnl/fees, auch nicht ab der Schwelle.
+      buchungen += s.n;
+      if (quelleBekannt(quelle)) bekannt += s.n;
+      // Nur Verhältnisse — bewusst KEIN pnl/fees — und die erst ab der
+      // Konten-Schwelle JE QUELLE (s. KlassenBefund.quellen).
+      const quoteOeffentlich = s.konten >= minAccountsPublic && s.notional > 0;
       quellen[quelle] = {
         n: s.n,
         konten: s.konten,
-        kantePct: s.notional > 0 ? r4((s.pnl / s.notional) * 100) : null,
-        gebuehrPct: s.notional > 0 ? r4((s.fees / s.notional) * 100) : null,
+        kantePct: quoteOeffentlich ? r4((s.pnl / s.notional) * 100) : null,
+        gebuehrPct: quoteOeffentlich ? r4((s.fees / s.notional) * 100) : null,
       };
     }
     klassen[name] = {
@@ -397,7 +414,9 @@ export function aggregateTradingHealth(
       fees: geldOeffentlich ? Math.round(k.fees * 100) / 100 : null,
       kantePct: k.notional > 0 ? r4((k.pnl / k.notional) * 100) : null,
       konten: k.konten,
-      ...(Object.keys(quellen).length > 0 ? { quellen } : {}),
+      ...(Object.keys(quellen).length > 0
+        ? { quellen, deckungPct: buchungen > 0 ? r4((bekannt / buchungen) * 100) : null }
+        : {}),
     };
   }
 

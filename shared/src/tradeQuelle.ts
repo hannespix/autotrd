@@ -47,30 +47,45 @@ export interface TradeQuelleFelder {
   sync?: unknown;
 }
 
+/** Quellen, die einen EINSTIEGSWEG benennen — `sync`/`unbekannt` sind Lücken, keine Pfade. */
+export function quelleBekannt(q: string): boolean {
+  return q !== 'sync' && q !== 'unbekannt';
+}
+
 /**
+ * Die Quelle ist der EINSTIEGSWEG — nie der Ausstieg (Red-Team 08.10., H1/H2:
+ * Die erste Fassung las `source: 'manual'` zuerst und machte aus einer von
+ * Hand verkauften Momentum-Position einen Hand-Trade; und die Signatur
+ * `manuell`, die trade.ts jedem Hand-KAUF stempelt, fiel als Konfluenz
+ * durch — exakt in den Eimer, an dem der Kostenhebel ansetzen sollte).
+ *
  * Reihenfolge der Prüfung ist Teil des Vertrags:
- *  1. Hand-Trades zuerst — ein manueller Verkauf einer Engine-Position bleibt
- *     ein Hand-Ausstieg, egal welchen Steckbrief die Position trug.
- *  2. Nachgebuchter Bestand (`sync`) hat keinen Einstiegsweg im System.
- *  3. Dann der Steckbrief: KI-/Lexikon-Probe VOR den festen Signaturen, weil
- *     `ki` nur in Proben vorkommt; `momentum`/`core`/`regelbaum` sind feste
- *     Signaturen, alles andere ist eine Konfluenz aus Indikator-Stimmen.
- *  4. Ohne Steckbrief verrät noch der Ausstiegsgrund Momentum und Sockel
- *     (ihre Verkäufe tragen eigene Gründe) — der Rest ist unbekannt:
- *     Altbestand, per fillSync eröffnet, aufgestockt ohne Steckbrief.
+ *  1. Der Steckbrief zuerst — er wird beim ÖFFNEN gestempelt und beim
+ *     Schließen auf den Trade kopiert, egal wer schließt (Scan, Stop,
+ *     Rebalance, Hand). Signaturen: `manuell` (Hand-Kauf, trade.ts),
+ *     `ki`/`lex` nur bei KI-ALLEIN-Proben, `momentum`, `core` (Sockel),
+ *     `regelbaum`; alles andere ist eine Konfluenz aus Indikator-Stimmen.
+ *  2. Ohne Steckbrief: `source: 'manual'` ist ein Hand-Trade aus der Zeit
+ *     vor dem Stempel; der Ausstiegsgrund verrät noch Momentum und Sockel
+ *     (ihre Verkäufe tragen eigene Gründe).
+ *  3. Nachgebuchter Bestand (`sync`, adoptBroker) hat keinen Einstiegsweg
+ *     im System; der Rest ist unbekannt (Altbestand, per fillSync eröffnet,
+ *     aufgestockt ohne Steckbrief). Beide sind LÜCKEN der Messung und
+ *     werden als Deckung ausgewiesen, nicht als Pfad gelesen.
  */
 export function tradeQuelle(t: TradeQuelleFelder): TradeQuelle {
-  if (t.source === 'manual') return 'hand';
-  if (t.sync === true) return 'sync';
   if (typeof t.bucket === 'string' && t.bucket.length > 0) {
     if (istKiProbeBucket(t.bucket)) return 'ki_probe';
     const sig = t.bucket.split('|')[2] ?? '';
+    if (sig === 'manuell') return 'hand';
     if (sig === 'momentum') return 'momentum';
     if (sig === 'core') return 'sockel';
     if (sig === 'regelbaum') return 'regelbaum';
     if (sig.length > 0 && sig !== 'keine') return 'konfluenz';
   }
+  if (t.source === 'manual') return 'hand';
   if (t.riskExit === 'momentum_rebalance') return 'momentum';
   if (t.riskExit === 'core_rebalance' || t.riskExit === 'core_aufloesung') return 'sockel';
+  if (t.sync === true) return 'sync';
   return 'unbekannt';
 }

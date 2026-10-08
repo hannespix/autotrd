@@ -8,6 +8,7 @@ import {
   KI_MAX_LAEUFE_MONAT,
   KI_MAX_TOKENS,
   KI_SYSTEM,
+  QUELLEN_JE_KLASSE,
   baueEingabe,
   entscheideLauf,
   schreibeChronik,
@@ -171,19 +172,23 @@ describe('Stufe 4a — KI-Abschnitt im Lagebericht', () => {
 });
 
 describe('Task 17 — Quellen je Klasse im Lagebericht', () => {
-  it('listet je Klasse die Einstiegswege, schlechteste Kante zuerst, leere Quellen nicht', () => {
-    const chronik = { date: '2026-10-08', eintraege: {} } as unknown as Parameters<typeof baueEingabe>[0];
+  const chronik = { date: '2026-10-08', eintraege: {} } as unknown as Parameters<typeof baueEingabe>[0];
+  const q = (n: number, konten: number, kantePct: number | null, gebuehrPct: number | null) => ({ n, konten, kantePct, gebuehrPct });
+
+  it('nur bei Verlust-Klassen, mit Deckung und Erklärung, schlechteste Kante zuerst, ungemessene ans Ende, leere Quellen nicht', () => {
     const text = baueEingabe(chronik, {
       trading: {
         klassen: {
+          stocks_us: { n: 37, kantePct: 0.2, quellen: { konfluenz: q(37, 3, 0.2, 0.1) }, deckungPct: 100 },
           crypto: {
             n: 146,
             kantePct: -0.42,
+            deckungPct: 95.8901,
             quellen: {
-              konfluenz: { n: 40, konten: 2, kantePct: 0.3, gebuehrPct: 0.5 },
-              momentum: { n: 100, konten: 3, kantePct: -0.9, gebuehrPct: 0.48 },
-              hand: { n: 0, konten: 0, kantePct: null, gebuehrPct: null },
-              unbekannt: { n: 6, konten: 1, kantePct: null, gebuehrPct: null },
+              konfluenz: q(40, 3, 0.3, 0.5),
+              momentum: q(100, 3, -0.9, 0.48),
+              hand: q(0, 0, null, null),
+              unbekannt: q(6, 1, null, null),
             },
           },
         },
@@ -192,10 +197,37 @@ describe('Task 17 — Quellen je Klasse im Lagebericht', () => {
     const zeilen = text.split('\n');
     const i = zeilen.findIndex((z) => z.startsWith('- Klasse crypto: n=146'));
     expect(i).toBeGreaterThan(-1);
-    expect(zeilen[i + 1]).toBe('  · Quelle momentum: n=100, Konten 3, Kante -0.9 %, Gebühr 0.48 %');
-    expect(zeilen[i + 2]).toBe('  · Quelle unbekannt: n=6, Konten 1, Kante -- %, Gebühr -- %');
-    expect(zeilen[i + 3]).toBe('  · Quelle konfluenz: n=40, Konten 2, Kante 0.3 %, Gebühr 0.5 %');
+    expect(zeilen[i + 1]).toContain('(Quelle = Einstiegsweg aus dem Steckbrief; ki_probe = nur KI-allein-Einstiege; sync/unbekannt = ohne Steckbrief, ');
+    expect(zeilen[i + 1]).toContain('Buchungen = Tranchen der letzten 500 Buchungen je Konto, nur realisiert.');
+    expect(zeilen[i + 1]).toContain('Kante/Gebühr je Quelle erst ab der Konten-Schwelle, sonst --.)');
+    expect(zeilen[i + 2]).toBe('  Deckung bekannter Einstiegswege: 95,89 %');
+    expect(zeilen[i + 3]).toBe('  · Quelle momentum: Buchungen 100, Konten 3, Kante -0.9 %, Gebühr 0.48 %');
+    expect(zeilen[i + 4]).toBe('  · Quelle konfluenz: Buchungen 40, Konten 3, Kante 0.3 %, Gebühr 0.5 %');
+    // ungemessen (--) steht HINTER den gemessenen, nicht in der Mitte (Red-Team M6)
+    expect(zeilen[i + 5]).toBe('  · Quelle unbekannt: Buchungen 6, Konten 1, Kante -- %, Gebühr -- %');
     expect(text).not.toContain('Quelle hand');
+    // Gewinn-Klasse bekommt keine Quellen-Zeilen — die Frage ist, wo es verbrennt
+    const j = zeilen.findIndex((z) => z.startsWith('- Klasse stocks_us'));
+    expect(zeilen[j + 1] ?? '').not.toContain('Quelle');
+    expect(text.split('(Quelle = Einstiegsweg').length - 1).toBe(1);
+  });
+
+  it('deckelt auf QUELLEN_JE_KLASSE Zeilen je Klasse und bleibt auch voll besetzt unter der Größenschranke', () => {
+    expect(QUELLEN_JE_KLASSE).toBe(5);
+    const quellen = Object.fromEntries(
+      ['konfluenz', 'regelbaum', 'momentum', 'sockel', 'ki_probe', 'hand', 'sync', 'unbekannt'].map((k, i) => [k, q(100 + i, 3, -1 + i * 0.1, 0.5)]),
+    );
+    const klassen = Object.fromEntries(
+      ['crypto', 'stocks_us', 'stocks_eu', 'etf', 'fx', 'gold', 'indices', 'bonds', 'commodities', 'stocks_global'].map((k) => [
+        k,
+        { n: 800, kantePct: -0.5, quellen, deckungPct: 75 },
+      ]),
+    );
+    const text = baueEingabe(chronik, { trading: { klassen } });
+    expect(text.split('· Quelle ').length - 1).toBe(10 * QUELLEN_JE_KLASSE);
+    expect(text).not.toContain('Quelle sync');
+    expect(text).not.toContain('Quelle unbekannt');
+    expect(text.length).toBeLessThan(6000);
   });
 });
 

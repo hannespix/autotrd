@@ -578,6 +578,10 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         avgLoss: ts.avgLoss,
         bySymbol: attr.bySymbol,
         byClass: attr.byClass,
+        // Je Einstiegsweg (Task 17) — hier UNGEKÜRZT, weil privat: Das
+        // öffentliche Aggregat zeigt Kante und Gebühr je Quelle erst ab der
+        // Konten-Schwelle; das eigene Konto darf seine Zahlen immer sehen.
+        byClassQuelle: attr.byClassQuelle,
         exits,
         exits7t,
         exits7tSeit: fensterSeit,

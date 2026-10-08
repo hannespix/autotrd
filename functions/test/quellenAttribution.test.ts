@@ -32,9 +32,12 @@ describe('Quellen-Attribution — Anschluss-Wächter', () => {
     expect(broker.split('...(pos.bucket ? { bucket: pos.bucket } : {}),').length - 1).toBe(2);
   });
 
-  it('die Quellen-Aufschlüsselung geht mit ins Aggregat', () => {
-    expect(anzahl('byClassQuelle: attr.byClassQuelle,')).toBe(1);
+  it('die Quellen-Aufschlüsselung geht mit ins Aggregat UND ungekürzt ins private Konto-Dokument', () => {
+    // zweimal: stats/main (privat, ungekürzt) und der Beitrag zum öffentlichen Aggregat (gekürzt ab Schwelle)
+    expect(anzahl('byClassQuelle: attr.byClassQuelle,')).toBe(2);
     const beitrag = snapshot.slice(snapshot.indexOf('beitraege.push({'), snapshot.indexOf('beitraege.push({') + 900);
     expect(beitrag).toContain('byClassQuelle: attr.byClassQuelle,');
+    const stats = snapshot.slice(snapshot.indexOf('bySymbol: attr.bySymbol,'), snapshot.indexOf('bySymbol: attr.bySymbol,') + 500);
+    expect(stats).toContain('byClassQuelle: attr.byClassQuelle,');
   });
 });
