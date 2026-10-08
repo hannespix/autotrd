@@ -313,6 +313,10 @@ export const INFO_DE: Record<string, Tip> = {
     t: 'Warum geschlossen',
     d: 'Wodurch die Positionen tatsächlich beendet wurden: durch eine Risiko-Marke (Stop-Loss, Take-Profit, Trailing-Stop) oder durch ein SIGNAL — also weil die Indikatoren gedreht haben. Die Verteilung ist aufschlussreicher als jede Einzelzahl: Steht fast alles unter „Signal", werden Stop und Take praktisch nie erreicht. Dann entscheidet nicht deine Risikosteuerung über das Ergebnis, sondern das Kippen einer einzelnen Indikator-Stimme — ein Zeichen dafür, dass die Positionen zu früh wieder rausfliegen.',
   },
+  quellen: {
+    t: 'Ergebnis je Einstiegsweg',
+    d: 'Welcher Weg hat die Position eröffnet — und verdient dieser Weg sein Geld? Jede geschlossene Position wird ihrem Einstieg zugeordnet: Konfluenz (mehrere Indikatoren einig), Regelbaum, Momentum, Sockel, KI-Probe oder Hand. „Nachgebucht" und „Unbekannt" sind keine Wege, sondern Lücken der Messung: Positionen, die der Abgleich mit dem Broker nachgetragen hat, oder Altbestand aus der Zeit vor dem Stempel. Die Kante ist das Netto-Ergebnis je gehandeltem Dollar in Prozent, nach Gebühren — die eine Zahl, die sagt, ob ein Pfad seine eigene Reibung trägt. Schlechteste Kante zuerst; Zeilen ohne Volumen stehen am Ende, nicht in der Mitte. Der Anlass: Krypto verlor nach Gebühren, aber die Klasse allein sagte nicht, WELCHER Pfad verliert — ein Kostenhebel am falschen Pfad griffe ins Leere. Diese Tabelle zeigt nur dein eigenes Konto; das öffentliche Gesamtbild nennt Kante und Gebühr je Weg erst, wenn genug Konten ihn gehandelt haben.',
+  },
   fillReibung: {
     t: 'Ausführungs-Reibung',
     d: 'Der gemessene Abstand zwischen dem Kurs, bei dem die Engine entschieden hat, und dem Kurs, zu dem der Broker wirklich ausgeführt hat — in Basispunkten (1 bp = 0,01 %), getrennt nach Einstieg und Ausstieg. Daran hängt die Frage, ob Aktien-Einstiege als Limit-Order (Maker) laufen sollten: unter 5 bp lohnt der Umbau nicht, ab 10 bp ist er fällig. Die Farbe am US-Aktien-Einstieg zeigt genau diese Regel.',
@@ -619,6 +623,10 @@ export const INFO_EN: Record<string, Partial<Tip>> = {
   expectancy: {
     t: 'Expectancy per trade',
     d: 'What an average closed trade brought in (total P&L divided by the count). The number translates the strategy into one sentence: “every trade returns $X on average.” Negative means: trading more often loses money faster — raising the frequency only pays with a positive expectancy.',
+  },
+  quellen: {
+    t: 'Result by entry path',
+    d: 'Which path opened the position — and does that path earn its keep? Every closed position is attributed to its entry: confluence (several indicators agreeing), rule tree, momentum, core, AI probe or manual. “Synced” and “Unknown” are not paths but gaps in the measurement: positions the broker reconciliation booked after the fact, or legacy positions from before the stamp existed. The edge is the net result per dollar traded, in percent, after fees — the one number that says whether a path carries its own friction. Worst edge first; rows without volume sit at the bottom, not in the middle. The trigger: crypto lost money after fees, but the class alone did not say WHICH path loses — a cost lever on the wrong path would miss. This table shows only your own account; the public overall picture names edge and fees per path only once enough accounts have traded it.',
   },
   fillReibung: {
     t: 'Execution friction',

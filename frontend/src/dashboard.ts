@@ -1080,6 +1080,10 @@ function layout(email: string): string {
         <label class="lbl" style="margin-top:10px">${t('pf.fillReibung')} ${iBtn('fillReibung')}</label>
         <div id="pfReibung" class="fl-tbl"></div>
         </div>
+        <div id="pfSekQuellen" hidden>
+        <label class="lbl" style="margin-top:10px">${t('pf.quellen')} ${iBtn('quellen')}</label>
+        <div id="pfQuellen" class="fl-tbl"></div>
+        </div>
         <div id="pfSekKapital" hidden>
         <label class="lbl" style="margin-top:10px">${t('pf.kapitalEinsatz')} ${iBtn('kapitalEinsatz')}</label>
         <div id="pfKapital" class="fl-tbl"></div>
@@ -9262,6 +9266,7 @@ function renderPfStats(): void {
   renderExits(s);
   renderCosts(s);
   renderReibung(s);
+  renderQuellen(s);
   renderKapital(s);
   aktualisierePfLeer();
 }
@@ -10097,7 +10102,7 @@ function wireDepotVerlauf(z: ReturnType<typeof zerlegeDepot>): void {
  * solange mindestens eine Sektion fehlt — bei einem frischen Konto ersetzt
  * er vier gestapelte Erklärabsätze durch eine Zeile.
  */
-const PF_SEKTIONEN = ['pfSekExits', 'pfSekKosten', 'pfSekReibung', 'pfSekKapital'] as const;
+const PF_SEKTIONEN = ['pfSekExits', 'pfSekKosten', 'pfSekReibung', 'pfSekQuellen', 'pfSekKapital'] as const;
 
 function zeigePfSektion(id: (typeof PF_SEKTIONEN)[number], hat: boolean): void {
   const sek = document.getElementById(id);
@@ -10227,6 +10232,63 @@ function renderReibung(s: PortfolioStatsDoc): void {
         `<div class="fl-row"><span>${k.replace(/[^\w-]/g, '')}</span>` +
         `<span class="mono ${einTon}">${t('pf.reibungEinstieg')} ${z.einstieg.n}× · ${bp(z.einstieg.avgBp)}</span>` +
         `<span class="mono">${t('pf.reibungAusstieg')} ${z.ausstieg.n}× · ${bp(z.ausstieg.avgBp)} · max ${bp(z.maxBp)}</span></div>`
+      );
+    })
+    .join('');
+}
+
+/** Klarnamen der Einstiegswege (Task 18b) — Schlüssel aus `tradeQuelle`. */
+const QUELLE_LABEL: Record<string, string> = {
+  konfluenz: t('pf.quelleKonfluenz'),
+  regelbaum: t('pf.quelleRegelbaum'),
+  momentum: t('pf.quelleMomentum'),
+  sockel: t('pf.quelleSockel'),
+  ki_probe: t('pf.quelleKiProbe'),
+  hand: t('pf.quelleHand'),
+  sync: t('pf.quelleSync'),
+  unbekannt: t('pf.quelleUnbekannt'),
+};
+
+/**
+ * Ergebnis je Anlageklasse UND Einstiegsweg (Task 18b) — die eigene,
+ * ungekürzte Sicht auf `stats/main.byClassQuelle`. Das öffentliche Aggregat
+ * zeigt Kante und Gebühr je Quelle erst ab der Konten-Schwelle; das eigene
+ * Konto darf seine Zahlen immer sehen. Zeilen: Klasse · Weg, Buchungen,
+ * Netto-Kante je gehandeltem Dollar, Ergebnis — schlechteste Kante zuerst,
+ * ungemessene (ohne Volumen) ans Ende, damit „unbekannt" nicht als
+ * mittelmäßig gelesen wird (Red-Team #546, M6).
+ */
+function renderQuellen(s: PortfolioStatsDoc): void {
+  const box = $('pfQuellen');
+  const je = s.byClassQuelle ?? {};
+  const zeilen: { klasse: string; quelle: string; n: number; pnl: number; kantePct: number | null }[] = [];
+  for (const [klasse, quellen] of Object.entries(je)) {
+    for (const [quelle, w] of Object.entries(quellen ?? {})) {
+      if (!w || !(w.n > 0)) continue;
+      zeilen.push({ klasse, quelle, n: w.n, pnl: w.pnl, kantePct: typeof w.kantePct === 'number' ? w.kantePct : null });
+    }
+  }
+  zeigePfSektion('pfSekQuellen', zeilen.length > 0);
+  if (zeilen.length === 0) {
+    box.innerHTML = '';
+    return;
+  }
+  zeilen.sort((a, b) => {
+    const ka = a.kantePct ?? Number.POSITIVE_INFINITY;
+    const kb = b.kantePct ?? Number.POSITIVE_INFINITY;
+    return ka - kb || b.n - a.n;
+  });
+  box.innerHTML = zeilen
+    .map((z) => {
+      // Klassen-Schlüssel kommen aus der Datenbank — auf harmlose Zeichen beschränken.
+      const klasse = z.klasse.replace(/[^\w-]/g, '');
+      const weg = QUELLE_LABEL[z.quelle] ?? z.quelle.replace(/[^\w-]/g, '');
+      // Eigenes Raster `q-row`: Zahlen in voller Breite, Name mit Ellipse —
+      // der Bildbefund zeigte den Geldbetrag im 5er-Raster abgeschnitten.
+      return (
+        `<div class="fl-row q-row" title="${klasse} · ${weg}"><span>${klasse} · ${weg}</span>` +
+        `<span class="mono">${z.n}× · ${fmtPct(z.kantePct)}</span>` +
+        `<span class="mono ${pnlClass(z.pnl)}">${money(z.pnl)}</span></div>`
       );
     })
     .join('');

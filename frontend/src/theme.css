@@ -979,6 +979,12 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
 .fl-row { display: grid; grid-template-columns: 1fr 1fr 0.7fr 1.1fr 1fr; gap: 4px; padding: 3px 6px; border-bottom: 1px solid var(--hair); font-variant-numeric: tabular-nums; }
 .fl-row span { text-align: right; white-space: nowrap; }
 .fl-row span:first-child { text-align: left; }
+/* Quellen-Tabelle (Task 18b): drei Spalten, die ZAHLEN bekommen ihre volle
+   Breite (max-content), der Klarname links gibt nach (Ellipse) — sonst
+   schnitt das 5er-Raster den Geldbetrag in der 280-px-Seitenspalte ab
+   (Bildbefund 08.10., CLAUDE.md §6: Geometrie statt geschätzter Breite). */
+.q-row { grid-template-columns: minmax(0, 1fr) max-content max-content; }
+.q-row span:first-child { overflow: hidden; text-overflow: ellipsis; }
 .fl-head { color: var(--t3); font-weight: 500; position: sticky; top: 0; background: var(--card-solid); z-index: 1; }
 .fl-best { outline: 1.5px solid var(--ac); outline-offset: -1.5px; font-weight: 700; border-radius: 4px; }
 .st-spark { width: 100%; height: 64px; display: block; margin: 8px 0 4px; }
