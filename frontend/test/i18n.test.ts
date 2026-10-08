@@ -1011,7 +1011,7 @@ describe('Ablehnungsgründe, Regime und Zugang (Tranche 5k)', () => {
       dashboard.indexOf('const REGIME_TEXT'),
     );
     for (const code of [
-      'breaker_aktiv', 'abgleich_drift', 'pdt_schutz', 'klasse_aus', 'regime_gegen_trend',
+      'breaker_aktiv', 'abgleich_drift', 'fremdbestand', 'pdt_schutz', 'klasse_aus', 'regime_gegen_trend',
       'regime_stress', 'filter_blockiert', 'news_veto', 'ki_veto', 'unter_kosten',
       'cluster_voll', 'nicht_handelbar', 'hebel_frei',
     ]) {
@@ -1266,7 +1266,10 @@ describe('Tranche 5n — die zehn Analyse- und Melde-Funktionen', () => {
     // Statuscodes (Vertrag zum Server) + CSS/DOM; „Dollar/Trades" sind weg.
     renderKlassenRat: ['global', 'schatten', 'class', 'color', 'div', 'hint', 'inherit',
       'margin', 'span', 'style', 'title', 'top'],
-    renderAbgleich: ['drift', 'fehler', 'color', 'cursor', 'details', 'div', 'margin',
+    // „abweichungen"/„map"/„join"/„mono"/„class" kamen mit der Symbol-Liste
+    // (Drift-Paket 08.10.): Feldname, Array-Methoden, CSS — kein Nutzer-Text.
+    renderAbgleich: ['abweichungen', 'map', 'join', 'mono', 'class',
+      'drift', 'fehler', 'color', 'cursor', 'details', 'div', 'margin',
       'pointer', 'style', 'summary', 'top', 'var'],
     // „data"/„sym" kamen mit dem Steckbrief-Anker (18:1x): das data-sym-
     // Attribut im Zeilen-Template — DOM-Technik, kein Nutzer-Text.

@@ -129,8 +129,19 @@ export function ergaenzeVerlauf(
   vorherStatus: string | undefined,
   eintrag: Omit<VerlaufEintrag, 'von'>,
   max: number = VERLAUF_MAX,
+  /**
+   * Bisherige Zähler (Drift-Paket 08.10.): Auch ein Wechsel von „drift (1
+   * fremd)" zu „drift (2 fremd)" ist ein Ereignis — vorher blieb er
+   * unsichtbar, und niemand konnte nachlesen, WANN der zweite Bestand kam.
+   */
+  vorherZaehler?: { fehlbestand?: number | undefined; fremdbestand?: number | undefined },
 ): VerlaufEintrag[] | null {
-  if (vorherStatus === eintrag.nach) return null;
+  if (vorherStatus === eintrag.nach) {
+    const zahlenGeaendert = eintrag.nach === 'drift' && vorherZaehler !== undefined
+      && ((vorherZaehler.fehlbestand ?? 0) !== (eintrag.fehlbestand ?? 0)
+        || (vorherZaehler.fremdbestand ?? 0) !== (eintrag.fremdbestand ?? 0));
+    if (!zahlenGeaendert) return null;
+  }
   const von = (
     vorherStatus === 'sauber' || vorherStatus === 'drift'
     || vorherStatus === 'fehler' || vorherStatus === 'kein_broker'
@@ -174,7 +185,7 @@ export async function abgleichFuerKonto(
   jetzt: Date = new Date(),
   /** Bisheriger Vermerk (`risk.abgleich` des schon geladenen User-Docs) —
    *  Grundlage des Verlaufsprotokolls, ohne einen zweiten Read je Konto. */
-  vorher?: { status?: string; verlauf?: VerlaufEintrag[] },
+  vorher?: { status?: string; verlauf?: VerlaufEintrag[]; fehlbestand?: number; fremdbestand?: number },
   /**
    * Kontostand des eigenen Buchs — Cash und Equity (12.08.).
    *
@@ -334,12 +345,18 @@ export async function abgleichFuerKonto(
   const fremdbestand = abweichungen.filter((a) => !istGefaehrlicheAbweichung(a));
 
   const status = abweichungen.length === 0 ? 'sauber' : 'drift';
-  const verlauf = ergaenzeVerlauf(vorher?.verlauf, vorher?.status, {
-    at: jetzt.toISOString(),
-    nach: status,
-    fehlbestand: fehlbestand.length,
-    fremdbestand: fremdbestand.length,
-  });
+  const verlauf = ergaenzeVerlauf(
+    vorher?.verlauf,
+    vorher?.status,
+    {
+      at: jetzt.toISOString(),
+      nach: status,
+      fehlbestand: fehlbestand.length,
+      fremdbestand: fremdbestand.length,
+    },
+    VERLAUF_MAX,
+    { fehlbestand: vorher?.fehlbestand, fremdbestand: vorher?.fremdbestand },
+  );
   await vermerke(uid, {
     at: jetzt.toISOString(),
     status,
@@ -351,6 +368,10 @@ export async function abgleichFuerKonto(
     // Bewusst gedeckelt: Der Vermerk ist eine Meldung, kein zweites Depot.
     // Bei 50 Abweichungen sagt die Zahl alles, was zählt.
     abweichungen: abweichungen.slice(0, 10),
+    // Die SYMBOLE vollständig (Nachprüfung 08.10., N2): Die Symbol-Sperre
+    // für Momentum, Sockel und Handeingabe liest sie — ein 11. Symbol darf
+    // nicht durchrutschen, nur weil die Anzeige bei 10 Zeilen aufhört.
+    abweichungSymbole: abweichungen.map((a) => a.symbol).slice(0, 200),
     verglichen: relevante.length,
     brokerPositionen: brokerPositionen.length,
     // Kontostand mit in den Vermerk: Die Broker-Karte und der Heartbeat

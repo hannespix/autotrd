@@ -224,12 +224,17 @@ describe('Wächter: wer darf den Rest für tot erklären', () => {
     expect(stop).toMatch(/if \(stand\.status === 'partially_filled'\) \{\s*\n\s*await alpacaOrderStornieren\(/);
   });
 
-  it('schutzAufheben sichert NICHTS zu — dort ist das Storno gescheitert', () => {
-    // Der Zweig heißt `nicht_stornierbar`; die Order lebt weiter.
+  it('schutzAufheben sichert den Rest NUR bei verifiziertem Endzustand zu (Drift-Paket 08.10.)', () => {
+    /* Bis zum 08.10. sicherte dieser Pfad gar nichts zu — und der Minuten-
+     * Puls buchte nach einem Stop über ganze Stücke die GANZE Position aus,
+     * während das Bruchstück beim Broker blieb. Jetzt: Nur ein Endzustand
+     * der Stop-Order macht die Menge endgültig; alles andere bleibt beim
+     * sicheren vollen Schluss. */
     expect(stop).toContain("// `nicht_stornierbar`: nachsehen, ob (und wie viel) ausgeführt wurde.");
     const aufheben = stop.slice(stop.indexOf('export async function schutzAufheben'));
-    const bisNaechste = aufheben.slice(0, aufheben.indexOf('export type SchutzAufhebung') + 1 || aufheben.indexOf('export type SchutzBefund'));
-    expect(bisNaechste).not.toContain('restStorniert');
+    const bisNaechste = aufheben.slice(0, aufheben.indexOf('export type SchutzBefund'));
+    expect(bisNaechste).toContain('restStorniert: ORDER_ENDZUSTAENDE.has(endstand.status),');
+    expect(bisNaechste).not.toContain('restStorniert: true');
   });
 
   it('ein Teilschluss überlebt die Buchhaltung des laufenden Scans', () => {

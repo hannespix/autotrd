@@ -62,6 +62,25 @@ export function abgleichSperreAusVermerk(vermerk: unknown, jetzt: Date): boolean
 }
 
 /**
+ * Symbol-scharfe Sperre aus dem Abgleich-Vermerk (Drift-Paket 08.10.): Ein
+ * Symbol, das Buch und Broker verschieden führen, bekommt keinen Einstieg —
+ * auf KEINEM Pfad. Der Scan prüft live (`abweichSymbole`); Momentum, Sockel
+ * und Handeingabe fragen hier den gespeicherten Vermerk, mit derselben
+ * Frist wie die Konto-Sperre.
+ */
+export function symbolSperreAusVermerk(vermerk: unknown, symbol: string, jetzt: Date): boolean {
+  if (typeof vermerk !== 'object' || vermerk === null) return false;
+  const v = vermerk as { at?: unknown; abweichungen?: unknown; abweichungSymbole?: unknown };
+  if (typeof v.at !== 'string') return false;
+  const alter = jetzt.getTime() - Date.parse(v.at);
+  if (!Number.isFinite(alter) || alter > KAPITAL_DECKEL_STD * 3_600_000) return false;
+  // Vollständige Liste (seit 08.10.) zuerst; Altbestand hat nur die ersten 10.
+  if (Array.isArray(v.abweichungSymbole) && v.abweichungSymbole.includes(symbol)) return true;
+  if (!Array.isArray(v.abweichungen)) return false;
+  return v.abweichungen.some((a) => typeof a === 'object' && a !== null && (a as { symbol?: unknown }).symbol === symbol);
+}
+
+/**
  * Alle Konto-Tore auf einmal, aus dem bereits gelesenen User-Dokument.
  *
  * `snap` ist bewusst nur „etwas mit `.get(feld)`" — Dokument-Snapshot im

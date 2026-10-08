@@ -45,6 +45,8 @@ const EXIT_GRUND: Record<string, string> = {
   // KI-Kaskade Stufe 2b (06.10.)
   ki_news: 'auf eine gegengeprüfte Nachricht gegen die Position (KI)',
   ki_stop: 'über den nach einer Gegen-Nachricht nachgezogenen KI-Stop',
+  // Drift-Paket 08.10.: die Order stand beim Broker, der Fill kam später.
+  exit_nachlauf: 'über eine stehen gebliebene Ausstiegs-Order (nachgebucht)',
 };
 
 /** Geldbetrag deutsch: Vorzeichen, Komma, Dollar. */

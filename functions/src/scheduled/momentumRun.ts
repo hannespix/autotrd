@@ -65,7 +65,7 @@ import {
   positioningSummary,
 } from '../../../shared/src/index.js';
 import { executeTrade, resolveBrokerMode } from '../core/broker.js';
-import { kontoTore } from '../core/kontoTore.js';
+import { kontoTore, symbolSperreAusVermerk } from '../core/kontoTore.js';
 import { mayTrade } from '../core/access.js';
 import { clampStrategyRisk, corePct, maxOpenPositions } from '../core/rulesTrading.js';
 import {
@@ -758,6 +758,10 @@ async function rebalanceMomentumUsers(
         // Position auf — er öffnet nichts und zählt deshalb nicht gegen das
         // Limit; sonst könnte ein volles Depot nie ans Zielgewicht zurück.
         if (tore.einstieg) continue;
+        // Symbol-Sperre (Drift-Paket 08.10.): nicht in ein Symbol kaufen, das
+        // Buch und Broker verschieden führen — ein Kauf verschmölze beim Broker
+        // mit dem Rest, und die Besitzgrenze wäre verwischt.
+        if (symbolSperreAusVermerk(userDoc.get('risk.abgleich'), o.symbol, now)) continue;
         const aufstockung = gehalten.has(o.symbol);
         if (!aufstockung && offenZahl >= posLimit) continue;
         const fractional = cls === 'crypto';
@@ -1027,6 +1031,7 @@ async function rebalanceCoreSleeve(
         // Nachschub-Käufe (Aufstockung einer BESTEHENDEN Sockel-Position)
         // zählen nicht gegen das Limit — sie öffnen nichts.
         if (tore.einstieg) continue;
+        if (symbolSperreAusVermerk(userDoc.get('risk.abgleich'), o.symbol, now)) continue; // s. o.
         const aufstockung = sockel.has(o.symbol);
         if (!aufstockung && offenZahl >= posLimit) continue;
         // Ein Symbol, das die AKTIVE Engine schon hält, darf der Sockel nicht

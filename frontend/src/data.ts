@@ -614,6 +614,8 @@ export function watchUserDoc(
       verglichen: number;
       brokerPositionen: number;
       fehler: string;
+      /** Die abweichenden Symbole mit Mengen (Drift-Paket 08.10.) — bis zu 10. */
+      abweichungen: Array<{ symbol: string; eigeneMenge: number; brokerMenge: number; differenz: number }>;
     } | null;
     /**
      * Ein Admin hat für dieses Konto eine Depot-Übernahme VORGEMERKT
@@ -702,6 +704,7 @@ function leseAbgleich(roh: unknown): {
   brokerPositionen: number;
   fehler: string;
   verlauf: AbgleichVerlaufEintrag[];
+  abweichungen: Array<{ symbol: string; eigeneMenge: number; brokerMenge: number; differenz: number }>;
 } | null {
   if (!roh || typeof roh !== 'object') return null;
   const r = roh as Record<string, unknown>;
@@ -732,6 +735,14 @@ function leseAbgleich(roh: unknown): {
     brokerPositionen: zahl(r['brokerPositionen']),
     fehler: typeof r['fehler'] === 'string' ? r['fehler'] : '',
     verlauf,
+    abweichungen: Array.isArray(r['abweichungen'])
+      ? (r['abweichungen'] as unknown[]).flatMap((e) => {
+          if (!e || typeof e !== 'object') return [];
+          const a = e as Record<string, unknown>;
+          if (typeof a['symbol'] !== 'string') return [];
+          return [{ symbol: a['symbol'], eigeneMenge: zahl(a['eigeneMenge']), brokerMenge: zahl(a['brokerMenge']), differenz: zahl(a['differenz']) }];
+        })
+      : [],
   };
 }
 
@@ -1099,6 +1110,9 @@ export interface HealthDoc {
     gebucht?: number;
     offen?: number;
     steckt?: number;
+    /** Nachlauf offener Orders (08.10.). */
+    nachlaufGebucht?: number;
+    nachlaufOffen?: number;
     konten?: number;
   } | null;
   /**

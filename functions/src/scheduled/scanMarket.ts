@@ -105,6 +105,8 @@ import { computeIndicatorSnapshot, computeSignal } from '../core/engine.js';
 import {
   executePaperTrade,
   bucheUnverbuchteFills,
+  bucheOffeneOrders,
+  fillSchonGebucht,
   executeTrade,
   kapitalDeckel,
   merkeUnbookedFill,
@@ -355,6 +357,11 @@ export interface EntryGateStats {
   breaker_aktiv: number;
   /** Einstiege gesperrt, weil Buch und Broker-Depot auseinanderlaufen (M13). */
   abgleich_drift: number;
+  /** Abgelehnt: Für dieses Symbol weichen Buch und Broker-Depot ab (Drift-
+   *  Paket 08.10.) — meist ein Rest, der nur beim Broker liegt. Ein Kauf
+   *  würde beim Broker mit dem Rest verschmelzen, ein Leerverkauf fremde
+   *  Stücke verkaufen; beides verwischt die Besitzgrenze. Je Symbol. */
+  fremdbestand: number;
   /** Einstiege pausiert: drei Daytrades unter 25.000 $ (PDT-Bremse, 05.10.). Je Konto. */
   pdt_schutz: number;
   /** DURCHGELASSEN, obwohl die Kostenschwelle nicht prüfen konnte (keine
@@ -515,6 +522,10 @@ export interface NachbuchungsLauf {
   steckt: number;
   /** Auf wie vielen Konten etwas feststeckt. */
   konten: number;
+  /** Nachlauf offener Orders (08.10.): in diesem Lauf nachgebuchte Fills. */
+  nachlaufGebucht: number;
+  /** Vermerke, die danach noch offen sind. */
+  nachlaufOffen: number;
 }
 
 export interface BrokerStats {
@@ -649,6 +660,7 @@ async function executeUserTrades(
     klasse_aus: 0,
     breaker_aktiv: 0,
     abgleich_drift: 0,
+    fremdbestand: 0,
     pdt_schutz: 0,
     ohne_atr_durchgelassen: 0,
     filter_blockiert: 0,
@@ -665,7 +677,7 @@ async function executeUserTrades(
    * die nur noch die Übernahme auflöst. `konten` zählt, auf wie vielen
    * Büchern so etwas liegt — eine 1 bei 200 Konten liest sich anders als
    * eine 40. */
-  const nachbuchungLauf: NachbuchungsLauf = { gebucht: 0, offen: 0, steckt: 0, konten: 0 };
+  const nachbuchungLauf: NachbuchungsLauf = { gebucht: 0, offen: 0, steckt: 0, konten: 0, nachlaufGebucht: 0, nachlaufOffen: 0 };
   const konten: KontenStats = {
     laufend: 0,
     gehandelt: 0,
@@ -912,6 +924,14 @@ async function executeUserTrades(
        * `strategy` statt `clamped` (das erst später entsteht): Die Buchung
        * eines BEREITS AUSGEFÜHRTEN Fills entscheidet nichts mehr — Menge
        * und Preis stehen fest, die Risiko-Klammer hätte nichts zu klemmen. */
+      /* Nachlauf offener Orders (Drift-Paket 08.10.) VOR der Nachbuchung:
+       * Was beim Broker seit dem letzten Lauf gefüllt hat, muss im Buch
+       * stehen, BEVOR Positionen gelesen und Exits entschieden werden. */
+      const nachlauf = await bucheOffeneOrders(uid, strategy).catch(
+        () => ({ geprueft: 0, gebucht: 0, offen: 0 }),
+      );
+      nachbuchungLauf.nachlaufGebucht += nachlauf.gebucht;
+      nachbuchungLauf.nachlaufOffen += nachlauf.offen;
       const nachbuchung = await bucheUnverbuchteFills(uid, strategy).catch(
         () => ({ gebucht: 0, offen: 0, steckt: 0 }),
       );
@@ -1062,7 +1082,7 @@ async function executeUserTrades(
         // Bisheriger Vermerk aus dem SCHON geladenen Doc — das
         // Verlaufsprotokoll kostet so keinen zweiten Read je Konto.
         userDoc.get('risk.abgleich') as
-          | { status?: string; verlauf?: import('../core/brokerAbgleich.js').VerlaufEintrag[] }
+          | { status?: string; verlauf?: import('../core/brokerAbgleich.js').VerlaufEintrag[]; fehlbestand?: number; fremdbestand?: number }
           | undefined,
         /* Buch-Kontostand fuer den Kontoabgleich (12.08.).
          *
@@ -1082,6 +1102,8 @@ async function executeUserTrades(
          * an dem die Kapitaldecke haengt. */
         kontoStandFuerAbgleich(userDoc),
       );
+      // Symbole, die Buch und Broker verschieden führen (Drift-Paket 08.10.).
+      const abweichSymbole = new Set(abgleichBefund.abweichungen.map((a) => a.symbol));
       if (abgleichBefund.zustand !== 'kein_broker') {
         broker.verbunden += 1;
         if (abgleichBefund.zustand === 'sauber') broker.sauber += 1;
@@ -1227,7 +1249,15 @@ async function executeUserTrades(
               cls,
               scanId,
             );
-            if (befund.stand === 'gefuellt') {
+            /* Schon gebucht — vom Minuten-Puls, der denselben Stop-Fill
+             * über `schutzAufheben` eingesammelt hat (Red-Team 08.10., H1)?
+             * Dann nichts doppelt buchen: `pflegeSchutz` hat die Verknüpfung
+             * gelöst, der Rest läuft unten durch den regulären Exit-Check. */
+            const schonGebucht = befund.stand === 'gefuellt' && await fillSchonGebucht(uid, befund.orderId);
+            if (schonGebucht) {
+              logger.info(`Broker-Stop ${uid} ${symbol}: Fill ${befund.orderId} war schon gebucht`);
+            }
+            if (befund.stand === 'gefuellt' && !schonGebucht) {
               const r = await executePaperTrade(
                 {
                   uid,
@@ -1530,6 +1560,7 @@ async function executeUserTrades(
         | 'klasse_aus'
         | 'breaker_aktiv'
         | 'abgleich_drift'
+        | 'fremdbestand'
         | 'pdt_schutz'
         | 'regime_gegen_trend'
         | 'regime_stress'
@@ -1552,6 +1583,11 @@ async function executeUserTrades(
         // jede Größenrechnung für den Einstieg auf Sand gebaut. Zähler
         // ebenfalls je KONTO (siehe oben), nicht je Symbol.
         if (abgleichBefund.sperre) return 'abgleich_drift';
+        // Symbol-scharf (Drift-Paket 08.10.): kein Einstieg in ein Symbol, das
+        // Buch und Broker verschieden führen — bis es übernommen oder beim
+        // Broker verkauft ist. Nur das echte Buch; das Schattenbuch handelt
+        // nicht beim Broker.
+        if (echtesBuch && abweichSymbole.has(symbol)) { gate.fremdbestand += 1; return 'fremdbestand'; }
         // PDT-Bremse (05.10.): frisch aus DIESEM Abgleich. Je Konto gezählt.
         // Krypto unterliegt der Regel nicht — dort kein Grund zu bremsen.
         // Einstiege DIESES Scans laufend mitzählen (Prüfbefund 05.10.).
@@ -4154,6 +4190,7 @@ export async function runScan(force = false): Promise<ScanResult> {
     klasse_aus: 0,
     breaker_aktiv: 0,
     abgleich_drift: 0,
+    fremdbestand: 0,
     pdt_schutz: 0,
     ohne_atr_durchgelassen: 0,
     filter_blockiert: 0,
