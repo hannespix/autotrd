@@ -995,6 +995,15 @@ export interface Position {
    */
   core?: boolean;
   /**
+   * EINSTIEGSWEG der Position (Task 18, 08.10.): konfluenz · regelbaum ·
+   * momentum · sockel · ki_probe · hand — beim ÖFFNEN gestempelt, beim
+   * Schließen auf den Trade kopiert (Verkauf, Cover, jede Tranche), egal wer
+   * schließt. Nie `sync`/`unbekannt`: Das sind Lücken der Messung, keine
+   * Wege. Reines Etikett für die Quellen-Attribution — keine Regel liest es.
+   * Nicht zu verwechseln mit `schutz.quelle` (Herkunft des Stop-Levels).
+   */
+  quelle?: string;
+  /**
    * Bereits realisierter P&L aus TEILschlüssen dieser Position (23.08.).
    *
    * Nötig, seit ein Teilfill des Broker-Schutz-Stops die Position verkleinert

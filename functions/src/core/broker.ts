@@ -25,6 +25,8 @@ import {
   effectivePriceFromFill,
   feePartsForClass,
   marginInterest,
+  einstiegsQuelle,
+  quelleAusLauf,
   resolveRisk,
   riskBasedQty,
   sicheresKapital,
@@ -620,6 +622,12 @@ export interface TradeRequest {
    */
   core?: boolean;
   /**
+   * EINSTIEGSWEG (Task 18) — nur bei ÖFFNENDEN Trades; fehlt er, liest die
+   * Buchung ihn aus `bucket`/`source` (`einstiegsQuelle`). Landet als
+   * `Position.quelle` und beim Schließen am Trade. Reines Etikett.
+   */
+  quelle?: string;
+  /**
    * AUSDRÜCKLICHE Aufstockung einer bestehenden Long-Position (Sockel-
    * Nachschub #345, Red-Team-Befund 20.08.): erlaubt dem Buchungspfad das
    * Einmischen in die Position, das seit dem Vorfall 05.08. sonst nur
@@ -821,6 +829,14 @@ export function schlussMenge(
  * beim Broker verbliebene, jetzt ungeschützte Rest würde zu einem NEUEN
  * Fremdbestand — der Fehler, den dieser Fix gerade schließt.
  */
+/**
+ * Lauf-Kennung eines `unbookedFills`-Vermerks (Task 18) — nur als Rückfall
+ * für Vermerke von vor dem Quellen-Stempel; neue tragen `quelle` direkt.
+ */
+export function laufKennungAusVermerk(d: Record<string, unknown>): string | undefined {
+  return typeof d['laufId'] === 'string' ? d['laufId'] : undefined;
+}
+
 export async function merkeUnbookedFill(
   uid: string,
   symbol: string,
@@ -831,6 +847,7 @@ export async function merkeUnbookedFill(
   laufId: string,
   grund: string,
   restStorniert?: boolean,
+  quelle?: string | null,
 ): Promise<void> {
   logger.error(`FILL NICHT GEBUCHT ${uid} ${symbol} ${side} ${qty} @ ${fillPreis} — ${grund}`);
   const db = getFirestore();
@@ -849,6 +866,8 @@ export async function merkeUnbookedFill(
       grund,
       at: new Date().toISOString(),
       ...(restStorniert === true ? { restStorniert: true } : {}),
+      // Einstiegsweg (Task 18) — nur eröffnende Fills tragen ihn.
+      ...(quelle ? { quelle } : {}),
     })
     .catch((err: unknown) => logger.error(`unbookedFills ${uid} nicht schreibbar`, err));
   // update()+FieldPath statt set(merge) (Befund 24.08.): sonst legte ein
@@ -1161,6 +1180,7 @@ export async function executeTrade(
       gebucht: routing.ausgefuehrt ? (routing.fillMenge ?? qty) : 0,
       soll: qty,
       lauf,
+      quelle: schliesst ? null : einstiegsQuelle({ quelle: req.quelle, source: req.source, bucket: req.bucket }),
     });
   }
   if (!routing.ausgefuehrt) {
@@ -1219,6 +1239,7 @@ export async function executeTrade(
       // ein späterer Nachbuchungsversuch einen echten Teilfill komplett
       // (Red-Team-Befund 25.08.).
       schliesst ? routing.restStorniert === true : undefined,
+      schliesst ? null : einstiegsQuelle({ quelle: req.quelle, source: req.source, bucket: req.bucket }),
     );
   }
 
@@ -1270,7 +1291,7 @@ export async function merkeOffeneOrder(
   symbol: string,
   side: 'buy' | 'sell',
   offen: OffeneOrderVermerk,
-  mengen: { gebucht: number; soll: number; lauf: string },
+  mengen: { gebucht: number; soll: number; lauf: string; quelle?: string | null },
 ): Promise<void> {
   const id = offen.clientOrderId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120);
   const ref = getFirestore().collection('users').doc(uid).collection('offeneOrders').doc(id);
@@ -1288,6 +1309,9 @@ export async function merkeOffeneOrder(
       gebuchteMenge: mengen.gebucht,
       sollMenge: mengen.soll,
       lauf: mengen.lauf,
+      // Einstiegsweg des Auftrags (Task 18): Der Nachlauf bucht sonst eine
+      // Position ohne Herkunft — und ein Scan-Zeitstempel allein ist mehrdeutig.
+      ...(mengen.quelle ? { quelle: mengen.quelle } : {}),
       at: new Date().toISOString(),
       versuche: 0,
     });
@@ -1336,12 +1360,16 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
     const d = doc.data() as {
       art?: string; clientOrderId?: string; orderId?: string; symbol?: string;
       side?: 'buy' | 'sell'; gebuchteMenge?: number; sollMenge?: number; at?: string; versuche?: number; lauf?: string;
+      quelle?: string;
     };
     if (!d.symbol || (d.side !== 'buy' && d.side !== 'sell') || !d.clientOrderId) {
       await doc.ref.delete().catch(() => undefined);
       continue;
     }
     const eroeffnend = d.art !== 'exit_offen';
+    // Einstiegsweg fürs Nachbuchen (Task 18): aus dem Vermerk, sonst aus der
+    // Lauf-Kennung (mom-/core-/man-); ein Scan-Zeitstempel bleibt offen.
+    const quelleNach = eroeffnend ? (d.quelle ?? quelleAusLauf(d.clientOrderId)) : null;
     const alter = Date.now() - Date.parse(String(d.at ?? ''));
     try {
       let stand = d.orderId
@@ -1375,6 +1403,7 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
             brokerOrderId: stand.id,
             source: 'engine',
             assetClass: classify(d.symbol),
+            ...(quelleNach ? { quelle: quelleNach } : {}),
             ...(eroeffnend
               ? { aufstockung: true, ...(d.side === 'sell' ? { openShort: true } : {}) }
               : { restStorniert: endzustand, riskExit: 'exit_nachlauf' }),
@@ -1564,7 +1593,10 @@ export async function bucheUnverbuchteFills(
       fillPreis?: number | null;
       brokerOrderId?: string | null;
       restStorniert?: boolean;
+      quelle?: string;
     };
+    // Einstiegsweg fürs Nachbuchen (Task 18) — s. bucheOffeneOrders.
+    const quelleNach = d.quelle ?? quelleAusLauf(laufKennungAusVermerk(doc.data()));
     /* `dran` enthält keine unbrauchbaren Einträge mehr — die sind oben
      * aussortiert. Der Guard bleibt trotzdem stehen: Er trägt die
      * Nicht-Null-Zusicherungen für den TypeScript-Pfad darunter. */
@@ -1592,6 +1624,7 @@ export async function bucheUnverbuchteFills(
         ...(d.brokerOrderId ? { brokerOrderId: d.brokerOrderId } : {}),
         source: 'engine',
         assetClass: classify(d.symbol),
+        ...(quelleNach ? { quelle: quelleNach } : {}),
         // Red-Team-Befund 25.08.: Ohne diese Zusicherung schließt
         // `schlussMenge` beim Nachbuchen IMMER die GANZE Position — bei
         // einem echten Teilfill (der Normalfall aus `pflegeSchutz`) eine
@@ -1642,6 +1675,9 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
    * schreiben. Der Bericht zählt solche Vorgänge als `fxLuecken`.
    */
   const fx = await fxFelder(new Date().toISOString(), currencyForSymbol(req.symbol));
+  // Einstiegsweg (Task 18) — pur aus dem Request, VOR der Transaktion; nur
+  // eine neu eröffnete (oder bisher ungestempelte) Position trägt ihn.
+  const einstieg = einstiegsQuelle({ quelle: req.quelle, source: req.source, bucket: req.bucket });
 
   return db.runTransaction(async (tx) => {
     const [userSnap, posSnap] = await Promise.all([tx.get(userRef), tx.get(posRef)]);
@@ -1754,6 +1790,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
           cover: true,
           ...(req.riskExit ? { riskExit: req.riskExit } : {}),
           ...(pos.bucket ? { bucket: pos.bucket } : {}),
+          ...(pos.quelle ? { quelle: pos.quelle } : {}),
         };
         // Teilschluss sammelt, voller Schluss meldet — wie im sell-Zweig.
         const teilBisher =
@@ -1824,6 +1861,9 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
           // Position aus `...pos`.
           ...(echterFill ? { broker: true } : {}),
           ...(req.brokerOrderId ? { brokerOrderId: req.brokerOrderId } : {}),
+          // Nur eine UNGESTEMPELTE Position bekommt den Weg der Aufstockung
+          // (Task 18) — der erste Einstieg behält sonst sein Etikett.
+          ...(!pos.quelle && einstieg ? { quelle: einstieg } : {}),
         });
         const trade: Trade & { nachkauf: boolean } = {
           symbol: req.symbol,
@@ -1884,6 +1924,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         highWater: eff, // Startpunkt des nachziehenden Stops
         ...(req.bucket ? { bucket: req.bucket } : {}),
         ...(req.core ? { core: true } : {}),
+        ...(einstieg ? { quelle: einstieg } : {}),
         // Beim Broker wirklich vorhanden? Entscheidet spaeter ueber Routing
         // des Exits und ueber den Abgleich (siehe Position.broker).
         ...(req.brokerOrderId ? { broker: true, brokerOrderId: req.brokerOrderId } : {}),
@@ -1953,6 +1994,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         openedAt: now,
         lowWater: eff, // Startpunkt des Short-Trailings
         ...(req.bucket ? { bucket: req.bucket } : {}),
+        ...(einstieg ? { quelle: einstieg } : {}),
         ...(req.brokerOrderId ? { broker: true, brokerOrderId: req.brokerOrderId } : {}),
       };
       const trade: Trade & { short: boolean } = {
@@ -1993,6 +2035,8 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         lowWater: Math.min(pos.lowWater ?? nAvg, eff),
         broker: true,
         ...(req.brokerOrderId ? { brokerOrderId: req.brokerOrderId } : {}),
+        // wie im Long-Zweig: nur eine UNGESTEMPELTE Position (Task 18)
+        ...(!pos.quelle && einstieg ? { quelle: einstieg } : {}),
       });
       const trade: Trade & { short: boolean; nachkauf: boolean } = {
         symbol: req.symbol,
@@ -2024,6 +2068,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       pnl: Math.round(pnl * 100) / 100,
       ...(req.riskExit ? { riskExit: req.riskExit } : {}),
       ...(pos.bucket ? { bucket: pos.bucket } : {}),
+      ...(pos.quelle ? { quelle: pos.quelle } : {}),
     };
     /* Teilschluss sammelt, voller Schluss meldet (23.08.).
      *

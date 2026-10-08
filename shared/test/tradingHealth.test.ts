@@ -251,6 +251,31 @@ describe('aggregateTradingHealth: Konten je Klasse', () => {
     expect(ohne.klassen.crypto).not.toHaveProperty('deckungPct');
   });
 
+  it('7-Tage-Sicht je Quelle (Task 18): eigene Summen, eigene Deckung, fehlt ohne Beitrag', () => {
+    const beitrag = (q: Record<string, { n: number; pnl: number; fees: number; notional: number }>, q7?: typeof q): AccountContribution => ({
+      stats: { n: 10, wins: 0, avgWin: 10, avgLoss: -10 },
+      byClass: { crypto: { n: 10, pnl: -5, notional: 1000 } },
+      byClassQuelle: { crypto: q },
+      ...(q7 ? { byClassQuelle7t: { crypto: q7 } } : {}),
+    });
+    const h = aggregateTradingHealth([
+      beitrag({ unbekannt: { n: 40, pnl: -40, fees: 4, notional: 4000 }, konfluenz: { n: 10, pnl: 5, fees: 1, notional: 1000 } }, { konfluenz: { n: 4, pnl: 2, fees: 0.4, notional: 400 } }),
+      beitrag({ unbekannt: { n: 5, pnl: -5, fees: 0.5, notional: 500 } }, { unbekannt: { n: 1, pnl: -1, fees: 0.1, notional: 100 } }),
+      beitrag({ konfluenz: { n: 3, pnl: 1, fees: 0.3, notional: 300 } }),
+    ]);
+    const c = h.klassen.crypto!;
+    // kumulativ: 13 bekannte von 58 → Altbestand drückt die Deckung …
+    expect(c.deckungPct).toBeCloseTo(22.4138, 3);
+    // … im Fenster: 4 von 5 — die Lücke entsteht kaum noch
+    expect(c.deckung7tPct).toBe(80);
+    expect(c.quellen7t?.konfluenz).toEqual({ n: 4, konten: 1, kantePct: null, gebuehrPct: null });
+    expect(c.quellen7t?.unbekannt).toEqual({ n: 1, konten: 1, kantePct: null, gebuehrPct: null });
+    const ohne7t = aggregateTradingHealth([beitrag({ konfluenz: { n: 3, pnl: 1, fees: 0.3, notional: 300 } })]);
+    expect(ohne7t.klassen.crypto).toHaveProperty('quellen');
+    expect(ohne7t.klassen.crypto).not.toHaveProperty('quellen7t');
+    expect(ohne7t.klassen.crypto).not.toHaveProperty('deckung7tPct');
+  });
+
   it('ein leerer Klassen-Eintrag ist kein Beitrag', () => {
     // Ein Eintrag mit n = 0 entsteht schon durch das bloße Anlegen einer
     // Watchlist — er hat nichts gemessen und darf die Vertrauensschwelle
@@ -517,8 +542,8 @@ describe('Wächter: die Klassen-Beträge hängen an der klassenweisen Zahl', () 
 
   it('je Quelle werden NUR Verhältnisse gebaut — kein pnl/fees-Feld im Quellen-Block (Task 17)', () => {
     const block = quelle.slice(
-      quelle.indexOf('const quellen: Record<string, QuellenBefund> = {};'),
-      quelle.indexOf('    klassen[name] = {'),
+      quelle.indexOf('const quellenBefund = ('),
+      quelle.indexOf('  for (const c of beitragend) {'),
     );
     expect(block.length).toBeGreaterThan(100);
     // Verhältnisse je Quelle hängen an der Konten-Schwelle JE QUELLE — der Hebel

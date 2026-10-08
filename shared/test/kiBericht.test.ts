@@ -184,6 +184,7 @@ describe('Task 17 — Quellen je Klasse im Lagebericht', () => {
             n: 146,
             kantePct: -0.42,
             deckungPct: 95.8901,
+            deckung7tPct: 100,
             quellen: {
               konfluenz: q(40, 3, 0.3, 0.5),
               momentum: q(100, 3, -0.9, 0.48),
@@ -200,7 +201,7 @@ describe('Task 17 — Quellen je Klasse im Lagebericht', () => {
     expect(zeilen[i + 1]).toContain('(Quelle = Einstiegsweg aus dem Steckbrief; ki_probe = nur KI-allein-Einstiege; sync/unbekannt = ohne Steckbrief, ');
     expect(zeilen[i + 1]).toContain('Buchungen = Tranchen der letzten 500 Buchungen je Konto, nur realisiert.');
     expect(zeilen[i + 1]).toContain('Kante/Gebühr je Quelle erst ab der Konten-Schwelle, sonst --.)');
-    expect(zeilen[i + 2]).toBe('  Deckung bekannter Einstiegswege: 95,89 %');
+    expect(zeilen[i + 2]).toBe('  Deckung bekannter Einstiegswege: 95,89 % (letzte 7 Tage: 100,00 %)');
     expect(zeilen[i + 3]).toBe('  · Quelle momentum: Buchungen 100, Konten 3, Kante -0.9 %, Gebühr 0.48 %');
     expect(zeilen[i + 4]).toBe('  · Quelle konfluenz: Buchungen 40, Konten 3, Kante 0.3 %, Gebühr 0.5 %');
     // ungemessen (--) steht HINTER den gemessenen, nicht in der Mitte (Red-Team M6)

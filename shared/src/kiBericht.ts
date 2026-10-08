@@ -125,6 +125,8 @@ export interface KiFakten {
         quellen?: Record<string, { n?: number; konten?: number; kantePct?: number | null; gebuehrPct?: number | null }>;
         /** Anteil der Buchungen mit bekanntem Einstiegsweg (0…100). */
         deckungPct?: number | null;
+        /** Dasselbe nur über die letzten 7 Tage (Task 18). */
+        deckung7tPct?: number | null;
       }
     >;
     exits?: Record<string, { share?: number; winRate?: number; n?: number }>;
@@ -218,7 +220,10 @@ export function baueEingabe(chronik: ErkenntnisChronik, fakten: KiFakten): strin
         );
         quellenErklaert = true;
       }
-      zeilen.push(`  Deckung bekannter Einstiegswege: ${typeof v.deckungPct === 'number' ? pz(v.deckungPct) : '--'} %`);
+      zeilen.push(
+        `  Deckung bekannter Einstiegswege: ${typeof v.deckungPct === 'number' ? pz(v.deckungPct) : '--'} %` +
+          ` (letzte 7 Tage: ${typeof v.deckung7tPct === 'number' ? pz(v.deckung7tPct) : '--'} %)`,
+      );
       for (const [q, w] of quellen) {
         zeilen.push(
           `  · Quelle ${q}: Buchungen ${w.n ?? 0}, Konten ${w.konten ?? 0}, Kante ${w.kantePct ?? '--'} %, Gebühr ${w.gebuehrPct ?? '--'} %`,

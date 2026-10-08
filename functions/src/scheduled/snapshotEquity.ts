@@ -438,6 +438,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
               bucket: t.get('bucket'),
               riskExit,
               sync: t.get('sync'),
+              quelle: t.get('quelle'),
             }),
             // Schlusszeitpunkt mitgeben — ohne ihn gibt es keine
             // zeitgefensterte Exit-Sicht (Task 115).
@@ -460,6 +461,10 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
       // vom 09.08. — erst zeigen, wenn sie Hunderte Alt-Trades überstimmt
       // hat. Das Fenster zeigt sie sofort.
       const exits7t = exitBreakdownSeit(closed, fensterSeit);
+      // Quellen NUR im 7-Tage-Fenster (Task 18, Red-Team M3): Die kumulative
+      // Sicht mischt Altbestand ohne Steckbrief mit heutiger Drift — erst das
+      // Fenster sagt, ob die Lücke noch entsteht oder nur noch nachhallt.
+      const quellen7t = attribution(closed.filter((t) => typeof t.at === 'string' && t.at >= fensterSeit)).byClassQuelle;
       const costs = costProfile(closed);
       const reibung = reibungsProfil(fills);
 
@@ -582,6 +587,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         // öffentliche Aggregat zeigt Kante und Gebühr je Quelle erst ab der
         // Konten-Schwelle; das eigene Konto darf seine Zahlen immer sehen.
         byClassQuelle: attr.byClassQuelle,
+        byClassQuelle7t: quellen7t,
         exits,
         exits7t,
         exits7tSeit: fensterSeit,
@@ -629,6 +635,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         byClass: attr.byClass,
         // … und je Einstiegsweg (Task 17): Welcher Pfad verbrennt Krypto?
         byClassQuelle: attr.byClassQuelle,
+        byClassQuelle7t: quellen7t,
         reibung,
       });
 

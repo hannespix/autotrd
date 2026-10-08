@@ -42,7 +42,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
-import { classify, isStrategy, resetLaeuft, type Strategy } from '../../../shared/src/index.js';
+import { classify, isStrategy, quelleAusLauf, resetLaeuft, type Strategy } from '../../../shared/src/index.js';
 import {
   alpacaOrderAbfragen,
   holeFillAktivitaeten,
@@ -273,6 +273,9 @@ export async function fillSyncKonto(
         source: 'engine',
         assetClass: classify(o.symbol),
         ausgefuehrtAt: o.zuletzt,
+        // Einstiegsweg aus der Lauf-Kennung der ERÖFFNENDEN Order (Task 18):
+        // mom-/core-/man- sind eindeutig, ein Scan-Zeitstempel nicht.
+        ...(!schliesst && quelleAusLauf(order.clientOrderId) ? { quelle: quelleAusLauf(order.clientOrderId)! } : {}),
         ...(schliesst
           ? { restStorniert: endzustand, riskExit: 'fill_sync' }
           : { aufstockung: true, ...(o.side === 'sell' ? { openShort: true } : {}) }),
@@ -307,7 +310,10 @@ export async function fillSyncKonto(
     fehlerFolge += 1;
     if (fehlerFolge >= FILL_FEHLER_MAX) {
       logger.error(`fillSync ${uid} ${o.symbol}: ${fehlt} Stück nach ${FILL_FEHLER_MAX} Fehlschlägen nicht buchbar (${r.reason ?? '?'}) — aufgegeben, Fall für die Übernahme`);
-      await merkeUnbookedFill(uid, o.symbol, o.side, fehlt, o.preis, o.orderId, 'fill-sync', r.reason ?? 'unbekannt', schliesst ? endzustand : undefined);
+      await merkeUnbookedFill(uid, o.symbol, o.side, fehlt, o.preis, o.orderId, 'fill-sync', r.reason ?? 'unbekannt', schliesst ? endzustand : undefined,
+        // Einstiegsweg aus der Order-Kennung (Task 18) — `laufId` ist hier nur 'fill-sync'
+        schliesst ? null : quelleAusLauf(order.clientOrderId),
+      );
       fehlerFolge = 0;
       cursorNeu = o.zuletzt > cursorNeu ? o.zuletzt : cursorNeu;
       continue;

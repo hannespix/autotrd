@@ -70,6 +70,8 @@ export interface AccountContribution {
   byClass?: Record<string, AttributionSlice> | undefined;
   /** Dasselbe je Klasse UND Einstiegsweg (Task 17, `attribution().byClassQuelle`). */
   byClassQuelle?: Record<string, Record<string, AttributionSlice>> | undefined;
+  /** Wie `byClassQuelle`, aber NUR über die letzten `EXIT_FENSTER_TAGE` (Task 18). */
+  byClassQuelle7t?: Record<string, Record<string, AttributionSlice>> | undefined;
   /**
    * Gemessene Ausführungs-Reibung je Klasse (19.08., `reibungsProfil`) —
    * Basispunkte, also Verhältnisse: Sie verraten keine Kontogröße und sind
@@ -129,6 +131,13 @@ export interface KlassenBefund {
    * nicht, und das muss vor der Zahl stehen, nicht dahinter.
    */
   deckungPct?: number | null;
+  /**
+   * `quellen`/`deckungPct` NUR über die letzten `EXIT_FENSTER_TAGE` (Task 18,
+   * Red-Team M3): Die kumulative Sicht mischt Altbestand ohne Steckbrief mit
+   * heutiger Drift. Erst das Fenster sagt, ob die Lücke NOCH entsteht.
+   */
+  quellen7t?: Record<string, QuellenBefund>;
+  deckung7tPct?: number | null;
 }
 
 /** Eine Einstiegs-Quelle innerhalb einer Klasse — nur Verhältnisse, und die erst ab der Konten-Schwelle. */
@@ -259,10 +268,48 @@ export function aggregateTradingHealth(
     string,
     { n: number; pnl: number; fees: number; notional: number; konten: number }
   > = {};
-  const quellenRoh: Record<
-    string,
-    Record<string, { n: number; pnl: number; fees: number; notional: number; konten: number }>
-  > = {};
+  type QuellenRoh = Record<string, Record<string, { n: number; pnl: number; fees: number; notional: number; konten: number }>>;
+  const quellenRoh: QuellenRoh = {};
+  const quellenRoh7t: QuellenRoh = {};
+  const quellenSammeln = (ziel: QuellenRoh, je: Record<string, Record<string, AttributionSlice>> | undefined): void => {
+    for (const [name, quellenJe] of Object.entries(je ?? {})) {
+      const q = ziel[name] ?? {};
+      for (const [quelle, slice] of Object.entries(quellenJe)) {
+        const s = q[quelle] ?? { n: 0, pnl: 0, fees: 0, notional: 0, konten: 0 };
+        s.n += slice.n;
+        s.pnl += slice.pnl;
+        s.fees += slice.fees ?? 0;
+        s.notional += slice.notional ?? 0;
+        if (slice.n > 0) s.konten += 1;
+        q[quelle] = s;
+      }
+      ziel[name] = q;
+    }
+  };
+  /* Quellen-Befund aus den Summen: nur Verhältnisse — bewusst KEIN pnl/fees
+   * — und die erst ab der Konten-Schwelle JE QUELLE (s. KlassenBefund.quellen).
+   * Dazu die Deckung: Anteil der Buchungen mit benanntem Einstiegsweg. */
+  const quellenBefund = (
+    je: QuellenRoh[string] | undefined,
+  ): { quellen: Record<string, QuellenBefund>; deckungPct: number | null } | null => {
+    if (!je) return null;
+    const quellen: Record<string, QuellenBefund> = {};
+    let buchungen = 0;
+    let bekannt = 0;
+    for (const [quelle, s] of Object.entries(je)) {
+      buchungen += s.n;
+      if (quelleBekannt(quelle)) bekannt += s.n;
+      const quoteOeffentlich = s.konten >= minAccountsPublic && s.notional > 0;
+      quellen[quelle] = {
+        n: s.n,
+        konten: s.konten,
+        kantePct: quoteOeffentlich ? r4((s.pnl / s.notional) * 100) : null,
+        gebuehrPct: quoteOeffentlich ? r4((s.fees / s.notional) * 100) : null,
+      };
+    }
+    if (Object.keys(quellen).length === 0) return null;
+    return { quellen, deckungPct: buchungen > 0 ? r4((bekannt / buchungen) * 100) : null };
+  };
 
   for (const c of beitragend) {
     const n = c.stats.n;
@@ -319,20 +366,10 @@ export function aggregateTradingHealth(
       if (slice.n > 0) kl.konten += 1;
       klassenRoh[name] = kl;
     }
-    // Je Klasse und Einstiegsweg (Task 17) — dieselbe Summenlogik.
-    for (const [name, je] of Object.entries(c.byClassQuelle ?? {})) {
-      const q = quellenRoh[name] ?? {};
-      for (const [quelle, slice] of Object.entries(je)) {
-        const s = q[quelle] ?? { n: 0, pnl: 0, fees: 0, notional: 0, konten: 0 };
-        s.n += slice.n;
-        s.pnl += slice.pnl;
-        s.fees += slice.fees ?? 0;
-        s.notional += slice.notional ?? 0;
-        if (slice.n > 0) s.konten += 1;
-        q[quelle] = s;
-      }
-      quellenRoh[name] = q;
-    }
+    // Je Klasse und Einstiegsweg (Task 17) — dieselbe Summenlogik; dazu das
+    // 7-Tage-Fenster (Task 18).
+    quellenSammeln(quellenRoh, c.byClassQuelle);
+    quellenSammeln(quellenRoh7t, c.byClassQuelle7t);
   }
 
   /* `oeffentlich` steht weiter unten, wird hier aber schon gebraucht — die
@@ -391,32 +428,16 @@ export function aggregateTradingHealth(
      * `k.konten <= accounts` gilt immer, die Prüfung ist also strikt
      * schärfer als die alte — nie lockerer. */
     const geldOeffentlich = k.konten >= minAccountsPublic;
-    const quellenJe = quellenRoh[name];
-    const quellen: Record<string, QuellenBefund> = {};
-    let buchungen = 0;
-    let bekannt = 0;
-    for (const [quelle, s] of Object.entries(quellenJe ?? {})) {
-      buchungen += s.n;
-      if (quelleBekannt(quelle)) bekannt += s.n;
-      // Nur Verhältnisse — bewusst KEIN pnl/fees — und die erst ab der
-      // Konten-Schwelle JE QUELLE (s. KlassenBefund.quellen).
-      const quoteOeffentlich = s.konten >= minAccountsPublic && s.notional > 0;
-      quellen[quelle] = {
-        n: s.n,
-        konten: s.konten,
-        kantePct: quoteOeffentlich ? r4((s.pnl / s.notional) * 100) : null,
-        gebuehrPct: quoteOeffentlich ? r4((s.fees / s.notional) * 100) : null,
-      };
-    }
+    const q = quellenBefund(quellenRoh[name]);
+    const q7 = quellenBefund(quellenRoh7t[name]);
     klassen[name] = {
       n: k.n,
       pnl: geldOeffentlich ? Math.round(k.pnl * 100) / 100 : null,
       fees: geldOeffentlich ? Math.round(k.fees * 100) / 100 : null,
       kantePct: k.notional > 0 ? r4((k.pnl / k.notional) * 100) : null,
       konten: k.konten,
-      ...(Object.keys(quellen).length > 0
-        ? { quellen, deckungPct: buchungen > 0 ? r4((bekannt / buchungen) * 100) : null }
-        : {}),
+      ...(q ? { quellen: q.quellen, deckungPct: q.deckungPct } : {}),
+      ...(q7 ? { quellen7t: q7.quellen, deckung7tPct: q7.deckungPct } : {}),
     };
   }
 
