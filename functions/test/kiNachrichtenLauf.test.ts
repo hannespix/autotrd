@@ -235,7 +235,7 @@ describe('Abdeckung und Ablage', () => {
     expect(sichtungDoc('alp-2')).toMatchObject({ ausgelassen: 'irrelevant' });
     expect(sichtungDoc('alp-3')).toMatchObject({ ausgelassen: 'nachzuegler' });
     expect(sichtungDoc('alp-4')).toMatchObject({ ausgelassen: 'sammelmeldung' });
-    expect(sichtungDoc('alp-1')).toMatchObject({ ausgelassen: null, kandidaten: ['ACME'], fehlend: [], promptV: 1, laufId: 'L1' });
+    expect(sichtungDoc('alp-1')).toMatchObject({ ausgelassen: null, kandidaten: ['ACME'], fehlend: [], promptV: 2, laufId: 'L1' });
     uhrMs += 5 * 60_000;
     const r2 = await lauf();
     expect(r2).toMatchObject({ geprueft: 1, handlungsfaehig: 1 });
@@ -597,8 +597,37 @@ describe('Sperre', () => {
   });
 });
 
+describe('Firmenprofil im Prompt (Teil 2b)', () => {
+  it('market/{sym}.profil landet als <firma>-Block in Sichtung UND Gegenprobe', async () => {
+    store.set('market/ACME', { profil: { branche: 'Software', marktkapMio: 12_500, gewinntermin: '2026-10-28' } });
+    meldung('alp-1');
+    await lauf();
+    uhrMs += 5 * 60_000;
+    await lauf();
+    expect(anfragen).toHaveLength(2);
+    for (const a of anfragen) {
+      expect(a.eingabe).toContain('<firma symbol="ACME">');
+      expect(a.eingabe).toContain('Marktkapitalisierung: 12.5 Mrd USD');
+      expect(a.eingabe).toContain('Branche: Software');
+    }
+  });
+
+  it('ohne Profil-Dokument kein Block — und Krypto wird gar nicht erst gelesen', async () => {
+    meldung('alp-1');
+    await lauf();
+    expect(anfragen[0]!.eingabe).not.toContain('<firma');
+    expect(store.has('market/ACME')).toBe(false);
+  });
+});
+
 describe('Quelltext-Wächter kiNachrichten', () => {
   const src = readFileSync(join(import.meta.dirname, '..', 'src', 'scheduled', 'kiNachrichten.ts'), 'utf8');
+
+  it('Firmenprofil geht in beide Prompts; nur Klassen mit Profil werden gelesen', () => {
+    expect(src).toContain('eingabe: sichtungEingabe(gruppe, paare, iso(), profile)');
+    expect(src).toContain('pruefungEingabe(m, k.symbol, k.urteil.richtung, k.urteil.ereignis, kontext, iso(), profile.get(k.symbol))');
+    expect(src).toContain('.filter((s) => PROFIL_KLASSEN.includes(classify(s)))');
+  });
 
   it('kein Weg zu einer Order: weder Broker- noch Routing-Modul importiert', () => {
     expect(src).not.toMatch(/from '\.\.\/core\/(broker|orderRouting|brokerAbgleich|schutzStop|kontoTore)\.js'/);
