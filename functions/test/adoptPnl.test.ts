@@ -7,7 +7,7 @@
  * Einständen vor dem Import-Fenster.
  */
 import { describe, expect, it } from 'vitest';
-import { importPnls } from '../src/callable/adoptBroker.js';
+import { einstiegsKennungen, importPnls } from '../src/callable/adoptBroker.js';
 import type { AlpacaGeschlosseneOrder } from '../src/core/alpacaBroker.js';
 
 const o = (
@@ -100,5 +100,58 @@ describe('importPnls mit shortsMoeglich (Short-Audit 07.08.)', () => {
     ]);
     expect(pnls.has('v0')).toBe(false);
     expect(pnls.get('v1')).toBe(15); // frische Eröffnung zählt wie bisher
+  });
+});
+
+describe('einstiegsKennungen — Task 18 (Red-Team H2/M3): die Order, die die AKTUELLE Position eröffnet hat', () => {
+  const o = (id: string, side: 'buy' | 'sell', qty: number, lauf: string, symbol = 'BTC-USD'): AlpacaGeschlosseneOrder => ({
+    id,
+    clientOrderId: `uid-${symbol.replace('-', '_')}-${side}-${qty}-${lauf}`,
+    symbol,
+    side,
+    qty,
+    kurs: 100,
+    filledAt: `2026-${id}T10:00:00Z`,
+  });
+
+  it('nach einem Flat-Punkt zählt der NEUE Einstieg, nicht die früheste Order aller Zeiten', () => {
+    const k = einstiegsKennungen([
+      o('07-14', 'buy', 1, 'mom-2026-07-14'), // Juli: Momentum
+      o('08-02', 'sell', 1, 'exit-2026-07-14T10_00_00_000Z-q1'), // August: flat
+      o('10-01', 'buy', 1, '2026-10-01T10_03Z'), // Oktober: Scan (mehrdeutig)
+    ]);
+    expect(k.get('buy|BTC-USD')).toBe('uid-BTC_USD-buy-1-2026-10-01T10_03Z');
+  });
+
+  it('eine Aufstockung behält die Kennung des ersten Einstiegs; eine geschlossene Position hat keine', () => {
+    const k = einstiegsKennungen([
+      o('09-01', 'buy', 1, 'core-2026-09-01'),
+      o('09-08', 'buy', 1, 'core-2026-09-08'),
+      o('09-15', 'sell', 1, 'exit-x-q1'),
+    ]);
+    expect(k.get('buy|BTC-USD')).toBe('uid-BTC_USD-buy-1-core-2026-09-01');
+    const zu = einstiegsKennungen([o('09-01', 'buy', 1, 'core-2026-09-01'), o('09-15', 'sell', 1, 'exit-x-q1')]);
+    expect(zu.size).toBe(0);
+  });
+
+  it('ein Verkauf einer bekannten Long-Position ist KEIN Short-Einstieg (Red-Team M3)', () => {
+    const k = einstiegsKennungen(
+      [o('09-01', 'buy', 2, 'core-2026-09-01'), o('09-15', 'sell', 1, 'mom-2026-09-15')],
+      { shortsMoeglich: true },
+    );
+    expect(k.get('sell|BTC-USD')).toBeUndefined();
+    expect(k.get('buy|BTC-USD')).toBe('uid-BTC_USD-buy-2-core-2026-09-01');
+  });
+
+  it('Shorts nur mit shortsMoeglich; die Deckung per Kauf schließt den Short', () => {
+    const ohne = einstiegsKennungen([o('09-01', 'sell', 1, 'man-2026-09-01T10_00Z')]);
+    expect(ohne.size).toBe(0);
+    const mit = einstiegsKennungen([o('09-01', 'sell', 1, 'man-2026-09-01T10_00Z')], { shortsMoeglich: true });
+    expect(mit.get('sell|BTC-USD')).toBe('uid-BTC_USD-sell-1-man-2026-09-01T10_00Z');
+    const gedeckt = einstiegsKennungen(
+      [o('09-01', 'sell', 1, 'man-2026-09-01T10_00Z'), o('09-02', 'buy', 1, 'exit-x-q1')],
+      { shortsMoeglich: true },
+    );
+    expect(gedeckt.size).toBe(0);
   });
 });

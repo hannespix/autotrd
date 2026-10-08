@@ -310,7 +310,10 @@ export async function fillSyncKonto(
     fehlerFolge += 1;
     if (fehlerFolge >= FILL_FEHLER_MAX) {
       logger.error(`fillSync ${uid} ${o.symbol}: ${fehlt} Stück nach ${FILL_FEHLER_MAX} Fehlschlägen nicht buchbar (${r.reason ?? '?'}) — aufgegeben, Fall für die Übernahme`);
-      await merkeUnbookedFill(uid, o.symbol, o.side, fehlt, o.preis, o.orderId, 'fill-sync', r.reason ?? 'unbekannt', schliesst ? endzustand : undefined);
+      await merkeUnbookedFill(uid, o.symbol, o.side, fehlt, o.preis, o.orderId, 'fill-sync', r.reason ?? 'unbekannt', schliesst ? endzustand : undefined,
+        // Einstiegsweg aus der Order-Kennung (Task 18) — `laufId` ist hier nur 'fill-sync'
+        schliesst ? null : quelleAusLauf(order.clientOrderId),
+      );
       fehlerFolge = 0;
       cursorNeu = o.zuletzt > cursorNeu ? o.zuletzt : cursorNeu;
       continue;

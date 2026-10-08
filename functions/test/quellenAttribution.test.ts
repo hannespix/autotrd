@@ -55,9 +55,22 @@ describe('Task 18 — Quelle beim Öffnen gestempelt, beim Schließen kopiert', 
     expect(zaehl(broker, '          ...(!pos.quelle && einstieg ? { quelle: einstieg } : {}),')).toBe(1);
   });
 
-  it('Verkauf UND Cover kopieren die Quelle als eigene Zeile — die Steckbrief-Zeile bleibt unverändert', () => {
+  it('Verkauf UND Cover kopieren die Quelle als eigene Zeile — JE ZWEIG verankert, nicht nur gezählt (Red-Team H1)', () => {
     expect(zaehl(broker, '...(pos.quelle ? { quelle: pos.quelle } : {}),')).toBe(2);
     expect(zaehl(broker, '...(pos.bucket ? { bucket: pos.bucket } : {}),')).toBe(2);
+    // Cover-Zweig: das Trade-Literal mit `cover: true` trägt die Kopie genau einmal
+    const coverStart = broker.indexOf('          cover: true,');
+    const cover = broker.slice(coverStart, broker.indexOf('        };', coverStart));
+    expect(zaehl(cover, '          ...(pos.quelle ? { quelle: pos.quelle } : {}),')).toBe(1);
+    // Verkaufs-Zweig: das Long-Schluss-Literal (6 Leerzeichen, `riskExit`-Zeile davor) ebenso
+    const sellStart = broker.indexOf("      side: 'sell',\n      qty,\n      ...(ganz ? {} : { teilSchluss: true as const }),");
+    expect(sellStart).toBeGreaterThan(coverStart);
+    const sell = broker.slice(sellStart, broker.indexOf('    };', sellStart));
+    expect(sell).toContain('      ...(pos.bucket ? { bucket: pos.bucket } : {}),\n      ...(pos.quelle ? { quelle: pos.quelle } : {}),\n');
+  });
+
+  it('die Aufstockung stempelt eine UNGESTEMPELTE Position nach — Long UND Short', () => {
+    expect(zaehl(broker, '...(!pos.quelle && einstieg ? { quelle: einstieg } : {}),')).toBe(2);
   });
 
   it('Gegenrichtung: nie einen Steckbrief aus der Quelle erfinden — die Lernstatistik hängt am bucket', () => {
@@ -81,7 +94,11 @@ describe('Task 18 — Quelle beim Öffnen gestempelt, beim Schließen kopiert', 
 
   it('fillSync stempelt nur ERÖFFNENDE Fills aus der Kennung der Order; adoptBroker erhält und ergänzt die Quelle', () => {
     expect(zaehl(fillSync, '...(!schliesst && quelleAusLauf(order.clientOrderId) ? { quelle: quelleAusLauf(order.clientOrderId)! } : {}),')).toBe(1);
-    expect(zaehl(adopt, 'const quelle = alt?.quelle ?? quelleJeSymbol.get(`${short ? \'sell\' : \'buy\'}|${p.symbol}`);')).toBe(1);
+    // auch der FEHLSCHLAG-Pfad reicht die Kennung an den Vermerk (Red-Team M1) — laufId ist dort nur 'fill-sync'
+    expect(zaehl(fillSync, "        schliesst ? null : quelleAusLauf(order.clientOrderId),\n      );")).toBe(1);
+    // adoptBroker: Quelle der Order, die die AKTUELLE Position eröffnet hat — nicht der frühesten aller Zeiten (Red-Team H2)
+    expect(zaehl(adopt, "const einstiegJeSymbol = einstiegsKennungen(eigeneOrders, { shortsMoeglich: strategy.signals.allowShort === true });")).toBe(1);
+    expect(zaehl(adopt, 'const quelle = alt?.quelle ?? quelleAusLauf(einstiegJeSymbol.get(`${short ? \'sell\' : \'buy\'}|${p.symbol}`));')).toBe(1);
     expect(zaehl(adopt, '      ...(quelle ? { quelle } : {}),')).toBe(1);
   });
 

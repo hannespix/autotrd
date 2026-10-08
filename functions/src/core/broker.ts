@@ -1791,7 +1791,6 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
           ...(req.riskExit ? { riskExit: req.riskExit } : {}),
           ...(pos.bucket ? { bucket: pos.bucket } : {}),
           ...(pos.quelle ? { quelle: pos.quelle } : {}),
-        ...(pos.quelle ? { quelle: pos.quelle } : {}),
         };
         // Teilschluss sammelt, voller Schluss meldet — wie im sell-Zweig.
         const teilBisher =
@@ -2036,6 +2035,8 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         lowWater: Math.min(pos.lowWater ?? nAvg, eff),
         broker: true,
         ...(req.brokerOrderId ? { brokerOrderId: req.brokerOrderId } : {}),
+        // wie im Long-Zweig: nur eine UNGESTEMPELTE Position (Task 18)
+        ...(!pos.quelle && einstieg ? { quelle: einstieg } : {}),
       });
       const trade: Trade & { short: boolean; nachkauf: boolean } = {
         symbol: req.symbol,
@@ -2067,6 +2068,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       pnl: Math.round(pnl * 100) / 100,
       ...(req.riskExit ? { riskExit: req.riskExit } : {}),
       ...(pos.bucket ? { bucket: pos.bucket } : {}),
+      ...(pos.quelle ? { quelle: pos.quelle } : {}),
     };
     /* Teilschluss sammelt, voller Schluss meldet (23.08.).
      *

@@ -120,6 +120,67 @@ export function historieAnker(createdAt: string, jetztMs: number): string {
  * eröffnet frisch. Long-only-Konten behalten das alte, für sie korrekte
  * Verhalten.
  */
+/**
+ * Kennung der Order, die die AKTUELL offene Position je Symbol und Seite
+ * eröffnet hat (Task 18, Red-Team H2): derselbe Replay wie `importPnls`,
+ * nur dass statt des P&L der ERSTE Einstieg nach dem letzten Flat-Punkt
+ * gemerkt wird. „Früheste Order aller Zeiten" wäre falsch — ein Symbol,
+ * das im Juli per Momentum gekauft, im August verkauft und im Oktober per
+ * Scan neu eröffnet wurde, trüge sonst das Momentum-Etikett.
+ *
+ * Short-Einstiege zählen nur mit `shortsMoeglich`; ein Verkauf, der eine
+ * vor dem Fenster eröffnete Long-Position schließt, sieht ohne Deckung wie
+ * ein Short-Einstieg aus — das Etikett gilt deshalb nur für Positionen,
+ * die der Broker auch als Short führt (Aufrufer prüft die Seite).
+ */
+export function einstiegsKennungen(
+  orders: AlpacaGeschlosseneOrder[],
+  opts: { shortsMoeglich?: boolean } = {},
+): Map<string, string> {
+  const longQty = new Map<string, number>();
+  const shortQty = new Map<string, number>();
+  const kennung = new Map<string, string>();
+  for (const o of orders) {
+    if (o.side === 'buy') {
+      let rest = o.qty;
+      const u = shortQty.get(o.symbol) ?? 0;
+      if (opts.shortsMoeglich === true && u > 0) {
+        const gegen = Math.min(u, rest);
+        const neu = u - gegen;
+        if (neu <= 1e-9) shortQty.delete(o.symbol);
+        else shortQty.set(o.symbol, neu);
+        rest -= gegen;
+      }
+      if (rest > 0) {
+        const l = longQty.get(o.symbol) ?? 0;
+        if (l <= 1e-9) kennung.set(`buy|${o.symbol}`, o.clientOrderId);
+        longQty.set(o.symbol, l + rest);
+      }
+    } else {
+      const l = longQty.get(o.symbol) ?? 0;
+      const menge = Math.min(o.qty, l);
+      if (menge > 0) {
+        const neu = l - menge;
+        if (neu <= 1e-9) longQty.delete(o.symbol);
+        else longQty.set(o.symbol, neu);
+      }
+      const rest = o.qty - menge;
+      if (rest > 0 && opts.shortsMoeglich === true) {
+        const s = shortQty.get(o.symbol) ?? 0;
+        if (s <= 1e-9) kennung.set(`sell|${o.symbol}`, o.clientOrderId);
+        shortQty.set(o.symbol, s + rest);
+      }
+    }
+  }
+  // Nur Positionen, die am Ende des Replays noch OFFEN sind, behalten ihre Kennung.
+  for (const key of [...kennung.keys()]) {
+    const [side, symbol] = key.split('|') as ['buy' | 'sell', string];
+    const offen = side === 'buy' ? (longQty.get(symbol) ?? 0) : (shortQty.get(symbol) ?? 0);
+    if (offen <= 1e-9) kennung.delete(key);
+  }
+  return kennung;
+}
+
 export function importPnls(
   orders: AlpacaGeschlosseneOrder[],
   opts: { shortsMoeglich?: boolean } = {},
@@ -310,18 +371,13 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
    *  (Audit 06.08.: vorher zählten nur Käufe, Shorts bekamen `now`). */
   const fruehesterKauf = new Map<string, string>();
   const fruehesterVerkauf = new Map<string, string>();
-  /** Einstiegsweg aus der Lauf-Kennung der frühesten eröffnenden Order (Task 18). */
-  const quelleJeSymbol = new Map<string, string>();
   for (const o of eigeneOrders) {
     const ziel = o.side === 'buy' ? fruehesterKauf : fruehesterVerkauf;
     const bisher = ziel.get(o.symbol);
-    if (!bisher || o.filledAt < bisher) {
-      ziel.set(o.symbol, o.filledAt);
-      const q = quelleAusLauf(o.clientOrderId);
-      if (q) quelleJeSymbol.set(`${o.side}|${o.symbol}`, q);
-      else quelleJeSymbol.delete(`${o.side}|${o.symbol}`);
-    }
+    if (!bisher || o.filledAt < bisher) ziel.set(o.symbol, o.filledAt);
   }
+  /** Einstiegsweg der Order, die die AKTUELLE Position eröffnet hat (Task 18, s. einstiegsKennungen). */
+  const einstiegJeSymbol = einstiegsKennungen(eigeneOrders, { shortsMoeglich: strategy.signals.allowShort === true });
 
   const now = new Date().toISOString();
   /* Schreib-Operationen SAMMELN statt direkt in einen Batch (Audit 06.08.):
@@ -375,7 +431,7 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     const avg = p.einstand;
     const schutz = schutzJeSymbol.get(p.symbol);
     const alt = bisherige.get(p.symbol);
-    const quelle = alt?.quelle ?? quelleJeSymbol.get(`${short ? 'sell' : 'buy'}|${p.symbol}`);
+    const quelle = alt?.quelle ?? quelleAusLauf(einstiegJeSymbol.get(`${short ? 'sell' : 'buy'}|${p.symbol}`));
     const position: Position = {
       symbol: p.symbol,
       qty: p.qty,
