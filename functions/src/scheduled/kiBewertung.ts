@@ -20,8 +20,10 @@ import {
   bewerteKiWirkung,
   bewerteUrteil,
   bucketsFuer,
+  fallSchluessel,
   isoWocheEt,
   KI_BEWERTUNG_V,
+  KI_GEWICHT_BUCKET,
   kiGewicht,
   kostenRateFuer,
   naechsterAktivitaetsZustand,
@@ -42,6 +44,8 @@ export interface KiBewertungResult {
   gelesen: number;
   offen: number;
   bewertet: number;
+  /** Bewertet, aber nicht gezählt — Geschwister desselben Falls (Symbol, Bezugstag). */
+  doppelt: number;
   verfallen: number;
   uebersprungen: number;
   gewicht: number;
@@ -69,29 +73,52 @@ export async function runKiBewertung(now = new Date()): Promise<KiBewertungResul
     await statsRef.set({ kiV: KI_BEWERTUNG_V }, { merge: true });
   }
 
+  /* Zwei Quellen (Red-Team 08.10., B4): Die indizierte Abfrage über
+   * `bewertet == false` (Urteile tragen das Feld seit Stufe 3 bei der Anlage)
+   * und — bis der Altbestand durch ist — ein Fenster über `decidedAt` für
+   * Dokumente OHNE das Feld. Ohne den Index-Pfad lieferte das Fenster bei
+   * mehr als 300 Urteilen in 45 Tagen immer dieselben ältesten, schon
+   * markierten Dokumente, und neue kamen erst mit Wochen Verzug dran. */
+  const coll = db.collection('kiUrteile');
+  let indiziert: FirebaseFirestore.QuerySnapshot | null = null;
+  try {
+    indiziert = await coll.where('bewertet', '==', false).orderBy('decidedAt', 'asc').limit(BATCH_LIMIT).get();
+  } catch (err) {
+    logger.warn('kiBewertung: Index (bewertet, decidedAt) noch nicht bereit — nur Fenster', err);
+  }
   const seit = new Date(now.getTime() - KI_BEWERTUNG_FENSTER_TAGE * 86_400_000).toISOString();
-  const snap = await db
-    .collection('kiUrteile')
-    .where('decidedAt', '>=', seit)
-    .orderBy('decidedAt', 'asc')
-    .limit(BATCH_LIMIT)
-    .get();
+  const fenster = await coll.where('decidedAt', '>=', seit).orderBy('decidedAt', 'asc').limit(BATCH_LIMIT).get();
 
-  const offenNachSymbol = new Map<string, Array<{ ref: FirebaseFirestore.DocumentReference; u: KiUrteilRoh }>>();
-  for (const d of snap.docs) {
-    if (d.get('bewertung')) continue; // genau eine Bewertung je Urteil
+  const offenNachSymbol = new Map<string, Array<{ ref: FirebaseFirestore.DocumentReference; u: KiUrteilRoh; alt: boolean }>>();
+  const gesehen = new Set<string>();
+  const aufnehmen = (d: FirebaseFirestore.QueryDocumentSnapshot, alt: boolean): void => {
+    if (gesehen.has(d.id)) return;
+    gesehen.add(d.id);
+    if (d.get('bewertung')) return; // genau eine Bewertung je Urteil
     const u = d.data() as KiUrteilRoh;
     const symbol = typeof u.symbol === 'string' ? u.symbol : null;
-    if (!symbol) continue;
+    if (!symbol) return;
     const list = offenNachSymbol.get(symbol) ?? [];
-    list.push({ ref: d.ref, u });
+    list.push({ ref: d.ref, u, alt });
     offenNachSymbol.set(symbol, list);
-  }
+  };
+  for (const d of indiziert?.docs ?? []) aufnehmen(d, false);
+  // Altbestand: nur Dokumente ohne das Feld — die mit `bewertet` kennt der Index.
+  for (const d of fenster.docs) if (d.get('bewertet') === undefined) aufnehmen(d, true);
+  const gelesen = (indiziert?.size ?? 0) + fenster.size;
 
   let offen = 0;
   let bewertet = 0;
+  let doppelt = 0;
   let verfallen = 0;
   let uebersprungen = 0;
+  // Fälle dieses Laufs (Symbol|Bezugstag) — Geschwister zählen nicht doppelt.
+  const faelleImLauf = new Set<string>();
+  const fallSchonGezaehlt = async (key: string): Promise<boolean> => {
+    if (faelleImLauf.has(key)) return true;
+    const snap = await coll.where('fall', '==', key).limit(1).get();
+    return !snap.empty;
+  };
 
   for (const [symbol, liste] of offenNachSymbol) {
     let schluesse: Array<{ date: string; close: number }>;
@@ -108,18 +135,31 @@ export async function runKiBewertung(now = new Date()): Promise<KiBewertungResul
     const batch = db.batch();
     const delta = new Map<string, KiFallStat>();
     let schreibt = false;
-    for (const { ref, u } of liste) {
+    for (const { ref, u, alt } of liste) {
       const r = bewerteUrteil(u, schluesse, kosten, today);
       if (r.stand === 'offen') {
         offen += 1;
+        // Altbestand bekommt das Feld, damit ihn ab jetzt der Index findet.
+        if (alt) {
+          batch.update(ref, { bewertet: false });
+          schreibt = true;
+        }
         continue;
       }
       schreibt = true;
-      batch.update(ref, { bewertung: { ...r, v: KI_BEWERTUNG_V, at: now.toISOString() } });
+      const key = fallSchluessel(u);
+      const istDoppelt = r.stand === 'bewertet' && key !== null && (await fallSchonGezaehlt(key));
+      batch.update(ref, {
+        bewertet: true,
+        ...(key !== null && r.stand === 'bewertet' && !istDoppelt ? { fall: key } : {}),
+        bewertung: { ...r, v: KI_BEWERTUNG_V, at: now.toISOString(), ...(istDoppelt ? { doppelt: true } : {}) },
+      });
       if (r.stand === 'verfallen') verfallen += 1;
       else if (r.stand === 'uebersprungen') uebersprungen += 1;
+      else if (istDoppelt) doppelt += 1;
       else {
         bewertet += 1;
+        if (key !== null) faelleImLauf.add(key);
         for (const b of bucketsFuer(u)) {
           const d = delta.get(b) ?? leer();
           d.n += 1;
@@ -144,10 +184,11 @@ export async function runKiBewertung(now = new Date()): Promise<KiBewertungResul
     await batch.commit();
   }
 
-  // Gewicht aus dem Stand NACH den Inkrementen — nur `wirksam`.
+  // Gewicht aus dem Stand NACH den Inkrementen — nur aus dem Gewichts-Bucket
+  // (tatsächlich abgegebene Long-Stimmen).
   const stand = await statsRef.get();
   const faelle = (stand.get('faelle') as Record<string, Partial<KiFallStat>> | undefined) ?? {};
-  const gewicht = kiGewicht(faelle['wirksam']);
+  const gewicht = kiGewicht(faelle[KI_GEWICHT_BUCKET]);
 
   // Untätigkeits-Alarm: Tagesdelta der Scan-Zähler (`wirkung`, per increment
   // aus dem Scan) gegen den gestrigen Stand, letzte fünf Handelstage halten.
@@ -174,7 +215,7 @@ export async function runKiBewertung(now = new Date()): Promise<KiBewertungResul
   const wochentagEt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(now);
   let wocheGemeldet = false;
   if (wochentagEt === 'Fri' && stand.get('wocheGemeldet') !== woche) {
-    const text = wochenNachricht(woche, faelle['wirksam'], faelle['gesamt'], gewicht);
+    const text = wochenNachricht(woche, faelle[KI_GEWICHT_BUCKET], faelle['gesamt'], gewicht);
     const admins = await db.collection('users').where('admin', '==', true).get();
     for (const a of admins.docs) {
       await a.ref.collection('nachrichten').add({ von: 'admin', text, at: now.toISOString() }).catch(() => undefined);
@@ -187,7 +228,7 @@ export async function runKiBewertung(now = new Date()): Promise<KiBewertungResul
       kiV: KI_BEWERTUNG_V,
       gewicht,
       at: now.toISOString(),
-      letzterLauf: { gelesen: snap.size, offen, bewertet, verfallen, uebersprungen },
+      letzterLauf: { gelesen, offen, bewertet, doppelt, verfallen, uebersprungen },
       wirkungStand: { lageScans: wirkung.lageScans ?? 0, aktionen: wirkung.aktionen ?? 0, at: now.toISOString() },
       wirkungTage: tage,
       ...(wocheGemeldet ? { wocheGemeldet: woche } : {}),
@@ -203,7 +244,7 @@ export async function runKiBewertung(now = new Date()): Promise<KiBewertungResul
           offen,
           verfallen,
           gewicht,
-          faelleWirksam: faelle['wirksam']?.n ?? 0,
+          faelleWirksam: faelle[KI_GEWICHT_BUCKET]?.n ?? 0,
           faelleGesamt: faelle['gesamt']?.n ?? 0,
         },
         kiWirkung: zustand,
@@ -212,13 +253,14 @@ export async function runKiBewertung(now = new Date()): Promise<KiBewertungResul
     )
     .catch((err) => logger.warn('kiBewertung: Herzschlag nicht geschrieben', err));
 
+  // warn, nicht error: Nichts ist kaputt — es wird nur nicht gehandelt (B5).
   if (zustand.aktiv && (health.get('kiWirkung') as AktivitaetZustand | undefined)?.aktiv !== true) {
-    logger.error(`KIWIRKUNG: ${zustand.text}`);
+    logger.warn(`KIWIRKUNG: ${zustand.text}`);
   }
   logger.info(
-    `kiBewertung: ${bewertet} bewertet, ${verfallen} verfallen, ${offen} offen, ${uebersprungen} übersprungen, Gewicht ×${gewicht}`,
+    `kiBewertung: ${bewertet} bewertet, ${doppelt} doppelt, ${verfallen} verfallen, ${offen} offen, ${uebersprungen} übersprungen, Gewicht ×${gewicht}`,
   );
-  return { gelesen: snap.size, offen, bewertet, verfallen, uebersprungen, gewicht, wirkungAlarm: zustand.aktiv, wocheGemeldet };
+  return { gelesen, offen, bewertet, doppelt, verfallen, uebersprungen, gewicht, wirkungAlarm: zustand.aktiv, wocheGemeldet };
 }
 
 export const kiBewertung = onSchedule(

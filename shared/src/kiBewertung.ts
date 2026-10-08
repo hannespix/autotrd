@@ -36,12 +36,21 @@
  */
 import { classify } from './universe.js';
 import { roundtripFeeRateForClass } from './strategy.js';
+import { marketOpenForClass } from './marketHours.js';
 
 export const KI_BEWERTUNG_V = 1;
-/** Ab so vielen bewerteten WIRKSAMEN Fällen spricht das Gewicht. */
-export const KI_MIN_FAELLE = 20;
+/** Ab so vielen bewerteten WIRKSAMEN Fällen spricht das Gewicht (Red-Team 08.10., B3:
+ *  bei 20 Fällen erreicht jede achte Münzwurf-KI 65 % — 40 halbiert das). */
+export const KI_MIN_FAELLE = 40;
 export const KI_GEWICHT_MIN = 0.25;
-export const KI_GEWICHT_MAX = 2;
+/**
+ * Deckel 1 — Stufe 3 darf DÄMPFEN, nicht verstärken (Red-Team 08.10.):
+ * Ohne Benchmark gegen die unbedingte Bewegung und ohne Holdout ist eine
+ * Quote über 50 % keine Evidenz für mehr Größe. Verstärkung (bis 2) kommt
+ * erst mit Stufe 4 (Out-of-Sample-Prüfung). Die Messung läuft trotzdem
+ * vollständig — nur die Wette bleibt die halbe.
+ */
+export const KI_GEWICHT_MAX = 1;
 /** Bezugstag älter als so viele Kalendertage ohne genug Kerzen → verfallen (nie bewerten). */
 export const KI_VERFALL_TAGE = 30;
 /** Horizont-Deckel in Handelstagen (die Gegenprobe klemmt 1–10). */
@@ -60,6 +69,8 @@ export interface KiUrteilRoh {
   firstSeenAt?: string;
   decidedAt?: string;
   gespeichertAt?: unknown;
+  /** Vom Scan gesetzt, sobald das Urteil tatsächlich eine Einstiegsstimme abgegeben hat (Stufe 3). */
+  gestimmtAt?: unknown;
   sichtung?: { ereignis?: string } | null;
   pruefung?: { kurskontext?: { aktuell?: { p?: number; t?: string } | null } | null } | null;
 }
@@ -113,7 +124,12 @@ export function bezugZeitMs(u: KiUrteilRoh): number | null {
   return werte.length === 0 ? null : Math.max(...werte);
 }
 
-/** Kalendertag in New York (Tagesschlüsse tragen das Börsendatum). */
+/** Kalendertag in New York (Tagesschlüsse tragen das Börsendatum).
+ *
+ *  Regel für Katalogerweiterungen (Red-Team 08.10., B10): `s.date > bezugTag`
+ *  ist nur dann lookahead-frei, wenn keine Börse ihren Tag D+1 schließt, bevor
+ *  der ET-Tag D endet. Heutiger Katalog (US, ^N225, ^GDAXI, Krypto in UTC)
+ *  erfüllt das; eine Börse in UTC+12/13 (z. B. NZX) bräche es. */
 export function etTag(ms: number): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York',
@@ -155,8 +171,18 @@ export function bewerteUrteil(
     .filter((s) => s.date > bezugTag && Number.isFinite(s.close) && s.close > 0)
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
-  const gesehen = u.pruefung?.kurskontext?.aktuell?.p;
-  const einstiegAusUrteil = typeof gesehen === 'number' && Number.isFinite(gesehen) && gesehen > 0;
+  // Der Kurs im Urteil ist der letzte Trade beim Beginn des Prüf-Laufs. Nach
+  // Börsenschluss oder vor der Eröffnung ist das ein Kurs VOR der Nachricht
+  // (der Vortagsschluss) — der komplette Gap zählte als „Treffer", obwohl die
+  // Engine ihn nie bekommt (Red-Team 08.10., B1). Deshalb nur, wenn der Trade
+  // NACH dem ersten Sehen der Meldung lag; sonst der erste Schluss danach.
+  const aktuell = u.pruefung?.kurskontext?.aktuell;
+  const gesehen = aktuell?.p;
+  const gesehenT = zeitMs(aktuell?.t);
+  const seitSehen = zeitMs(u.firstSeenAt) ?? zeitMs(u.decidedAt);
+  const einstiegAusUrteil =
+    typeof gesehen === 'number' && Number.isFinite(gesehen) && gesehen > 0
+    && gesehenT !== null && seitSehen !== null && gesehenT >= seitSehen;
   // Ohne Kurs im Urteil ist der Einstieg der erste Schluss nach dem Bezug —
   // der Horizont läuft dann ab DIESEM Schluss, nicht ab dem Bezugstag.
   const start = einstiegAusUrteil ? 0 : 1;
@@ -206,20 +232,49 @@ export interface KiFallStat {
   bruttoSum: number;
 }
 
+/** War der Markt der Klasse zur Bezugszeit offen? (Nur dann konnte die Engine binnen 120 min handeln.) */
+export function handelbarZurBezugszeit(u: KiUrteilRoh): boolean {
+  const bezug = bezugZeitMs(u);
+  if (bezug === null || typeof u.symbol !== 'string') return false;
+  return marketOpenForClass(classify(u.symbol), new Date(bezug));
+}
+
 /**
  * Welche Buckets ein bewertetes Urteil füllt: immer `gesamt`, dazu die Stufe,
- * `wirksam` (hätte in Stufe 2b handeln dürfen) oder `schatten`, und das
- * Ereignis. Das Gewicht kommt NUR aus `wirksam` — gemessen wird, was
- * tatsächlich Trades treibt.
+ * `wirksam_long`/`wirksam_short` oder `schatten`, `handelbar`/`ausserhalb`
+ * und das Ereignis.
+ *
+ * `wirksam` heißt seit dem Red-Team vom 08.10. (B7): Der Scan hat für dieses
+ * Urteil TATSÄCHLICH eine Einstiegsstimme abgegeben (`gestimmtAt`) — nicht
+ * „hätte dürfen". Nur das misst, was Trades treibt. Long und Short getrennt
+ * (B6): Ein negatives Urteil ist für Konten ohne Short ein Veto, kein
+ * Short-Gewinn — eine andere Größe. Das Gewicht kommt NUR aus `wirksam_long`.
  */
+export const KI_GEWICHT_BUCKET = 'wirksam_long';
+
 export function bucketsFuer(u: KiUrteilRoh): string[] {
   const out = ['gesamt'];
   out.push(u.stufe === 'pruefung' ? 'pruefung' : 'sichtung');
-  const wirksam = u.handlungsfaehig === true && u.eingepreist !== 'ja';
-  out.push(wirksam ? 'wirksam' : 'schatten');
+  const gestimmt = zeitMs(u.gestimmtAt) !== null;
+  if (gestimmt && u.richtung === 'positiv') out.push('wirksam_long');
+  else if (gestimmt && u.richtung === 'negativ') out.push('wirksam_short');
+  else out.push('schatten');
+  out.push(handelbarZurBezugszeit(u) ? 'handelbar' : 'ausserhalb');
   const ereignis = u.sichtung?.ereignis;
   if (typeof ereignis === 'string' && /^[a-z]+$/.test(ereignis)) out.push(`ereignis_${ereignis}`);
   return out;
+}
+
+/**
+ * Fall statt Dokument (Red-Team 08.10., B3a): Jeder Folgeartikel ist ein
+ * eigenes Urteil mit demselben Ergebnis — Stufe 2b handelt je Symbol und
+ * 6 h genau einmal. Gezählt wird deshalb ein Fall je (Symbol, Bezugstag);
+ * Geschwister bekommen ihre Bewertung, zählen aber nicht ins Aggregat.
+ */
+export function fallSchluessel(u: KiUrteilRoh): string | null {
+  const bezug = bezugZeitMs(u);
+  if (bezug === null || typeof u.symbol !== 'string') return null;
+  return `${u.symbol}|${etTag(bezug)}`;
 }
 
 const clamp = (lo: number, hi: number, v: number): number => Math.min(hi, Math.max(lo, v));
@@ -248,9 +303,10 @@ export function kiGewicht(stat: Partial<KiFallStat> | null | undefined): number 
  * Urteil → Handel (Tore, Schwellen, Budget) — genau die Untätigkeit, vor der
  * der Owner gewarnt hat. Gelb, nicht rot: nichts ist kaputt, es wird nur
  * nicht gehandelt. */
-export const KI_WIRKUNG_TAGE = 2;
-/** Mindestens so viele Scans mit handlungsfähiger Lage (≈ eine Handelsstunde). */
-export const KI_WIRKUNG_LAGE_MIN = 12;
+export const KI_WIRKUNG_TAGE = 3;
+/** Mindestens so viele Scans mit HANDELBARER Lage (Urteil ≤ 120 min alt, Markt offen) —
+ *  ein einzelnes Urteil liefert höchstens 24 (Red-Team 08.10., B5). */
+export const KI_WIRKUNG_LAGE_MIN = 24;
 
 export interface KiWirkungTag {
   tag: string;

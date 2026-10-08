@@ -23,6 +23,10 @@ const scan = lese('functions', 'src', 'scheduled', 'scanMarket.ts');
 const index = lese('functions', 'src', 'index.ts');
 const scheduler = lese('scripts-ci', 'check-scheduler.mjs');
 const aktion = lese('shared', 'src', 'kiAktion.ts');
+const nachrichten = lese('functions', 'src', 'scheduled', 'kiNachrichten.ts');
+const indexe = JSON.parse(lese('firestore.indexes.json')) as {
+  indexes: Array<{ collectionGroup: string; queryScope: string; fields: Array<{ fieldPath: string; order: string }> }>;
+};
 
 describe('Fassung', () => {
   it('verwirft Zähler einer anderen Fassung, nie die aktuelle oder eine fehlende', () => {
@@ -52,17 +56,30 @@ describe('Bewertungslauf — Verdrahtung', () => {
     expect(block).toContain('continue;');
     expect(block).not.toContain('verfallen');
   });
+  it('B4: indizierte Abfrage über bewertet == false, Altbestand nur über das Fenster — Urteile tragen das Feld seit der Anlage', () => {
+    expect(lauf).toContain("indiziert = await coll.where('bewertet', '==', false).orderBy('decidedAt', 'asc').limit(BATCH_LIMIT).get();");
+    expect(lauf).toContain("for (const d of fenster.docs) if (d.get('bewertet') === undefined) aufnehmen(d, true);");
+    expect(lauf).toContain('batch.update(ref, { bewertet: false });');
+    const idx = indexe.indexes.find((i) => i.collectionGroup === 'kiUrteile');
+    expect(idx?.fields.map((f) => `${f.fieldPath}:${f.order}`)).toEqual(['bewertet:ASCENDING', 'decidedAt:ASCENDING']);
+    expect(nachrichten.split('bewertet: false').length - 1).toBe(3); // urteilSchreiben + zwei Batch-Anlagen
+  });
+  it('B3a: ein Fall je (Symbol, Bezugstag) — Geschwister werden bewertet, aber nicht gezählt', () => {
+    expect(lauf).toContain("const snap = await coll.where('fall', '==', key).limit(1).get();");
+    expect(lauf).toContain("const istDoppelt = r.stand === 'bewertet' && key !== null && (await fallSchonGezaehlt(key));");
+    expect(lauf).toContain('else if (istDoppelt) doppelt += 1;');
+  });
   it('genau eine Bewertung je Urteil; Marker und Aggregat im selben Batch', () => {
-    expect(lauf).toContain("if (d.get('bewertung')) continue;");
-    expect(lauf).toContain('batch.update(ref, { bewertung: { ...r, v: KI_BEWERTUNG_V, at: now.toISOString() } });');
+    expect(lauf).toContain("if (d.get('bewertung')) return; // genau eine Bewertung je Urteil");
+    expect(lauf).toContain('bewertet: true,');
     expect(lauf).toContain("args.push(new FieldPath('faelle', b, 'n'), FieldValue.increment(d.n));");
     expect(lauf).toContain('(batch.update as (...a: unknown[]) => unknown)(statsRef, ...args);');
     const aggregat = lauf.indexOf('(batch.update as (...a: unknown[]) => unknown)(statsRef, ...args);');
     const commit = lauf.indexOf('await batch.commit();', aggregat);
     expect(commit).toBeGreaterThan(aggregat);
   });
-  it('das Gewicht kommt NUR aus dem Bucket `wirksam`', () => {
-    expect(lauf).toContain("const gewicht = kiGewicht(faelle['wirksam']);");
+  it('das Gewicht kommt NUR aus dem Gewichts-Bucket (tatsächlich abgegebene Long-Stimmen)', () => {
+    expect(lauf).toContain('const gewicht = kiGewicht(faelle[KI_GEWICHT_BUCKET]);');
     expect(lauf.split('kiGewicht(').length - 1).toBe(1);
   });
   it('nur Summen nach meta/kiStats und meta/health — keine Kontokennung, keine Trades', () => {
@@ -89,12 +106,42 @@ describe('Scan — Anwendung des Gewichts', () => {
     expect(scan).toContain('let kiGewichtFaktor = 1;');
   });
   it('das Gewicht erreicht genau zwei Stellen: Stimme und Probegröße — keinen Stop, kein Veto', () => {
-    expect(scan.split('kiGewichtFaktor').length - 1).toBe(5); // let, Zuweisung, kiLauf.gewicht, kiStimme, kiGroessenFaktor
-    expect(scan).toContain('kiGenutzt[symbol] as KiGenutzt | undefined,\n          kiGewichtFaktor,\n        );');
+    expect(scan).toMatch(/kiGenutzt\[symbol\] as KiGenutzt \| undefined,\s*kiGewichtFaktor,\s*\);/);
     expect(scan).toContain('const kiFaktor = kiGroessenFaktor(ohneKi, direction, kiGewichtFaktor);');
-    // kiPositionsAktion (Stops/Ausstiege) und kiVeto kennen das Gewicht nicht.
-    expect(scan).not.toMatch(/kiPositionsAktion\([^)]*kiGewichtFaktor/s);
-    expect(scan).not.toMatch(/kiVeto\([^)]*kiGewichtFaktor/s);
+    // Jede Verwendung außerhalb dieser zwei Stellen (und Deklaration/Zuweisung/
+    // Herzschlag) wäre ein neuer Pfad — hier aufgelistet, damit er auffällt.
+    const zeilen = scan.split('\n').filter((z) => z.includes('kiGewichtFaktor'));
+    const erlaubt = [/let kiGewichtFaktor = 1;/, /kiGewichtFaktor = kiGewicht\(/, /gewicht: kiGewichtFaktor,/, /^\s*kiGewichtFaktor,$/, /kiGroessenFaktor\(ohneKi, direction, kiGewichtFaktor\)/];
+    for (const z of zeilen) expect(erlaubt.some((re) => re.test(z))).toBe(true);
+    // kiPositionsAktion (Stops/Ausstiege) und kiVeto kennen das Gewicht nicht —
+    // geprüft über den Aufruf bis zum schließenden `);`.
+    for (const fn of ['kiPositionsAktion(', 'kiVeto(']) {
+      let von = scan.indexOf(fn);
+      expect(von).toBeGreaterThan(-1);
+      while (von !== -1) {
+        const bis = scan.indexOf(');', von);
+        expect(scan.slice(von, bis)).not.toContain('kiGewichtFaktor');
+        von = scan.indexOf(fn, von + 1);
+      }
+    }
+  });
+  it('B2: KI-Alleingang ist ein eigener Marker — Hebel-Sperre, Probe-Etikett und Bucket hängen NICHT am Zahlenwert', () => {
+    expect(scan).toContain("const kiAllein = direction !== 'hold' && ohneKi !== direction;");
+    expect(scan.split('const budget = kiAllein ? null : hebelBudget(konfluenz, {').length - 1).toBe(2);
+    expect(scan).toContain('if (kiAllein) kiLauf.probe += 1;');
+    expect(scan).toContain('const gebucht = kiAllein ? bucketKey(');
+    expect(scan).toContain('&& !kiAllein ? { soloTrend: true }');
+    expect(scan).not.toContain('kiFaktor < 1');
+    expect(scan).not.toContain('kiFaktor === 1');
+  });
+  it('B7: der Scan markiert, welche Urteile tatsächlich gestimmt haben (nur Zeitstempel)', () => {
+    expect(scan).toContain("if (kiVote && kiSig && kiVote.dir === direction) kiGestimmt.add(`${kiSig.newsId}_${symbol}`);");
+    expect(scan).toContain("b.set(db.doc(`kiUrteile/${id}`), { gestimmtAt: new Date().toISOString() }, { merge: true });");
+  });
+  it('B5: Lage zählt nur, was JETZT handelbar ist (Einstiegsfenster, Markt offen)', () => {
+    expect(scan).toContain('&& Date.now() - Date.parse(s.firstSeenAt) <= KI_EINSTIEG_MAX_MIN * 60_000');
+    expect(scan).toContain('&& marketOpenForClass(classify(s.symbol), new Date()),');
+    expect(lauf).toContain('logger.warn(`KIWIRKUNG: ${zustand.text}`);');
   });
   it('zählt je Scan Lage und Aktionen für den Untätigkeits-Alarm (nur Zähler)', () => {
     expect(scan).toContain('lageScans: FieldValue.increment(kiLaufGesamt.lage > 0 ? 1 : 0),');

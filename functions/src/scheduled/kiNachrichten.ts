@@ -370,7 +370,7 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
     /** Urteil schreiben und die Arbeitsliste räumen. */
     const urteilSchreiben = async (m: Pick<Offen, 'newsId' | 'publishedAt' | 'firstSeenAt'>, symbol: string, daten: Record<string, unknown>): Promise<void> => {
       await anlegen(`kiUrteile/${urteilId(m.newsId, symbol)}`, {
-        newsId: m.newsId, symbol, publishedAt: m.publishedAt, firstSeenAt: m.firstSeenAt, decidedAt: iso(), ...daten,
+        newsId: m.newsId, symbol, publishedAt: m.publishedAt, firstSeenAt: m.firstSeenAt, decidedAt: iso(), bewertet: false, ...daten,
       });
       await db.doc(`kiOffen/${urteilId(m.newsId, symbol)}`).delete().catch(() => undefined);
     };
@@ -649,10 +649,10 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
       const batch = db.batch();
       for (const u of kandidaten) batch.create(db.doc(`kiOffen/${urteilId(m.id, u.symbol)}`), { ...kopf, ...ref, symbol: u.symbol, urteil: u });
       for (const u of eigene.filter((x) => !kandidaten.includes(x))) {
-        batch.create(db.doc(`kiUrteile/${urteilId(m.id, u.symbol)}`), { ...kopf, ...ref, symbol: u.symbol, decidedAt: iso(), sichtung: u, ...endUrteil(u, null, null), sichtungAufrufId: aufrufId });
+        batch.create(db.doc(`kiUrteile/${urteilId(m.id, u.symbol)}`), { ...kopf, ...ref, symbol: u.symbol, decidedAt: iso(), bewertet: false, sichtung: u, ...endUrteil(u, null, null), sichtungAufrufId: aufrufId });
       }
       for (const symbol of fehlend) {
-        batch.create(db.doc(`kiUrteile/${urteilId(m.id, symbol)}`), { ...kopf, ...ref, symbol, decidedAt: iso(), sichtung: null, richtung: null, handlungsfaehig: false, stufe: 'sichtung', ohnePruefung: 'unlesbar', sichtungAufrufId: aufrufId });
+        batch.create(db.doc(`kiUrteile/${urteilId(m.id, symbol)}`), { ...kopf, ...ref, symbol, decidedAt: iso(), bewertet: false, sichtung: null, richtung: null, handlungsfaehig: false, stufe: 'sichtung', ohnePruefung: 'unlesbar', sichtungAufrufId: aufrufId });
       }
       batch.create(db.doc(`kiSichtungen/${m.id}`), {
         ...kopf, ...ref, symbole: m.symbole, entschiedenAt: iso(), ausgelassen: null,

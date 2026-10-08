@@ -72,7 +72,7 @@ describe('die Trendstimme wird ab jetzt einzeln abgerechnet', () => {
     // Konfluenz unter der Latte, weil die KI den Einstieg trägt — sonst
     // landeten KI-Wetten in der Trendsolo-Kohorte und verfälschten beide.
     expect(scan).toContain(
-      '...(konfluenz < clamped.signals.minConfluence && kiFaktor === 1 ? { soloTrend: true } : {}),',
+      '...(konfluenz < clamped.signals.minConfluence && !kiAllein ? { soloTrend: true } : {}),',
     );
   });
 

@@ -12,7 +12,10 @@ import {
   bezugZeitMs,
   bucketsFuer,
   etTag,
+  fallSchluessel,
+  handelbarZurBezugszeit,
   isoWocheEt,
+  KI_GEWICHT_BUCKET,
   KI_GEWICHT_MAX,
   KI_GEWICHT_MIN,
   KI_MIN_FAELLE,
@@ -48,6 +51,7 @@ const urteil = (extra: Partial<KiUrteilRoh> = {}): KiUrteilRoh => ({
   firstSeenAt: '2026-09-01T13:30:00Z',
   decidedAt: '2026-09-01T13:40:00Z',
   gespeichertAt: { seconds: Date.parse('2026-09-01T13:41:00Z') / 1000 },
+  gestimmtAt: '2026-09-01T13:45:00Z',
   sichtung: { ereignis: 'zahlen' },
   pruefung: { kurskontext: { aktuell: { p: 100.5, t: '2026-09-01T13:40:00Z' } } },
   ...extra,
@@ -85,6 +89,13 @@ describe('bewerteUrteil — Gate und Rechnung', () => {
     expect(r.kostenPct).toBe(0.1);
     expect(r.nettoPct).toBeCloseTo(r.bruttoPct - 0.1, 3);
     expect(r.treffer).toBe(true);
+  });
+  it('B1: ein Urteilskurs VOR dem ersten Sehen (Vortagsschluss nach Börsenschluss) zählt nicht — dann der Schluss danach', () => {
+    const alt = urteil({ pruefung: { kurskontext: { aktuell: { p: 100.5, t: '2026-09-01T13:00:00Z' } } } }); // Trade vor firstSeenAt 13:30
+    const r = bewerteUrteil(alt, schluesse, 0, '2026-09-10');
+    expect(r.stand === 'bewertet' && r.einstiegQuelle === 'schluss' && r.einstieg === 102).toBe(true);
+    const ohneT = urteil({ pruefung: { kurskontext: { aktuell: { p: 100.5 } } } });
+    expect(bewerteUrteil(ohneT, schluesse, 0, '2026-09-10')).toMatchObject({ einstiegQuelle: 'schluss' });
   });
   it('negatives Urteil: Richtung gespiegelt', () => {
     const r = bewerteUrteil(urteil({ richtung: 'negativ' }), schluesse, 0, '2026-09-10');
@@ -138,34 +149,47 @@ describe('bewerteUrteil — Gate und Rechnung', () => {
   });
 });
 
-describe('Buckets', () => {
-  it('gesamt, Stufe, wirksam/schatten, Ereignis', () => {
-    expect(bucketsFuer(urteil())).toEqual(['gesamt', 'pruefung', 'wirksam', 'ereignis_zahlen']);
-    expect(bucketsFuer(urteil({ eingepreist: 'ja' }))).toEqual(['gesamt', 'pruefung', 'schatten', 'ereignis_zahlen']);
-    expect(bucketsFuer(urteil({ handlungsfaehig: false, stufe: 'sichtung', sichtung: { ereignis: 'X Y' } }))).toEqual([
-      'gesamt', 'sichtung', 'schatten',
+describe('Buckets und Fälle', () => {
+  it('wirksam heißt: der Scan hat TATSÄCHLICH gestimmt (gestimmtAt) — Long und Short getrennt', () => {
+    expect(KI_GEWICHT_BUCKET).toBe('wirksam_long');
+    expect(bucketsFuer(urteil())).toEqual(['gesamt', 'pruefung', 'wirksam_long', 'handelbar', 'ereignis_zahlen']);
+    expect(bucketsFuer(urteil({ richtung: 'negativ' }))).toEqual(['gesamt', 'pruefung', 'wirksam_short', 'handelbar', 'ereignis_zahlen']);
+    // „hätte dürfen" ohne abgegebene Stimme ist Schatten
+    expect(bucketsFuer(urteil({ gestimmtAt: undefined }))).toEqual(['gesamt', 'pruefung', 'schatten', 'handelbar', 'ereignis_zahlen']);
+    expect(bucketsFuer(urteil({ handlungsfaehig: false, stufe: 'sichtung', gestimmtAt: null, sichtung: { ereignis: 'X Y' } }))).toEqual([
+      'gesamt', 'sichtung', 'schatten', 'handelbar',
     ]);
+  });
+  it('Bezug außerhalb der Handelszeit → ausserhalb (Aktie 17:30 ET); Krypto ist immer handelbar', () => {
+    const spaet = urteil({ firstSeenAt: '2026-09-01T21:30:00Z', decidedAt: '2026-09-01T21:40:00Z', gespeichertAt: '2026-09-01T21:41:00Z' });
+    expect(handelbarZurBezugszeit(spaet)).toBe(false);
+    expect(bucketsFuer(spaet)).toContain('ausserhalb');
+    expect(handelbarZurBezugszeit(urteil({ symbol: 'BTC-USD', firstSeenAt: '2026-09-06T03:00:00Z', decidedAt: '2026-09-06T03:05:00Z', gespeichertAt: '2026-09-06T03:06:00Z' }))).toBe(true);
+    expect(handelbarZurBezugszeit(urteil())).toBe(true); // 09:41 ET
+  });
+  it('ein Fall je (Symbol, Bezugstag ET) — Folgeartikel desselben Tages teilen den Schlüssel', () => {
+    expect(fallSchluessel(urteil())).toBe('AAPL|2026-09-01');
+    expect(fallSchluessel(urteil({ newsId: 'n2', decidedAt: '2026-09-01T19:00:00Z', gespeichertAt: '2026-09-01T19:01:00Z' }))).toBe('AAPL|2026-09-01');
+    expect(fallSchluessel(urteil({ symbol: undefined }))).toBeNull();
+    expect(fallSchluessel({})).toBeNull();
   });
 });
 
-describe('kiGewicht — spricht erst ab KI_MIN_FAELLE, lockert nie Schutz', () => {
+describe('kiGewicht — spricht erst ab KI_MIN_FAELLE, DÄMPFT nur, lockert nie Schutz', () => {
   it('unter der Mindestzahl bleibt es bei 1, egal wie gut', () => {
-    expect(KI_MIN_FAELLE).toBe(20);
-    expect(kiGewicht({ n: 19, treffer: 19, nettoSum: 50 })).toBe(1);
+    expect(KI_MIN_FAELLE).toBe(40);
+    expect(kiGewicht({ n: 39, treffer: 39, nettoSum: 50 })).toBe(1);
     expect(kiGewicht(undefined)).toBe(1);
     expect(kiGewicht(null)).toBe(1);
   });
-  it('50 % → 1, 65 % → 2 (Deckel), 35 % → 0,25 (Boden)', () => {
+  it('Deckel 1 (Red-Team B3: ohne Benchmark und Holdout keine Verstärkung); 35 % → 0,25 (Boden)', () => {
+    expect(KI_GEWICHT_MAX).toBe(1);
     expect(kiGewicht({ n: 100, treffer: 50, nettoSum: 10 })).toBe(1);
-    expect(kiGewicht({ n: 100, treffer: 65, nettoSum: 10 })).toBe(KI_GEWICHT_MAX);
-    expect(kiGewicht({ n: 100, treffer: 80, nettoSum: 10 })).toBe(KI_GEWICHT_MAX);
+    expect(kiGewicht({ n: 100, treffer: 65, nettoSum: 10 })).toBe(1);
+    expect(kiGewicht({ n: 100, treffer: 80, nettoSum: 10 })).toBe(1);
     expect(kiGewicht({ n: 100, treffer: 35, nettoSum: -10 })).toBe(KI_GEWICHT_MIN);
     expect(kiGewicht({ n: 100, treffer: 10, nettoSum: -10 })).toBe(KI_GEWICHT_MIN);
-    expect(kiGewicht({ n: 100, treffer: 57, nettoSum: 1 })).toBeCloseTo(1.47, 2);
-  });
-  it('mehr als 1 nur mit positiver Netto-Summe', () => {
-    expect(kiGewicht({ n: 100, treffer: 65, nettoSum: 0 })).toBe(1);
-    expect(kiGewicht({ n: 100, treffer: 65, nettoSum: -3 })).toBe(1);
+    expect(kiGewicht({ n: 100, treffer: 44, nettoSum: -1 })).toBeCloseTo(0.7, 2);
     expect(kiGewicht({ n: 100, treffer: 40, nettoSum: -3 })).toBeLessThan(1); // nach unten wirkt es immer
   });
 });
@@ -191,18 +215,19 @@ describe('Anwendung in der Stimme (kiAktion)', () => {
 });
 
 describe('Untätigkeits-Alarm', () => {
-  it('Lage über zwei Handelstage ohne eine einzige Aktion → Alarm; sonst nicht', () => {
-    expect(KI_WIRKUNG_LAGE_MIN).toBe(12);
-    const ruhig = [{ tag: '2026-10-06', lageScans: 8, aktionen: 0 }, { tag: '2026-10-07', lageScans: 6, aktionen: 0 }];
-    expect(bewerteKiWirkung(ruhig).ok).toBe(false);
-    expect(bewerteKiWirkung([{ tag: '2026-10-06', lageScans: 8, aktionen: 0 }, { tag: '2026-10-07', lageScans: 6, aktionen: 1 }]).ok).toBe(true);
-    expect(bewerteKiWirkung([{ tag: '2026-10-06', lageScans: 5, aktionen: 0 }, { tag: '2026-10-07', lageScans: 6, aktionen: 0 }]).ok).toBe(true);
-    expect(bewerteKiWirkung([{ tag: '2026-10-07', lageScans: 60, aktionen: 0 }]).ok).toBe(true); // ein Tag reicht nicht
+  it('handelbare Lage über drei Handelstage ohne eine einzige Aktion → Alarm; sonst nicht', () => {
+    expect(KI_WIRKUNG_LAGE_MIN).toBe(24);
+    const t = (tag: string, lageScans: number, aktionen: number) => ({ tag, lageScans, aktionen });
+    expect(bewerteKiWirkung([t('2026-10-05', 10, 0), t('2026-10-06', 8, 0), t('2026-10-07', 6, 0)]).ok).toBe(false);
+    expect(bewerteKiWirkung([t('2026-10-05', 10, 0), t('2026-10-06', 8, 0), t('2026-10-07', 6, 1)]).ok).toBe(true);
+    expect(bewerteKiWirkung([t('2026-10-05', 5, 0), t('2026-10-06', 8, 0), t('2026-10-07', 6, 0)]).ok).toBe(true); // 19 < 24
+    expect(bewerteKiWirkung([t('2026-10-06', 60, 0), t('2026-10-07', 60, 0)]).ok).toBe(true); // zwei Tage reichen nicht
   });
-  it('nur die jüngsten zwei Tage zählen', () => {
+  it('nur die jüngsten drei Tage zählen', () => {
     const alt = [
       { tag: '2026-10-01', lageScans: 60, aktionen: 0 },
-      { tag: '2026-10-06', lageScans: 2, aktionen: 1 },
+      { tag: '2026-10-05', lageScans: 2, aktionen: 1 },
+      { tag: '2026-10-06', lageScans: 2, aktionen: 0 },
       { tag: '2026-10-07', lageScans: 2, aktionen: 0 },
     ];
     expect(bewerteKiWirkung(alt).ok).toBe(true);
@@ -219,7 +244,7 @@ describe('Wochenbericht', () => {
     const t = wochenNachricht('2026-W41', { n: 5, treffer: 3, nettoSum: 2.5 }, { n: 9, treffer: 4, nettoSum: -1 }, 1);
     expect(t).toContain('5 Fälle, Trefferquote 60 %, Ø netto +0.50 %');
     expect(t).toContain('9 Fälle, Trefferquote 44 %, Ø netto -0.11 %');
-    expect(t).toContain('×1.00 (unter 20 wirksamen Fällen bleibt es bei Stufe 2b).');
+    expect(t).toContain('×1.00 (unter 40 wirksamen Fällen bleibt es bei Stufe 2b).');
     expect(wochenNachricht('2026-W41', null, null, 1)).toContain('noch keine bewerteten Fälle');
   });
 });

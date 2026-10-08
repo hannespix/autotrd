@@ -63,6 +63,8 @@ import {
   mitStimmen,
   kiGroessenFaktor,
   kiGewicht,
+  KI_EINSTIEG_MAX_MIN,
+  marketOpenForClass,
   kiVeto,
   kiUebersteuertNewsVeto,
   kiPositionsAktion,
@@ -788,10 +790,21 @@ async function executeUserTrades(
   } catch (err) {
     logger.warn('Scan: KI-Lage nicht lesbar — Handel ohne KI-Einfluss', err);
   }
+  // Urteile, für die der Scan eine Einstiegsstimme abgegeben hat — der
+  // Bewertungslauf (Stufe 3) zählt nur diese als „wirksam".
+  const kiGestimmt = new Set<string>();
   const kiLauf: KiLaufStats = {
-    // Nur Urteile, die handeln KÖNNEN (gegengeprüft, mit Richtung) — sonst
-    // stünde „lage hoch, alles andere 0" auch im Normalfall (Naht-Prüfung).
-    lage: [...kiLage.values()].filter((s) => s.handlungsfaehig && s.richtung !== 'neutral').length,
+    // Nur Urteile, die JETZT handeln KÖNNEN: gegengeprüft, mit Richtung,
+    // jünger als das Einstiegsfenster und Markt der Klasse offen (Red-Team
+    // 08.10., B5 — sonst zählte ein Urteil nach Börsenschluss sechs Stunden
+    // „Lage" und der Untätigkeits-Alarm maß die Konstruktion, kein Versagen).
+    lage: [...kiLage.values()].filter(
+      (s) =>
+        s.handlungsfaehig
+        && s.richtung !== 'neutral'
+        && Date.now() - Date.parse(s.firstSeenAt) <= KI_EINSTIEG_MAX_MIN * 60_000
+        && marketOpenForClass(classify(s.symbol), new Date()),
+    ).length,
     budgetErschoepft: kiBudgetErschoepft,
     kontenAus: 0,
     einstiege: 0,
@@ -2217,6 +2230,11 @@ async function executeUserTrades(
         const direction = kiVote || lexVote ? mitStimmen(sig, [vote, kiVote, lexVote]).direction : ohneKi;
         // Probegröße, wenn die Richtung OHNE KI/Lexikon nicht zustande käme.
         const kiFaktor = kiGroessenFaktor(ohneKi, direction, kiGewichtFaktor);
+        // KI-Alleingang als EIGENER Marker, nicht am Zahlenwert erkannt
+        // (Red-Team 08.10., B2): Erreichte der Faktor je 1, verlöre der
+        // Alleingang Hebel-Sperre, Probe-Etikett und Bucket zugleich.
+        const kiAllein = direction !== 'hold' && ohneKi !== direction;
+        if (kiVote && kiSig && kiVote.dir === direction) kiGestimmt.add(`${kiSig.newsId}_${symbol}`);
         // Etiketten fürs Journal und den Steckbrief — nur, was mitgestimmt hat.
         const kiEtikett = (dir: 'buy' | 'sell') => ({
           ...(kiVote && kiSig && kiVote.dir === dir
@@ -2227,12 +2245,12 @@ async function executeUserTrades(
                   gewicht: kiVote.weight,
                   staerke: kiSig.staerke,
                   eingepreist: kiSig.eingepreist,
-                  probe: kiFaktor < 1,
+                  probe: kiAllein,
                 },
               }
             : {}),
           ...(lexVote && lexVote.dir === dir
-            ? { lexikon: { dir: lexVote.dir, weight: lexVote.weight, probe: kiFaktor < 1 } }
+            ? { lexikon: { dir: lexVote.dir, weight: lexVote.weight, probe: kiAllein } }
             : {}),
         });
         /* Nach einem ausgeführten Einstieg: zählen und das Urteil als
@@ -2244,7 +2262,7 @@ async function executeUserTrades(
             await kiVerbrauchen(symbol, kiSig.newsId);
           }
           if (lexVote?.dir === dir) kiLauf.lexikon += 1;
-          if (kiFaktor < 1) kiLauf.probe += 1;
+          if (kiAllein) kiLauf.probe += 1;
         };
         const votesMitKi = (dir: 'buy' | 'sell'): Record<string, 'buy' | 'sell' | 'hold'> => ({
           ...sig.votes,
@@ -2268,7 +2286,7 @@ async function executeUserTrades(
         const steckbriefe = (dir: 'buy' | 'sell', seite: 'long' | 'short') => {
           const basis = { assetClass: classify(symbol), timeframe: tf, side: seite, regime };
           const tech = bucketKey({ ...basis, signature: signalSignature(sig.votes, dir) });
-          const gebucht = kiFaktor < 1 ? bucketKey({ ...basis, signature: signalSignature(votesMitKi(dir), dir) }) : tech;
+          const gebucht = kiAllein ? bucketKey({ ...basis, signature: signalSignature(votesMitKi(dir), dir) }) : tech;
           const ueberzeugung = (b: string): number =>
             convictionFactor({ konfluenz, requiredConfluence: clamped.signals.minConfluence, bucket: filterBuckets[b] ?? null });
           return {
@@ -2365,7 +2383,7 @@ async function executeUserTrades(
             sb.ueberzeugung * klassenGewicht(clamped, symbol) * regimeGroessenFaktor(regime) * kiFaktor;
           // Ein Probe-Einstieg (nur durch KI/Lexikon) bekommt nie Hebel —
           // die Hebel-Ampel ist für bestätigte Überzeugung gebaut.
-          const budget = kiFaktor < 1 ? null : hebelBudget(konfluenz, {
+          const budget = kiAllein ? null : hebelBudget(konfluenz, {
             bucket: filterBuckets[sb.tech] ?? null,
             side: 'long',
             symbol,
@@ -2415,7 +2433,7 @@ async function executeUserTrades(
                  * hängt das Etikett am Trade-Datensatz, wo es kumuliert. */
                 // Nicht bei KI-Probe: Dort steht die Konfluenz unter der Latte,
                 // weil die KI den Einstieg trägt — nicht die Trendstimme.
-                ...(konfluenz < clamped.signals.minConfluence && kiFaktor === 1 ? { soloTrend: true } : {}),
+                ...(konfluenz < clamped.signals.minConfluence && !kiAllein ? { soloTrend: true } : {}),
               },
             },
             clamped,
@@ -2438,7 +2456,7 @@ async function executeUserTrades(
             });
             merkeSizing(r, sizeFactor, symbol);
             await zaehleKiEinstieg('buy');
-            logger.info(`Engine-Buy ${uid} ${symbol} @ ${data.price}${kiFaktor < 1 ? ' (KI-Probe)' : ''}`);
+            logger.info(`Engine-Buy ${uid} ${symbol} @ ${data.price}${kiAllein ? ' (KI-Probe)' : ''}`);
           }
         } else if (direction === 'sell' && pos && pos.side !== 'short') {
           // Signal-Ausstieg erst nach der Mindest-Haltedauer. Die Risiko-Exits
@@ -2486,7 +2504,7 @@ async function executeUserTrades(
           // können sich also nicht zu einem Hebel aufaddieren.
           const sizeFactor =
             sb.ueberzeugung * klassenGewicht(clamped, symbol) * regimeGroessenFaktor(regime) * kiFaktor;
-          const budget = kiFaktor < 1 ? null : hebelBudget(konfluenz, {
+          const budget = kiAllein ? null : hebelBudget(konfluenz, {
             bucket: filterBuckets[sb.tech] ?? null,
             side: 'short',
             symbol,
@@ -2594,6 +2612,13 @@ async function executeUserTrades(
     } catch (err) {
       logger.error(`Auto-Trading-Fehler für ${uid}`, err);
     }
+  }
+  // Stufe 3: markieren, welche Urteile tatsächlich gestimmt haben — der
+  // Bewertungslauf zählt nur diese als „wirksam" (nur Zeitstempel, kein Konto).
+  if (kiGestimmt.size > 0) {
+    const b = db.batch();
+    for (const id of kiGestimmt) b.set(db.doc(`kiUrteile/${id}`), { gestimmtAt: new Date().toISOString() }, { merge: true });
+    await b.commit().catch((err) => logger.warn('kiUrteile.gestimmtAt nicht geschrieben', err));
   }
   return {
     executed,
