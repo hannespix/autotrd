@@ -35,6 +35,8 @@ export const PROFIL_STAND_V = 2;
 
 export interface ProfilSyncErgebnis {
   grund: string | null;
+  /** HTTP-Status beim Abbruch (401 = Schlüssel ungültig, 403 = kein Zugriff, 429 = Drossel); null sonst. */
+  status: number | null;
   geschrieben: number;
   leer: number;
   fehler: number;
@@ -63,7 +65,7 @@ export async function runProfilSync(
   const db = getFirestore();
   const standRef = db.doc('meta/profilStand');
   const key = schluessel();
-  const leer: ProfilSyncErgebnis = { grund: null, geschrieben: 0, leer: 0, fehler: 0, cursor: 0 };
+  const leer: ProfilSyncErgebnis = { grund: null, status: null, geschrieben: 0, leer: 0, fehler: 0, cursor: 0 };
   if (!key) {
     await standRef.set({ at: now.toISOString(), grund: 'keine_schluessel', v: PROFIL_STAND_V }, { merge: true });
     logger.info('Profil: kein FINNHUB_API_KEY in der Umgebung — übersprungen');
@@ -82,6 +84,7 @@ export async function runProfilSync(
   let leerZahl = 0;
   let fehler = 0;
   let grund: string | null = null;
+  let status: number | null = null;
   let i = 0;
   for (; i < Math.min(PROFIL_PRO_LAUF, kandidaten.length); i += 1) {
     if (uhr() - beginn > PROFIL_ZEITBUDGET_MS) {
@@ -110,6 +113,7 @@ export async function runProfilSync(
       // werten, sonst zählen und weitergehen.
       if (err instanceof ProfilQuelleFehler && (err.grund === 'rate_limit' || (err.grund === 'kein_zugriff' && (err.status === 401 || i === 0)))) {
         grund = err.grund;
+        status = err.status ?? null;
         break;
       }
       // Der Schlüssel steht nie in der Meldung — der Adapter nennt nur den Grund.
@@ -122,6 +126,13 @@ export async function runProfilSync(
     {
       at: now.toISOString(),
       grund,
+      status,
+      // Erster Live-Lauf 08.10.: kein_zugriff am ERSTEN Symbol, obwohl derselbe
+      // Schlüssel von Hand 200 liefert — der Wert im Secret Manager wich ab.
+      // Nur Metadaten (nie der Wert): Länge und ob er wie ein Finnhub-Schlüssel
+      // aussieht (Kleinbuchstaben/Ziffern), damit Anführungszeichen, Präfix
+      // „FINNHUB_API_KEY=" oder Leerzeichen im Stand sichtbar werden.
+      schluessel: { laenge: key.length, form: /^[a-z0-9]{20,64}$/.test(key) },
       geschrieben,
       leer: leerZahl,
       fehler,
@@ -132,8 +143,11 @@ export async function runProfilSync(
     },
     { merge: true },
   );
-  logger.info(`Profil: ${geschrieben} geschrieben, ${leerZahl} leer, ${fehler} Fehler${grund ? `, Grund ${grund}` : ''}`);
-  return { grund, geschrieben, leer: leerZahl, fehler, cursor };
+  logger.info(`Profil: ${geschrieben} geschrieben, ${leerZahl} leer, ${fehler} Fehler${grund ? `, Grund ${grund}${status ? ` (HTTP ${status})` : ''}` : ''}`);
+  if (grund === 'kein_zugriff') {
+    logger.warn(`Profil: Finnhub verweigert den Zugriff (HTTP ${status ?? '?'}); Schlüssel-Form ${/^[a-z0-9]{20,64}$/.test(key) ? 'plausibel' : 'UNPLAUSIBEL'} (Länge ${key.length}) — Wert im Secret Manager prüfen`);
+  }
+  return { grund, status, geschrieben, leer: leerZahl, fehler, cursor };
 }
 
 /** Täglich 17:45 ET (Mo–Fr) — nach dem Universum-Lauf, vor dem Momentum-Lauf. */

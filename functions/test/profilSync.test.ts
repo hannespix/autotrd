@@ -66,6 +66,9 @@ describe('profilSync — Deploy-Wächter', () => {
     expect(sync).toContain('export const PROFIL_ZEITBUDGET_MS = 450_000;');
     expect(sync).toContain("if (uhr() - beginn > PROFIL_ZEITBUDGET_MS) {");
     expect(sync).toContain("alt.get('kennzahlen.w52Hoch')");
+    // Diagnose (08.10.): Status und Schlüssel-FORM im Stand, nie der Wert.
+    expect(sync).toContain('schluessel: { laenge: key.length, form: /^[a-z0-9]{20,64}$/.test(key) },');
+    expect(sync).not.toMatch(/schluessel: key|wert: key|key,\n/);
     expect(sync).toContain('export const PROFIL_ABSTAND_MS = 3300;');
     expect(sync).toContain('export const PROFIL_PRO_LAUF = 80;');
     // 3 Abrufe je 3,3 s ≈ 55/min
