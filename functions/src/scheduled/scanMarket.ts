@@ -53,8 +53,9 @@ import {
   EXIT_UMBAU_STAND,
   marginState,
   newsVeto,
+  PROFIL_KLASSEN,
   fundamentalBefund,
-  fundamentalSchattenStand,
+  fundamentalSchattenTag,
   shadowSentSign,
   NEWS_TTL_SEC,
   budgetTag,
@@ -3788,14 +3789,18 @@ export async function runScan(force = false): Promise<ScanResult> {
       // ATR(14) in % — Basis für volatilitätsadaptive Stops (MA6). Wird nur
       // berechnet, nicht erzwungen: Ohne atrStopMult bleibt alles wie gehabt.
       const atrPctVal = atrPct(snap.bars.map((b) => ({ high: b.high, low: b.low, close: b.close })), 14);
-      // Task 19 Teil 2c: Profil (Finnhub-Nachtlauf) und Kennzahlen (Yahoo) liegen
-      // im selben Dokument — hier beurteilt, im Einstiegs-Tor nur GEZÄHLT.
-      const fundamental = fundamentalBefund(
-        symDoc.get('profil') as Parameters<typeof fundamentalBefund>[0],
-        symDoc.get('kennzahlen') as Parameters<typeof fundamentalBefund>[1],
-        snap.price,
-        budgetTag(now),
-      );
+      // Task 19 Teil 2c: Profil (Finnhub-Nachtlauf) aus dem Dokument, Kennzahlen
+      // FRISCH aus dem Abruf (Red-Team N2: das Dokument trägt den Vor-Scan) —
+      // hier beurteilt, im Einstiegs-Tor nur GEZÄHLT. Nur Profil-Klassen:
+      // Krypto-Volumen ist schon in Quote-Währung, × Kurs wäre Unsinn (N3).
+      const fundamental = PROFIL_KLASSEN.includes(classify(symbol))
+        ? fundamentalBefund(
+          symDoc.get('profil') as Parameters<typeof fundamentalBefund>[0],
+          snap.kennzahlen ?? (symDoc.get('kennzahlen') as Parameters<typeof fundamentalBefund>[1]),
+          snap.price,
+          budgetTag(now),
+        )
+        : null;
       marketData.set(symbol, { closes, price: snap.price, forecast, atrPct: atrPctVal, news, fundamental });
 
       const sig = computeSignal(
@@ -4501,6 +4506,17 @@ export async function runScan(force = false): Promise<ScanResult> {
     logger.warn('Varianten-Schatten nicht fortgeschrieben', err);
   }
 
+  // Task 19 Teil 2c: Tagesaggregat der Fundamental-Messung. Nur Scans mit
+  // US-Aktien schreiben das Feld (Red-Team H1: der Lagebericht um 18:25 ET
+  // sähe sonst den Krypto-Scan von 18:20); gleicher ET-Tag summiert.
+  const fsVorher = (await db.doc('meta/health').get().catch(() => null))?.get('fundamentalSchatten') as Parameters<typeof fundamentalSchattenTag>[0];
+  const fundamentalSchatten = fundamentalSchattenTag(
+    fsVorher,
+    [...marketData.entries()].map(([s, d]) => ({ klasse: classify(s), befund: d.fundamental })),
+    entryGate,
+    budgetTag(now),
+    now.toISOString(),
+  );
   // Heartbeat für Monitoring-Alerts (SETUP.md §J): meta/health ist öffentlich
   // lesbar (meta-Rules) und enthält bewusst KEINE sensiblen Daten.
   await db
@@ -4542,9 +4558,9 @@ export async function runScan(force = false): Promise<ScanResult> {
         // prüft gar nicht, und die Ursache liegt bei den Daten, nicht am
         // Parameter.
         entryGate,
-        // Task 19 Teil 2c: Deckung und Zähler der Fundamental-Messung — damit der
-        // Lagebericht weiß, wie viele Symbole überhaupt beurteilbar waren.
-        fundamentalSchatten: fundamentalSchattenStand([...marketData.values()].map((d) => d.fundamental), entryGate),
+        // Task 19 Teil 2c: Tagesaggregat — nur wenn dieser Scan US-Aktien hatte,
+        // sonst bleibt der Stand des letzten US-Scans stehen (merge).
+        ...(fundamentalSchatten ? { fundamentalSchatten } : {}),
         /* Broker-Anbindung (M13): Kommt das Order-Routing bis zum Broker?
          *
          * `verbunden: 0` heißt: Kein Konto hat einen Schlüssel hinterlegt —

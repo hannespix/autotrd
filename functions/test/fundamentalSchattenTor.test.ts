@@ -14,9 +14,10 @@ const scan = readFileSync(join(hier, '../src/scheduled/scanMarket.ts'), 'utf8');
 const bericht = readFileSync(join(hier, '../src/scheduled/kiBericht.ts'), 'utf8');
 
 describe('Fundamental-Schatten (Task 19 Teil 2c)', () => {
-  it('beurteilt aus Profil + Kennzahlen desselben Dokuments, Kalendertag in New York', () => {
+  it('beurteilt nur Profil-Klassen, aus Profil + FRISCHEN Kennzahlen, Kalendertag in New York', () => {
+    expect(scan).toContain('const fundamental = PROFIL_KLASSEN.includes(classify(symbol))');
     expect(scan).toContain("symDoc.get('profil') as Parameters<typeof fundamentalBefund>[0],");
-    expect(scan).toContain("symDoc.get('kennzahlen') as Parameters<typeof fundamentalBefund>[1],");
+    expect(scan).toContain("snap.kennzahlen ?? (symDoc.get('kennzahlen') as Parameters<typeof fundamentalBefund>[1]),");
     expect(scan).toContain('budgetTag(now),');
     expect(scan).toContain('atrPct: atrPctVal, news, fundamental });');
   });
@@ -31,9 +32,13 @@ describe('Fundamental-Schatten (Task 19 Teil 2c)', () => {
     expect(scan).not.toMatch(/fundamental\?\.(gewinnterminNah|illiquide|kleinstwert)\)\s*return/);
   });
 
-  it('beide Zähler-Initialisierungen tragen die drei Felder; Herzschlag trägt Deckung + Zähler; Lagebericht nimmt sie', () => {
+  it('beide Zähler-Initialisierungen tragen die drei Felder; Herzschlag trägt das TAGESAGGREGAT nur bei US-Scans; Lagebericht nimmt es', () => {
     expect(scan.match(/gewinntermin_wuerde_blocken: 0,\n {4}illiquide_wuerde_blocken: 0,\n {4}kleinstwert_wuerde_blocken: 0,/g)).toHaveLength(2);
-    expect(scan).toContain('fundamentalSchatten: fundamentalSchattenStand([...marketData.values()].map((d) => d.fundamental), entryGate),');
+    // Vorbestand lesen, Tagesaggregat bilden, nur schreiben, wenn der Scan US-Aktien hatte (Red-Team H1).
+    expect(scan).toContain("const fsVorher = (await db.doc('meta/health').get().catch(() => null))?.get('fundamentalSchatten')");
+    expect(scan).toContain('[...marketData.entries()].map(([s, d]) => ({ klasse: classify(s), befund: d.fundamental })),');
+    expect(scan).toContain('...(fundamentalSchatten ? { fundamentalSchatten } : {}),');
+    expect(scan).not.toContain('fundamentalSchattenStand(');
     expect(bericht).toContain("...nimm('fundamentalSchatten'),");
   });
 });

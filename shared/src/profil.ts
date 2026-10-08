@@ -36,6 +36,8 @@ export interface Profil {
   dividendenrenditePct: number | null;
   /** Nächster Gewinntermin ≥ heute, YYYY-MM-DD; null, wenn keiner gemeldet. */
   gewinntermin: string | null;
+  /** 'bmo' (vor Eröffnung) | 'amc' (nach Schluss) | 'dmh' | null — Finnhub `hour` zum nächsten Termin. */
+  gewinnterminZeit: string | null;
   /**
    * Red-Team 08.10.: `metric` kam für CCG mit EPS −26,11 und 52W-Hoch 43,05,
    * Yahoo zeigt −2,20 / 18,16 (Berichtswährung statt Notierung). Weicht das
@@ -76,7 +78,7 @@ export interface FinnhubMetric {
 /** Rohform von Finnhub `calendar/earnings` → `earningsCalendar[]`. */
 export interface FinnhubEarning {
   date?: unknown;
-  /** 'bmo' | 'amc' | 'dmh' — hier nur dokumentiert; entscheidend ist `nachSchluss`. */
+  /** 'bmo' | 'amc' | 'dmh' — Tageszeit der Veröffentlichung. */
   hour?: unknown;
 }
 
@@ -119,6 +121,17 @@ export function naechsterGewinntermin(termine: readonly FinnhubEarning[], heute:
   return best;
 }
 
+/** Tageszeit ('bmo' | 'amc' | 'dmh') des Termins `datum`; null, wenn unbekannt. */
+export function gewinnterminZeitVon(termine: readonly FinnhubEarning[], datumWert: string | null): string | null {
+  if (datumWert === null) return null;
+  for (const e of termine) {
+    if (datum(e.date) !== datumWert) continue;
+    const h = typeof e.hour === 'string' ? e.hour.trim().toLowerCase() : '';
+    return h === 'bmo' || h === 'amc' || h === 'dmh' ? h : null;
+  }
+  return null;
+}
+
 /**
  * Pure Zusammenstellung. Marktkapitalisierung: `profile2` und `metric`
  * liefern beide Millionen — `metric` gewinnt (tagesaktuell), `profile2` ist
@@ -134,6 +147,7 @@ export function profilAus(
 ): Profil {
   const w52Hoch = positiv(metric?.['52WeekHigh']);
   const verdacht = metricAbweichend(w52Hoch, opt.yahooW52Hoch);
+  const gewinntermin = naechsterGewinntermin(termine, heute, opt.nachSchluss === true);
   return {
     name: text(profile2?.name),
     branche: text(profile2?.finnhubIndustry),
@@ -155,7 +169,8 @@ export function profilAus(
     w52Hoch: verdacht ? null : w52Hoch,
     w52Tief: verdacht ? null : positiv(metric?.['52WeekLow']),
     dividendenrenditePct: verdacht ? null : positiv(metric?.dividendYieldIndicatedAnnual),
-    gewinntermin: naechsterGewinntermin(termine, heute, opt.nachSchluss === true),
+    gewinntermin,
+    gewinnterminZeit: gewinnterminZeitVon(termine, gewinntermin),
     metricVerdacht: verdacht,
     quelle: 'finnhub',
     updatedAt,

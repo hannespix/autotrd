@@ -238,12 +238,14 @@ describe('Hebel 2, Messung — Kante je Regime im Lagebericht', () => {
     expect(baueEingabe(chronik, {})).not.toContain('KANTE JE REGIME');
     // Task 19 Teil 2c: Fundamental-Schatten nur mit Deckung; Zahlen und Parameter sichtbar.
     expect(baueEingabe(chronik, {})).not.toContain('FUNDAMENTAL-SCHATTEN');
-    expect(baueEingabe(chronik, { fundamentalSchatten: { mitProfil: 0, ohneProfil: 0 } })).not.toContain('FUNDAMENTAL-SCHATTEN');
+    // Ohne Profil-Deckung KEIN Abschnitt (Red-Team H1: sonst drei Nullen als „Messung").
+    expect(baueEingabe(chronik, { fundamentalSchatten: { tag: '2026-10-08', scans: 5, usAktien: 12, mitProfil: 0, gewinnterminNah: 0 } })).not.toContain('FUNDAMENTAL-SCHATTEN');
     const fund = baueEingabe(chronik, {
-      fundamentalSchatten: { mitProfil: 60, ohneProfil: 106, mitVolumen: 150, gewinnterminNah: 3, illiquide: 1, kleinstwert: 0, parameter: { sperrtage: 2, dollarVolMinUsd: 2_000_000, marktkapMinMio: 300 } },
+      fundamentalSchatten: { tag: '2026-10-08', scans: 78, usAktien: 14, mitProfil: 12, gewinnterminMessbar: 9, mitVolumen: 14, gewinnterminNah: 3, illiquide: 1, kleinstwert: 0, parameter: { sperrtage: 2, dollarVolMinUsd: 2_000_000, marktkapMinMio: 300 } },
     });
-    expect(fund).toContain('FUNDAMENTAL-SCHATTEN (Messung im letzten Scan, blockt nichts');
-    expect(fund).toContain('- Deckung: 60 Symbole mit Profil, 106 ohne, 150 mit Ø-Volumen');
+    expect(fund).toContain('FUNDAMENTAL-SCHATTEN (Tagessumme über 78 US-Scans am 2026-10-08, blockt nichts');
+    expect(fund).toContain('Prüfungen, keine Einstiege');
+    expect(fund).toContain('- Deckung im letzten US-Scan: 14 US-Aktien, davon 12 mit Profil, 9 mit künftigem Gewinntermin, 14 mit Ø-Volumen');
     expect(fund).toContain('- Gewinntermin ≤ 2 Tage: 3; Tagesumsatz < 2 Mio USD: 1; Marktkap < 300 Mio USD: 0');
     const text = baueEingabe(chronik, { regimeKante: { trend: { n: 12, winRatePct: 50 }, seitwaerts: { n: 6, winRatePct: null }, ohne_regime: { n: 30, winRatePct: 43.3 } } });
     expect(text).toContain('KANTE JE REGIME (realisierte Regelbaum-/Konfluenz-Trades aller Konten, UNTER der Seitwärts-Bremse seit 15.08. gemessen — ');

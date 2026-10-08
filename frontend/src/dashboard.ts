@@ -6812,12 +6812,6 @@ const GATE_TEXT: ReadonlyArray<[string, string]> = [
   ['pos_limit', t('gate.posLimit')],
   ['cooldown_aktiv', t('gate.cooldownAktiv')],
   ['sockel_besitz', t('gate.sockelBesitz')],
-  /* Task 19 Teil 2c: Fundamental-Schatten — KEINE Ablehnung, aber sichtbar,
-   * sonst misst niemand, was ein Veto kosten würde (dieselbe Lücke wie beim
-   * Quoten-Schatten). Die Texte sagen „würde blocken“, nicht „geblockt“. */
-  ['gewinntermin_wuerde_blocken', t('gate.gewinterminSchatten')],
-  ['illiquide_wuerde_blocken', t('gate.illiquideSchatten')],
-  ['kleinstwert_wuerde_blocken', t('gate.kleinstwertSchatten')],
 ];
 
 const REGIME_TEXT: Record<string, { t: string; c: string }> = {
@@ -6980,6 +6974,21 @@ function renderEngineWhy(): void {
       'var(--yl,#d9a441)',
     );
     chip.title = t('ew.quoteTitel');
+    ampel.append(chip);
+  }
+  /* Task 19 Teil 2c: Fundamental-Schatten — derselbe Chip-Pfad wie der
+   * Quoten-Schatten (Red-Team M3: in GATE_TEXT verdrängte er „nichts
+   * abgelehnt“ und las sich wie eine Ablehnung). Tagessumme der PRÜFUNGEN,
+   * nicht Einstiege; gelb, weil nichts blockiert ist. */
+  const fsStand = h.fundamentalSchatten;
+  const fundSchatten = (fsStand?.gewinnterminNah ?? 0) + (fsStand?.illiquide ?? 0) + (fsStand?.kleinstwert ?? 0);
+  if (fundSchatten > 0) {
+    const chip = whyChip(`${fundSchatten} ${t('ew.fundSchatten')}`, 'var(--yl,#d9a441)');
+    chip.title = t('ew.fundTitel')
+      .replace('{0}', String(fsStand?.gewinnterminNah ?? 0))
+      .replace('{1}', String(fsStand?.illiquide ?? 0))
+      .replace('{2}', String(fsStand?.kleinstwert ?? 0))
+      .replace('{3}', String(fsStand?.scans ?? 0));
     ampel.append(chip);
   }
   const steckt = h.nachbuchung?.steckt ?? 0;
