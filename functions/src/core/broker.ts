@@ -37,8 +37,22 @@ import type {
   Trade,
 } from '../../../shared/src/index.js';
 import { fxFelder } from './fx.js';
-import { rundeLimitPreis } from './alpacaBroker.js';
-import { assetStand, brokerVerbindung, brokerVorpruefung, routeOrder } from './orderRouting.js';
+import {
+  alpacaOrderAbfragen,
+  alpacaOrderPerClientId,
+  alpacaOrderStornieren,
+  rundeLimitPreis,
+  warteAufFill,
+} from './alpacaBroker.js';
+import {
+  ORDER_ENDZUSTAENDE,
+  assetStand,
+  brokerVerbindung,
+  brokerVorpruefung,
+  eigeneOffeneOrder,
+  routeOrder,
+  type OffeneOrderVermerk,
+} from './orderRouting.js';
 import { schutzAnlegen, schutzAufheben } from './schutzStop.js';
 
 /**
@@ -161,13 +175,53 @@ export type { BrokerMode } from './liveGate.js';
  */
 export function auftragsLauf(
   req: { riskExit?: string | undefined },
-  position: { openedAt?: string | undefined } | null,
+  position: { openedAt?: string | undefined; qty?: number | undefined } | null,
   laufId: string,
+  /**
+   * Schließt dieser Auftrag die Position? Seit dem Drift-Paket 08.10. gilt
+   * die positionsstabile Kennung für JEDEN Exit, nicht nur den Risiko-Exit:
+   * Auch ein Signal-Exit, dessen Order ohne Fill stehen blieb, darf im
+   * nächsten Lauf nicht unter neuer Kennung ein zweites Mal verkaufen.
+   */
+  schliesst = false,
 ): string {
-  if (typeof req.riskExit !== 'string' || req.riskExit === '') return laufId;
+  const exit = (typeof req.riskExit === 'string' && req.riskExit !== '') || schliesst;
+  if (!exit) return laufId;
   const auf = position?.openedAt;
   if (typeof auf !== 'string' || auf === '') return laufId;
-  return `exit-${auf}`;
+  /* Die MENGE gehört in die Kennung: Nach einem Teilschluss lebt die
+   * Position mit derselben `openedAt` weiter. Dieselbe Kennung fände beim
+   * Broker die alte, teilgefüllte Order — und der Duplicate-Pfad buchte
+   * deren Fill ein zweites Mal, statt den Rest zu verkaufen; der Rest läge
+   * dann für immer beim Broker. Eine neue Menge ist eine neue Order. */
+  const qty = position?.qty;
+  const stufe = typeof qty === 'number' && Number.isFinite(qty) && qty > 0
+    ? `-q${Math.round(qty * 1e6) / 1e6}`
+    : '';
+  return `exit-${auf}${stufe}`;
+}
+
+/**
+ * Ist dieser Broker-Fill schon im Buch (Drift-Paket 08.10.)?
+ *
+ * Eine Order wird höchstens EINMAL gebucht — egal, über welchen Weg ihr
+ * Fill entdeckt wird (Routing, Duplicate-Nachschlag, Schutz-Order, Nachlauf).
+ * Ohne diese Sperre buchte der Duplicate-Pfad einen längst verbuchten
+ * Teilfill ein zweites Mal. Nicht lesbar ⇒ `false`: Lieber ein doppelt
+ * gebuchter Fill, den der Abgleich meldet, als ein Exit, der nicht
+ * stattfindet.
+ */
+export async function fillSchonGebucht(uid: string, brokerOrderId: string | null | undefined): Promise<boolean> {
+  if (!brokerOrderId) return false;
+  const schon = await getFirestore()
+    .collection('users')
+    .doc(uid)
+    .collection('trades')
+    .where('brokerOrderId', '==', brokerOrderId)
+    .limit(1)
+    .get()
+    .catch(() => null);
+  return schon !== null && !schon.empty;
 }
 
 export function mengeZuKlein(qty: number, fractional: boolean, echterFill: boolean): boolean {
@@ -792,13 +846,6 @@ export async function executeTrade(
   const balance = (userSnap.get('wallet.paperBalance') as number | undefined) ?? 0;
   const position = posSnap.exists ? (posSnap.data() as Position) : null;
 
-  /* Die Kennung, unter der dieser Auftrag beim Broker ankommt.
-   *
-   * EINMAL abgeleitet und ab hier überall benutzt — Order, Fehlerspur und
-   * Schutz-Stop. Zwei Ableitungen wären zwei Gelegenheiten, sie verschieden
-   * zu machen; die Begründung steht bei `auftragsLauf`. */
-  const lauf = auftragsLauf(req, position, laufId);
-
   /* Schließt dieser Auftrag eine Position, die der Broker gar nicht kennt?
    *
    * Der gefährlichste Einzelfall dieser ganzen Schicht. Wer sein Konto
@@ -816,6 +863,13 @@ export async function executeTrade(
     ((req.side === 'buy' && position.side === 'short') ||
       (req.side === 'sell' && position.side !== 'short'));
   if (schliesst && position.broker !== true) return executePaperTrade(req, strategy);
+
+  /* Die Kennung, unter der dieser Auftrag beim Broker ankommt.
+   *
+   * EINMAL abgeleitet und ab hier überall benutzt — Order, Fehlerspur und
+   * Schutz-Stop. Zwei Ableitungen wären zwei Gelegenheiten, sie verschieden
+   * zu machen; die Begründung steht bei `auftragsLauf`. */
+  const lauf = auftragsLauf(req, position, laufId, schliesst);
 
   /* Ein Verkauf, der weder schließt noch ein AUSDRÜCKLICHER Leerverkauf auf
    * leerem Bestand ist, darf NIE zum Broker (Short-Audit 07.08.). Vorher
@@ -867,12 +921,21 @@ export async function executeTrade(
       },
     );
     if (aufhebung.stand === 'gefuellt') {
+      if (await fillSchonGebucht(req.uid, aufhebung.orderId)) {
+        return { executed: false, reason: 'fill_schon_gebucht' };
+      }
       const aufhebungsBuchung = await executePaperTrade(
         {
           ...req,
           qty: aufhebung.fillQty,
           fillPreis: aufhebung.fillPreis,
           brokerOrderId: aufhebung.orderId,
+          /* Der Stop deckt nur GANZE Stücke (Drift-Paket 08.10.): Ist sein
+           * Rest verifiziert tot, bleibt der Bruchstück-Rest im Buch und
+           * der nächste Scan verkauft ihn regulär — statt ihn beim Broker
+           * zu vergessen. Nur bei bestätigtem Endzustand; sonst gilt der
+           * sichere volle Schluss wie bisher. */
+          restStorniert: aufhebung.restStorniert === true,
           /* Derselbe Fill kann über `pflegeSchutz` ODER hier entdeckt
            * werden — das Etikett muss beidesmal dasselbe sein, sonst wäre die
            * Mischung nicht aufgelöst, sondern nur verkleinert (Befund 23.08.).
@@ -901,6 +964,7 @@ export async function executeTrade(
           aufhebung.orderId,
           lauf,
           aufhebungsBuchung.reason ?? 'unbekannt',
+          aufhebung.restStorniert === true,
         );
       }
       return aufhebungsBuchung;
@@ -965,6 +1029,36 @@ export async function executeTrade(
   const limitPreis =
     eroeffnet && klasse === 'crypto' ? rundeLimitPreis(req.price, req.side) : 0;
 
+  /* Läuft von UNS schon eine schließende Order für dieses Symbol
+   * (Drift-Paket 08.10., Ursache 3)? Ein Exit ohne Fill im Wartefenster
+   * bleibt beim Broker bewusst stehen. Schickte dieser Lauf unter neuer
+   * Kennung einen zweiten, verkauften BEIDE: Das Buch wäre geschlossen, beim
+   * Broker entstünde ein Leerverkauf — ohne Buch, ohne Stop, und der
+   * Abgleich stufte ihn als „harmlosen Fremdbestand" ein. Also: Die
+   * laufende Order IST der Exit; sie wird abgewartet und gebucht, nie
+   * verdoppelt. Scheitert die Nachfrage, geht der Exit normal raus —
+   * Ausstiege werden durch keine Prüfung verhindert. */
+  if (schliesst) {
+    const laufend = await eigeneOffeneOrder(verbindung, req.uid, req.symbol, req.side);
+    if (laufend) {
+      const fill = await warteAufFill(verbindung.mode, laufend.id, verbindung.schluessel).catch(() => null);
+      if (fill && fill.status === 'filled' && fill.ausfuehrungskurs > 0) {
+        if (await fillSchonGebucht(req.uid, laufend.id)) return { executed: false, reason: 'fill_schon_gebucht' };
+        return executePaperTrade(
+          { ...req, qty: fill.qty > 0 ? fill.qty : laufend.qty, fillPreis: fill.ausfuehrungskurs, brokerOrderId: laufend.id, restStorniert: true },
+          strategy,
+        );
+      }
+      await merkeOffeneOrder(req.uid, req.symbol, req.side, { art: 'exit_offen', orderId: laufend.id, clientOrderId: laufend.clientOrderId }, {
+        gebucht: 0,
+        soll: laufend.qty,
+        lauf,
+      });
+      logger.info(`executeTrade ${req.uid} ${req.symbol}: schließende Order ${laufend.id} läuft noch — kein zweiter Exit`);
+      return { executed: false, reason: 'broker_exit_laeuft' };
+    }
+  }
+
   const routing = await routeOrder(verbindung, {
     uid: req.uid,
     symbol: req.symbol,
@@ -983,8 +1077,23 @@ export async function executeTrade(
     schliessend: schliesst,
     laufId: lauf,
   });
+  /* Offen gebliebene Order vormerken (Drift-Paket 08.10.) — in BEIDEN
+   * Ausgängen: ein teilgefüllter Einstieg, dessen Rest noch arbeitet, ein
+   * Einstieg mit unbekanntem Verbleib, ein Exit ohne Fill im Fenster. Der
+   * nächste Scan fragt nach (`bucheOffeneOrders`). */
+  if (routing.offen) {
+    await merkeOffeneOrder(req.uid, req.symbol, req.side, routing.offen, {
+      gebucht: routing.ausgefuehrt ? (routing.fillMenge ?? qty) : 0,
+      soll: qty,
+      lauf,
+    });
+  }
   if (!routing.ausgefuehrt) {
     return { executed: false, reason: `broker_${routing.grund ?? 'unbekannt'}` };
+  }
+  if (await fillSchonGebucht(req.uid, routing.brokerOrderId)) {
+    logger.info(`executeTrade ${req.uid} ${req.symbol}: Fill ${routing.brokerOrderId} war schon gebucht`);
+    return { executed: false, reason: 'fill_schon_gebucht' };
   }
 
   // Die AUSGEFÜHRTE Menge gilt, nicht die geplante: Bei einer Teilausführung
@@ -1054,6 +1163,172 @@ export async function executeTrade(
     );
   }
   return buchung;
+}
+
+/* ── Offene Orders: Nachlauf (Drift-Paket 08.10.) ───────────────────────────
+ *
+ * Das Buch erfuhr von einem Fill bisher nur, wenn es im Moment der Order
+ * nachfragte. Alles, was DANACH füllte — ein Einstiegs-Rest im Zustand
+ * pending_cancel, eine Market-Order, deren Annahme im Netzfehler unterging,
+ * ein Exit ohne Fill im Wartefenster — hatte keinen Weg mehr ins Buch und
+ * tauchte Tage später als „Position nur beim Broker" auf. Der Nachlauf gibt
+ * diesen Orders einen Vermerk und fragt sie beim nächsten Scan nach.
+ */
+
+/** Höchstens so viele offene Orders je Konto und Lauf nachfragen. */
+export const NACHLAUF_JE_LAUF = 10;
+/** Nach so vielen Tagen ohne Endzustand wird ein Vermerk aufgegeben. */
+export const NACHLAUF_MAX_TAGE = 3;
+
+export interface NachlaufStand {
+  /** Vermerke, die in diesem Lauf nachgefragt wurden. */
+  geprueft: number;
+  /** Davon Fills, die ins Buch gebucht wurden. */
+  gebucht: number;
+  /** Danach noch offene Vermerke. */
+  offen: number;
+}
+
+/** Vermerk anlegen — idempotent je Order (Kennung = Client-Kennung). */
+export async function merkeOffeneOrder(
+  uid: string,
+  symbol: string,
+  side: 'buy' | 'sell',
+  offen: OffeneOrderVermerk,
+  mengen: { gebucht: number; soll: number; lauf: string },
+): Promise<void> {
+  const id = offen.clientOrderId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120);
+  await getFirestore()
+    .collection('users')
+    .doc(uid)
+    .collection('offeneOrders')
+    .doc(id)
+    .set(
+      {
+        art: offen.art,
+        clientOrderId: offen.clientOrderId,
+        ...(offen.orderId ? { orderId: offen.orderId } : {}),
+        symbol,
+        side,
+        gebuchteMenge: mengen.gebucht,
+        sollMenge: mengen.soll,
+        lauf: mengen.lauf,
+        at: new Date().toISOString(),
+        versuche: 0,
+      },
+      { merge: true },
+    )
+    .catch((err: unknown) => logger.warn(`offeneOrders ${uid} ${symbol}: Vermerk nicht geschrieben`, err));
+  logger.warn(`OFFENE ORDER ${uid} ${symbol} ${side} (${offen.art}) — wird im nächsten Scan nachgefragt`);
+}
+
+/**
+ * Offene Orders eines Kontos nachfragen und buchen, was inzwischen gefüllt
+ * hat. Läuft je Scan VOR den Positionen, neben `bucheUnverbuchteFills`.
+ *
+ * Eröffnende Orders (`einstieg_rest`, `einstieg_unbekannt`): Steht die Order
+ * noch, wird sie storniert (ein Einstieg darf nicht unbeaufsichtigt
+ * weiterarbeiten) und einmal nachgefragt; gebucht wird die DIFFERENZ zur
+ * schon gebuchten Menge als Aufstockung — nie ein zweites Mal dasselbe.
+ * Schließende (`exit_offen`): Ein Fill wird als Exit gebucht; die Order
+ * selbst bleibt stehen, solange sie lebt (der Exit ist erwünscht).
+ * Ein Vermerk endet, wenn die Order im Endzustand ist oder Alpaca sie
+ * nicht mehr kennt; nach NACHLAUF_MAX_TAGE wird er aufgegeben und laut
+ * gemeldet — dann ist es ein Fall für die Übernahme.
+ */
+export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promise<NachlaufStand> {
+  const leer: NachlaufStand = { geprueft: 0, gebucht: 0, offen: 0 };
+  const db = getFirestore();
+  const userRef = db.collection('users').doc(uid);
+  const snap = await userRef
+    .collection('offeneOrders')
+    .orderBy('at')
+    .limit(NACHLAUF_JE_LAUF)
+    .get()
+    .catch(() => null);
+  if (!snap || snap.empty) return leer;
+  const verbindung = await brokerVerbindung(uid);
+  if (!verbindung) return { ...leer, offen: snap.size };
+
+  const zahl = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
+  let gebucht = 0;
+  let offen = 0;
+  for (const doc of snap.docs) {
+    const d = doc.data() as {
+      art?: string; clientOrderId?: string; orderId?: string; symbol?: string;
+      side?: 'buy' | 'sell'; gebuchteMenge?: number; sollMenge?: number; at?: string; versuche?: number; lauf?: string;
+    };
+    if (!d.symbol || (d.side !== 'buy' && d.side !== 'sell') || !d.clientOrderId) {
+      await doc.ref.delete().catch(() => undefined);
+      continue;
+    }
+    const eroeffnend = d.art !== 'exit_offen';
+    const alter = Date.now() - Date.parse(String(d.at ?? ''));
+    try {
+      let stand = d.orderId
+        ? await alpacaOrderAbfragen(verbindung.mode, d.orderId, verbindung.schluessel)
+        : await alpacaOrderPerClientId(verbindung.mode, d.clientOrderId, verbindung.schluessel);
+      if (stand === null) {
+        // Alpaca kennt sie nicht (mehr): nichts gefüllt, nichts zu buchen.
+        await doc.ref.delete().catch(() => undefined);
+        continue;
+      }
+      if (eroeffnend && !ORDER_ENDZUSTAENDE.has(stand.status)) {
+        await alpacaOrderStornieren(verbindung.mode, stand.id, verbindung.schluessel)
+          .catch(() => 'nicht_stornierbar' as const);
+        stand = (await alpacaOrderAbfragen(verbindung.mode, stand.id, verbindung.schluessel).catch(() => null)) ?? stand;
+      }
+      const endzustand = ORDER_ENDZUSTAENDE.has(stand.status);
+      const neu = stand.filledQty - zahl(d.gebuchteMenge);
+      if (neu > 1e-9 && stand.filledAvgPreis > 0) {
+        const r = await executePaperTrade(
+          {
+            uid,
+            symbol: d.symbol,
+            side: d.side,
+            price: stand.filledAvgPreis,
+            qty: neu,
+            fillPreis: stand.filledAvgPreis,
+            brokerOrderId: stand.id,
+            source: 'engine',
+            assetClass: classify(d.symbol),
+            ...(eroeffnend
+              ? { aufstockung: true, ...(d.side === 'sell' ? { openShort: true } : {}) }
+              : { restStorniert: endzustand, riskExit: 'exit_nachlauf' }),
+          },
+          strategy,
+        ).catch((err: unknown) => ({
+          executed: false as const,
+          reason: `buchung_exception: ${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
+        }));
+        if (r.executed) {
+          gebucht += 1;
+          logger.warn(`NACHLAUF ${uid} ${d.symbol}: ${neu} Stück (${d.art}) nachgebucht @ ${stand.filledAvgPreis}`);
+          await doc.ref.set({ gebuchteMenge: zahl(d.gebuchteMenge) + neu, orderId: stand.id }, { merge: true })
+            .catch(() => undefined);
+        } else {
+          await merkeUnbookedFill(uid, d.symbol, d.side, neu, stand.filledAvgPreis, stand.id, String(d.lauf ?? 'nachlauf'),
+            r.reason ?? 'unbekannt', eroeffnend ? undefined : endzustand);
+          await doc.ref.delete().catch(() => undefined);
+          continue;
+        }
+      }
+      if (endzustand) {
+        await doc.ref.delete().catch(() => undefined);
+      } else if (alter > NACHLAUF_MAX_TAGE * 86_400_000) {
+        logger.error(`offeneOrders ${uid} ${d.symbol}: Order ${stand.id} seit ${NACHLAUF_MAX_TAGE} Tagen ohne Endzustand — aufgegeben, Fall für die Übernahme`);
+        await doc.ref.delete().catch(() => undefined);
+      } else {
+        offen += 1;
+        await doc.ref.set({ versuche: zahl(d.versuche) + 1, letzterVersuch: new Date().toISOString(), orderId: stand.id }, { merge: true })
+          .catch(() => undefined);
+      }
+    } catch (err) {
+      offen += 1;
+      logger.warn(`offeneOrders ${uid} ${d.symbol}: Nachfrage fehlgeschlagen`, err);
+    }
+  }
+  return { geprueft: snap.size, gebucht, offen };
 }
 
 /**

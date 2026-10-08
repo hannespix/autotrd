@@ -82,9 +82,11 @@ describe('Root-Cause-Fix: Fehlbestand durch ungenetzte Schutz-Stop-Fills', () =>
     expect(scan).toContain('merkeUnbookedFill,');
   });
 
-  it('genau zwei Aufrufe in broker.ts — routeOrder-Pfad UND schutzAufheben', () => {
+  it('genau drei Aufrufe in broker.ts — routeOrder-Pfad, schutzAufheben UND der Nachlauf offener Orders', () => {
+    // Seit dem Drift-Paket 08.10. entdeckt auch `bucheOffeneOrders` Fills —
+    // und auch dort darf ein nicht buchbarer Fill nie stumm verschwinden.
     const treffer = (broker.match(/await merkeUnbookedFill\(/g) ?? []).length;
-    expect(treffer).toBe(2);
+    expect(treffer).toBe(3);
   });
 
   it('genau ein Aufruf in scanMarket.ts — der pflegeSchutz-Aufrufer', () => {

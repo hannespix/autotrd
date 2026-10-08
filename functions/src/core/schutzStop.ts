@@ -55,7 +55,7 @@ import {
   alpacaStopOrder,
   clientOrderId,
 } from './alpacaBroker.js';
-import { assetStand, type BrokerVerbindung } from './orderRouting.js';
+import { ORDER_ENDZUSTAENDE, assetStand, type BrokerVerbindung } from './orderRouting.js';
 
 // ── Pure Planung (testbar ohne Broker und ohne Firestore) ───────────────────
 
@@ -480,6 +480,15 @@ export type SchutzAufhebung =
        * Mischung wäre nicht aufgelöst, nur verkleinert.
        */
       quelle: SchutzMarke;
+      /**
+       * Der Rest der Stop-Order ist VERIFIZIERT tot (Endzustand beim Broker)
+       * — nur dann darf die Buchung die Position VERKLEINERN statt sie ganz
+       * zu schließen (Drift-Paket 08.10.). Der Schutz-Stop deckt nur ganze
+       * Stücke; bei 1,9 Stück verkauft er 1 und ließ bisher 0,9 Stück beim
+       * Broker zurück, während das Buch über den Minuten-Puls auf 0 ging —
+       * die häufigste Quelle für „Position nur beim Broker" unter 1 Stück.
+       */
+      restStorniert: boolean;
     };
 
 /**
@@ -513,13 +522,28 @@ export async function schutzAufheben(
     fetchImpl,
   );
   if (stand && stand.filledQty > 0 && stand.filledAvgPreis > 0) {
+    /* Teilgefüllt und noch aktiv (`partially_filled`, `pending_cancel`):
+     * den Rest stornieren und EINMAL nachfragen — Alpaca storniert
+     * asynchron, und ein Rest im Zustand pending_cancel kann noch füllen.
+     * Nur ein Endzustand macht die Menge endgültig. */
+    let endstand = stand;
+    if (!ORDER_ENDZUSTAENDE.has(endstand.status)) {
+      await alpacaOrderStornieren(verbindung.mode, schutz.orderId, verbindung.schluessel, fetchImpl)
+        .catch(() => 'nicht_stornierbar' as const);
+      const nach = await alpacaOrderAbfragen(verbindung.mode, schutz.orderId, verbindung.schluessel, fetchImpl)
+        .catch(() => null);
+      if (nach === null) endstand = { ...endstand, status: 'canceled' };
+      else if (nach.filledQty > 0 && nach.filledAvgPreis > 0) endstand = nach;
+      else endstand = { ...endstand, status: nach.status };
+    }
     return {
       stand: 'gefuellt',
-      fillPreis: stand.filledAvgPreis,
-      fillQty: stand.filledQty,
+      fillPreis: endstand.filledAvgPreis,
+      fillQty: endstand.filledQty,
       orderId: schutz.orderId,
       // Fehlt sie (Altbestand, adoptierte Fremd-Order): bisheriges Etikett.
       quelle: schutz.quelle ?? 'einstand',
+      restStorniert: ORDER_ENDZUSTAENDE.has(endstand.status),
     };
   }
   // Nicht stornierbar, aber auch nichts ausgeführt (z. B. pending_cancel):

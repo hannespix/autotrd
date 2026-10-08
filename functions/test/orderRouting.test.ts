@@ -1416,7 +1416,10 @@ describe('Befund 05.10.: Teilausführung einer ERÖFFNENDEN Order', () => {
       return { ok: true, status: 200, text: async () => JSON.stringify(b) } as unknown as Response;
     });
     const r = await routeOrder(verbindung, einstieg, f, SCHNELL);
-    expect(r).toEqual({ ausgefuehrt: true, fillPreis: 6.52, fillMenge: 53, brokerOrderId: 'o1' });
+    expect(r).toMatchObject({ ausgefuehrt: true, fillPreis: 6.52, fillMenge: 53, brokerOrderId: 'o1' });
+    // Drift-Paket 08.10.: Der Verbleib ist unbekannt — die Order wird als
+    // offen vorgemerkt, der nächste Scan fragt nach.
+    expect(r.offen).toMatchObject({ art: 'einstieg_rest', orderId: 'o1' });
   });
 
   it('Nachfrage liefert 404 → die Menge aus dem Fenster gilt', async () => {

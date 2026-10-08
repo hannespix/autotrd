@@ -3018,6 +3018,7 @@ function renderAbgleich(
     fehlbestand?: number;
     /** Nur beim Broker — Fremdbestand, sperrt nicht. */
     fremdbestand?: number;
+    abweichungen?: Array<{ symbol: string; eigeneMenge: number; brokerMenge: number; differenz: number }>;
     verglichen: number;
     brokerPositionen: number;
     fehler: string;
@@ -3058,6 +3059,15 @@ function renderAbgleich(
   const verlaufBlock = verlaufHtml
     ? `<details style="margin-top:4px"><summary style="cursor:pointer">${t('ab.verlauf')}</summary>${verlaufHtml}</details>`
     : '';
+  /* Die SYMBOLE mit Mengen direkt in der Zeile (Drift-Paket 08.10.). Bis
+   * dahin stand hier nur „2 Position(en) nur beim Broker" — welche, zeigte
+   * erst der Klick auf „Verbindung prüfen". Eine Abweichung, die man nicht
+   * benennen kann, kann man auch nicht beheben. */
+  const abwListe = (a.abweichungen ?? []).length > 0
+    ? `<div class="mono" style="margin-top:4px">${(a.abweichungen ?? [])
+        .map((x) => `<span data-sym="${escText(x.symbol)}">${escText(x.symbol)}</span> ${t('ab.buch')} ${fmtNum(x.eigeneMenge)} / ${t('ab.broker')} ${fmtNum(x.brokerMenge)}`)
+        .join(' · ')}</div>`
+    : '';
   if (a.status === 'fehler') {
     el.innerHTML =
       `<b>${t('ab.nichtMoeglich')}</b> (${wann} ${t('ab.uhr')}): ${escText(a.fehler)}.<br />`
@@ -3077,11 +3087,13 @@ function renderAbgleich(
       el.innerHTML =
         `<b style="color:var(--rd)">${a.fehlbestand ?? a.anzahl} ${t('ab.fehlenBeimBroker')}</b> `
         + `(${wann} ${t('ab.uhr')}). <b>${t('ab.einstiegeGesperrt')}</b>${t('ab.ausstiegeFrei')}`
+        + abwListe
         + verlaufBlock;
     } else {
       el.innerHTML =
         `<b>${a.fremdbestand ?? a.anzahl} ${t('ab.nurBeimBroker')}</b> (${wann} ${t('ab.uhr')}) — `
         + t('ab.fremdUnangetastet')
+        + abwListe
         + verlaufBlock;
     }
     return;
@@ -6730,6 +6742,7 @@ function renderAccessNote(): void {
 const GATE_TEXT: ReadonlyArray<[string, string]> = [
   ['breaker_aktiv', t('gate.breakerAktiv')],
   ['abgleich_drift', t('gate.abgleichDrift')],
+  ['fremdbestand', t('gate.fremdbestand')],
   ['pdt_schutz', t('gate.pdtSchutz')],
   ['klasse_aus', t('gate.klasseAus')],
   ['regime_gegen_trend', t('gate.regimeGegenTrend')],
@@ -8882,6 +8895,8 @@ const EXIT_LABELS: Record<string, string> = {
   // bzw. der nachgezogene KI-Stop — eigene Eimer, damit Stufe 3 sie misst.
   ki_news: t('an.kiNews'),
   ki_stop: t('an.kiStop'),
+  // Drift-Paket 08.10.: ein Exit, dessen Fill erst der Nachlauf gebucht hat.
+  exit_nachlauf: t('an.exitNachlauf'),
 };
 
 /* ── Portfolio-Kennzahlen (M12): Stats-Doc + Equity-Sparkline ──────────────
@@ -10006,6 +10021,8 @@ const EXIT_LABEL: Record<string, string> = {
   max_hold: 'Haltedauer',
   ki_news: t('an.kiNews'),
   ki_stop: t('an.kiStop'),
+  // Drift-Paket 08.10.: ein Exit, dessen Fill erst der Nachlauf gebucht hat.
+  exit_nachlauf: t('an.exitNachlauf'),
 };
 
 /**

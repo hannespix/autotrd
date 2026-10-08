@@ -94,13 +94,37 @@ describe('Alles andere behält die Lauf-Kennung', () => {
     expect(auftragsLauf({}, POS, SCAN)).toBe(SCAN);
   });
 
-  it('ein Handeingabe-Verkauf ebenso', () => {
-    // Er trägt keinen `riskExit` — der Nutzer, der zweimal auf Verkaufen
-    // klickt, meint auch zweimal.
+  it('ein Verkauf ohne Exit-Grund bleibt beim Lauf, solange er nicht als schließend markiert ist', () => {
     expect(auftragsLauf({ riskExit: undefined }, POS, SCAN)).toBe(SCAN);
     expect(auftragsLauf({ riskExit: '' }, POS, SCAN)).toBe(SCAN);
   });
+});
 
+describe('Drift-Paket 08.10.: JEDER Exit hängt an der Position', () => {
+  it('auch ein Signal-Exit (ohne riskExit) bekommt die positionsstabile Kennung', () => {
+    // Sonst verkaufte der nächste Lauf unter neuer Kennung ein zweites Mal,
+    // während die erste Order noch beim Broker stand — Leerverkauf, Ursache 3.
+    expect(auftragsLauf({}, POS, SCAN, true)).toBe(auftragsLauf(EXIT, POS, PULS));
+    expect(auftragsLauf({}, POS, SCAN, true)).not.toBe(SCAN);
+  });
+
+  it('nach einem Teilschluss ist es eine NEUE Kennung — die Menge steckt darin', () => {
+    // Dieselbe Kennung fände beim Broker die alte, teilgefüllte Order, und
+    // der Duplicate-Pfad buchte deren Fill ein zweites Mal statt den Rest
+    // zu verkaufen; der Rest läge dann für immer beim Broker.
+    const vorher = { ...POS, qty: 10 };
+    const nachher = { ...POS, qty: 1 };
+    expect(auftragsLauf(EXIT, vorher, SCAN)).not.toBe(auftragsLauf(EXIT, nachher, SCAN));
+    expect(auftragsLauf(EXIT, vorher, SCAN)).toBe(auftragsLauf(EXIT, { ...vorher }, PULS));
+    expect(auftragsLauf(EXIT, { ...POS, qty: 1.9 }, SCAN)).toContain('-q1.9');
+  });
+
+  it('ohne Menge (Altbestand) bleibt die alte Form', () => {
+    expect(auftragsLauf(EXIT, POS, SCAN)).toBe('exit-2026-08-06T14:00:00Z');
+  });
+});
+
+describe('Randfälle der Kennung', () => {
   it('ohne Position bleibt es beim Lauf', () => {
     expect(auftragsLauf(EXIT, null, SCAN)).toBe(SCAN);
   });
@@ -124,14 +148,14 @@ describe('Quelltext: executeTrade leitet die Kennung EINMAL ab', () => {
 
   it('die Ableitung steht vor dem Routing', () => {
     const text = readFileSync(pfad, 'utf8');
-    const ab = text.indexOf('const lauf = auftragsLauf(req, position, laufId);');
+    const ab = text.indexOf('const lauf = auftragsLauf(req, position, laufId, schliesst);');
     expect(ab, 'Ableitung in executeTrade nicht gefunden').toBeGreaterThan(0);
     expect(text.indexOf('const routing = await routeOrder(', ab)).toBeGreaterThan(ab);
   });
 
   it('und ab da benutzt niemand mehr die rohe Lauf-Kennung', () => {
     const text = readFileSync(pfad, 'utf8');
-    const ab = text.indexOf('const lauf = auftragsLauf(req, position, laufId);');
+    const ab = text.indexOf('const lauf = auftragsLauf(req, position, laufId, schliesst);');
     const bis = text.indexOf('export async function executePaperTrade', ab);
     const block = text.slice(ab + 50, bis);
     // `laufId` darf hier nur noch als Wert von `laufId:` auftauchen, wenn

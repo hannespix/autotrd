@@ -49,6 +49,7 @@ import {
   alpacaOrderAbfragen,
   alpacaOrderPerClientId,
   alpacaOrderStornieren,
+  alpacaOrdersOffen,
   clientOrderId,
   warteAufFill,
   type AlpacaAsset,
@@ -338,10 +339,33 @@ export interface RoutingErgebnis {
    * eine manuelle Übernahme die Drift wieder einfing.
    */
   restStorniert?: boolean;
+  /**
+   * Diese Order ist beim Broker NICHT in einem Endzustand — oder ihr Verbleib
+   * ist unbekannt (Drift-Paket 08.10.). Der Aufrufer merkt sie als offene
+   * Order vor; der nächste Scan fragt sie nach und bucht, was inzwischen
+   * gefüllt hat (`bucheOffeneOrders`). Vorher blieb genau hier die Lücke,
+   * durch die der Broker „mehr hielt als das Buch": Ein später Fill hatte
+   * keinen Weg mehr ins Buch.
+   */
+  offen?: OffeneOrderVermerk;
+}
+
+/** Was der nächste Lauf über eine offen gebliebene Order wissen muss. */
+export interface OffeneOrderVermerk {
+  /**
+   * `einstieg_rest`: eröffnende Order nach Storno nicht im Endzustand —
+   *   Rest kann noch füllen. `einstieg_unbekannt`: der Broker-Aufruf ist
+   *   gescheitert, NACHDEM die Order angenommen worden sein kann (Netz,
+   *   5xx, Timeout) — es gibt nur die Client-Kennung. `exit_offen`:
+   *   schließende Order ohne Fill im Wartefenster, steht bewusst weiter.
+   */
+  art: 'einstieg_rest' | 'einstieg_unbekannt' | 'exit_offen';
+  orderId?: string;
+  clientOrderId: string;
 }
 
 /** Endzustände einer Order — danach ändert sich `filled_qty` nicht mehr. */
-const ORDER_ENDZUSTAENDE = new Set(['filled', 'canceled', 'expired', 'rejected', 'done_for_day']);
+export const ORDER_ENDZUSTAENDE = new Set(['filled', 'canceled', 'expired', 'rejected', 'done_for_day']);
 
 /**
  * Rest einer teilgefüllten ERÖFFNENDEN Order stornieren und die endgültige
@@ -364,7 +388,7 @@ async function einstiegsRestStornieren(
   sollMenge: number,
   pauseMs: number,
   fetchImpl: typeof fetch,
-): Promise<{ filledQty: number; filledAvgPreis: number } | null> {
+): Promise<{ filledQty: number; filledAvgPreis: number; endzustand: boolean } | null> {
   const schlaf = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
   let storno: 'storniert' | 'weg' | 'nicht_stornierbar' | 'fehler' = 'fehler';
   for (let versuch = 0; versuch < 2 && storno === 'fehler'; versuch += 1) {
@@ -375,23 +399,52 @@ async function einstiegsRestStornieren(
     }
   }
   let letzter: AlpacaOrderStand | null = null;
+  let endzustand = false;
   for (let nachfrage = 0; nachfrage < 3; nachfrage += 1) {
     if (nachfrage > 0 && pauseMs > 0) await schlaf(pauseMs);
     try {
       const stand = await alpacaOrderAbfragen(verbindung.mode, orderId, verbindung.schluessel, fetchImpl);
       if (stand && stand.filledQty > 0 && stand.filledAvgPreis > 0) letzter = stand;
-      if (stand && ORDER_ENDZUSTAENDE.has(stand.status)) break;
+      // `null` (404): Alpaca kennt die Order nicht mehr — sie ist tot.
+      if (!stand || ORDER_ENDZUSTAENDE.has(stand.status)) { endzustand = true; break; }
     } catch (err) {
       logger.warn(`routeOrder ${symbol}: Nachfrage nach Einstiegs-Storno fehlgeschlagen`, err);
     }
   }
-  if (letzter && !ORDER_ENDZUSTAENDE.has(letzter.status) && letzter.filledQty < sollMenge) {
+  if (!endzustand) {
     logger.warn(
-      `routeOrder ${symbol}: Einstieg teilgefüllt (${letzter.filledQty}/${sollMenge}), Order ${orderId} `
-        + `noch im Zustand ${letzter.status} (Storno: ${storno}) — ein späterer Rest-Fill erscheint als Fremdbestand`,
+      `routeOrder ${symbol}: Einstieg (${letzter?.filledQty ?? 0}/${sollMenge}), Order ${orderId} `
+        + `nicht im Endzustand (Storno: ${storno}) — wird als offene Order nachgefragt`,
     );
   }
-  return letzter ? { filledQty: letzter.filledQty, filledAvgPreis: letzter.filledAvgPreis } : null;
+  return letzter ? { filledQty: letzter.filledQty, filledAvgPreis: letzter.filledAvgPreis, endzustand } : null;
+}
+
+/**
+ * Unsere eigene, noch laufende MARKET-Order gleicher Richtung für ein Symbol
+ * — oder `null` (keine da, oder die Nachfrage ist gescheitert: dann wird
+ * normal gehandelt, eine Prüfung darf keinen Exit verhindern). Erkannt an
+ * der Client-Kennung, die mit der Nutzer-Kennung beginnt; Schutz-Stops
+ * (Typ stop/stop_limit) und fremde Hand-Orders zählen nicht.
+ */
+export async function eigeneOffeneOrder(
+  verbindung: BrokerVerbindung,
+  uid: string,
+  symbol: string,
+  side: 'buy' | 'sell',
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ id: string; clientOrderId: string; qty: number } | null> {
+  try {
+    const offen = await alpacaOrdersOffen(verbindung.mode, verbindung.schluessel, fetchImpl);
+    const praefix = `${uid.replace(/[^A-Za-z0-9-]/g, '_')}-`;
+    const treffer = offen.find(
+      (o) => o.symbol === symbol && o.side === side && o.typ === 'market' && o.clientOrderId.startsWith(praefix),
+    );
+    return treffer ? { id: treffer.id, clientOrderId: treffer.clientOrderId, qty: treffer.qty } : null;
+  } catch (err) {
+    logger.warn(`routeOrder ${symbol}: offene Orders nicht lesbar — Exit geht normal raus`, err);
+    return null;
+  }
 }
 
 /**
@@ -479,6 +532,7 @@ export async function routeOrder(
     auftrag.qty,
     auftrag.laufId,
   );
+
   try {
     const order = await alpacaOrder(
       verbindung.mode,
@@ -516,20 +570,29 @@ export async function routeOrder(
           warteOpts.pauseMs ?? 300,
           fetchImpl,
         );
+        const offenRest: Pick<RoutingErgebnis, 'offen'> = stand?.endzustand === true
+          ? {}
+          : { offen: { art: 'einstieg_rest', orderId: order.id, clientOrderId: coid } };
         if (stand) {
           return {
             ausgefuehrt: true,
             fillPreis: stand.filledAvgPreis,
             fillMenge: stand.filledQty,
             brokerOrderId: order.id,
+            ...offenRest,
           };
         }
-        return { ausgefuehrt: false, grund: 'kein_fill' };
+        return { ausgefuehrt: false, grund: 'kein_fill', ...offenRest };
       }
       // Schließende Order: Sie bleibt bewusst stehen — ein später Fill ist
-      // erwünscht und wird beim nächsten Lauf über die positionsstabile
-      // Kennung nachgebucht (Duplicate-Pfad im catch unten).
-      return { ausgefuehrt: false, grund: 'kein_fill' };
+      // erwünscht. Vermerkt als offene Order, damit der nächste Scan ihn
+      // auch dann bucht, wenn kein weiterer Exit mehr versucht wird
+      // (Drift-Paket 08.10.: vorher nur über den Duplicate-Pfad).
+      return {
+        ausgefuehrt: false,
+        grund: 'kein_fill',
+        offen: { art: 'exit_offen', orderId: order.id, clientOrderId: coid },
+      };
     }
 
     /* Teilausführung einer ERÖFFNENDEN Order (Befund 05.10., CCG).
@@ -568,9 +631,18 @@ export async function routeOrder(
           fillPreis: stand.filledAvgPreis,
           fillMenge: stand.filledQty,
           brokerOrderId: order.id,
+          ...(stand.endzustand ? {} : { offen: { art: 'einstieg_rest', orderId: order.id, clientOrderId: coid } }),
         };
       }
-      // Nichts Verwertbares nachgefragt — die Menge aus dem Wartefenster gilt.
+      // Nichts Verwertbares nachgefragt — die Menge aus dem Wartefenster
+      // gilt, und die Order wird als offen vorgemerkt.
+      return {
+        ausgefuehrt: true,
+        fillPreis: fill.ausfuehrungskurs,
+        fillMenge: fill.qty,
+        brokerOrderId: order.id,
+        offen: { art: 'einstieg_rest', orderId: order.id, clientOrderId: coid },
+      };
     }
 
     /* Teilausführung einer SCHLIESSENDEN Order (Root-Cause-Befund 24.08.,
@@ -718,10 +790,13 @@ export async function routeOrder(
           );
           const menge = stand?.filledQty ?? fill?.qty ?? 0;
           const preis = stand?.filledAvgPreis ?? fill?.ausfuehrungskurs ?? 0;
+          const offenAlt: Pick<RoutingErgebnis, 'offen'> = stand?.endzustand === true
+            ? {}
+            : { offen: { art: 'einstieg_rest', orderId: alt.id, clientOrderId: coid } };
           if (menge > 0 && preis > 0) {
-            return { ausgefuehrt: true, fillPreis: preis, fillMenge: menge, brokerOrderId: alt.id };
+            return { ausgefuehrt: true, fillPreis: preis, fillMenge: menge, brokerOrderId: alt.id, ...offenAlt };
           }
-          return { ausgefuehrt: false, grund: 'kein_fill' };
+          return { ausgefuehrt: false, grund: 'kein_fill', ...offenAlt };
         }
         if (alt && alt.filledAvgPreis > 0 && alt.filledQty > 0) {
           logger.info(
@@ -765,7 +840,16 @@ export async function routeOrder(
     // durch `keineSchluesselImText` in alpacaFetch, bevor sie hier ankommt.
     const text = err instanceof Error ? err.message : String(err);
     logger.warn(`routeOrder ${auftrag.symbol} ${auftrag.side}: ${text.slice(0, 200)}`);
-    return { ausgefuehrt: false, grund: 'broker_fehler' };
+    /* Eröffnende Order mit UNBEKANNTEM Verbleib (Drift-Paket 08.10.): Der
+     * Fehler kann NACH der Annahme durch Alpaca gekommen sein (Netz, 5xx,
+     * Timeout). Dann füllt eine Market-Order trotzdem — bisher ohne Buch,
+     * ohne Stop, und der nächste Scan kaufte unter neuer Kennung noch
+     * einmal. Die Client-Kennung reicht, um sie wiederzufinden. */
+    return {
+      ausgefuehrt: false,
+      grund: 'broker_fehler',
+      ...(eroeffnend ? { offen: { art: 'einstieg_unbekannt', clientOrderId: coid } } : {}),
+    };
   }
 }
 

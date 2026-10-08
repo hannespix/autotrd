@@ -183,6 +183,8 @@ describe('schutzAufheben (die Regel, die nie brechen darf)', () => {
       fillQty: 10,
       orderId: 'o1',
       quelle: 'einstand',
+      // Drift-Paket 08.10.: `filled` ist ein Endzustand — der Rest ist tot.
+      restStorniert: true,
     });
   });
 });
