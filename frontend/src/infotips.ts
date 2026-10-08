@@ -313,6 +313,10 @@ export const INFO_DE: Record<string, Tip> = {
     t: 'Warum geschlossen',
     d: 'Wodurch die Positionen tatsächlich beendet wurden: durch eine Risiko-Marke (Stop-Loss, Take-Profit, Trailing-Stop) oder durch ein SIGNAL — also weil die Indikatoren gedreht haben. Die Verteilung ist aufschlussreicher als jede Einzelzahl: Steht fast alles unter „Signal", werden Stop und Take praktisch nie erreicht. Dann entscheidet nicht deine Risikosteuerung über das Ergebnis, sondern das Kippen einer einzelnen Indikator-Stimme — ein Zeichen dafür, dass die Positionen zu früh wieder rausfliegen.',
   },
+  quellen: {
+    t: 'Ergebnis je Einstiegsweg',
+    d: 'Welcher Weg hat die Position eröffnet — und verdient dieser Weg sein Geld? Jede geschlossene Position zählt zu ihrem Einstieg: Konfluenz (mehrere Indikatoren einig), Regelbaum, Momentum, Sockel, KI-Probe oder Hand. „Nachgebucht" und „Unbekannt" sind keine Wege, sondern Lücken: Positionen, die der Abgleich mit dem Broker nachgetragen hat, oder ältere Bestände ohne Herkunftsvermerk. Netto/$ ist das Ergebnis je gehandeltem Dollar in Prozent, nach Gebühren — die Zahl, die sagt, ob ein Weg seine eigene Reibung trägt; sie färbt die Zeile. Je Klasse steht zuerst die Summe, schlechteste zuerst; darunter die Wege nach Kante. Steht „--", fehlt älteren Trades der Gebührensatz: Die Kante ist dann nicht messbar, das Ergebnis daneben trotzdem echt. Die Tabelle zeigt nur dein eigenes Konto; das öffentliche Gesamtbild nennt Kante und Gebühr je Weg erst, wenn genug Konten ihn gehandelt haben.',
+  },
   fillReibung: {
     t: 'Ausführungs-Reibung',
     d: 'Der gemessene Abstand zwischen dem Kurs, bei dem die Engine entschieden hat, und dem Kurs, zu dem der Broker wirklich ausgeführt hat — in Basispunkten (1 bp = 0,01 %), getrennt nach Einstieg und Ausstieg. Daran hängt die Frage, ob Aktien-Einstiege als Limit-Order (Maker) laufen sollten: unter 5 bp lohnt der Umbau nicht, ab 10 bp ist er fällig. Die Farbe am US-Aktien-Einstieg zeigt genau diese Regel.',
@@ -619,6 +623,10 @@ export const INFO_EN: Record<string, Partial<Tip>> = {
   expectancy: {
     t: 'Expectancy per trade',
     d: 'What an average closed trade brought in (total P&L divided by the count). The number translates the strategy into one sentence: “every trade returns $X on average.” Negative means: trading more often loses money faster — raising the frequency only pays with a positive expectancy.',
+  },
+  quellen: {
+    t: 'Result by entry path',
+    d: 'Which path opened the position — and does that path earn its keep? Every closed position counts towards its entry: confluence (several indicators agreeing), rule tree, momentum, core, AI probe or manual. “Synced” and “Unknown” are not paths but gaps: positions the broker reconciliation booked after the fact, or older holdings without an origin record. Net/$ is the result per dollar traded, in percent, after fees — the number that says whether a path carries its own friction; it colors the row. Each class starts with its total, worst first; below it the paths by edge. A “--” means older trades carry no fee rate: the edge cannot be measured, the result next to it is still real. The table shows only your own account; the public overall picture names edge and fees per path only once enough accounts have traded it.',
   },
   fillReibung: {
     t: 'Execution friction',

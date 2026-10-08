@@ -107,8 +107,8 @@ describe('Text-Diät Stufe 2 — Performance-Sektionen zu statt Leersatz-Stapel'
     for (const aufruf of STUFE_2_LEERSAETZE) expect(dashboard).not.toContain(aufruf);
   });
 
-  it('die vier Sektions-Wrapper starten zu, der Sammelsatz existiert genau einmal', () => {
-    for (const id of ['pfSekExits', 'pfSekKosten', 'pfSekReibung', 'pfSekKapital']) {
+  it('die fünf Sektions-Wrapper starten zu, der Sammelsatz existiert genau einmal', () => {
+    for (const id of ['pfSekExits', 'pfSekKosten', 'pfSekReibung', 'pfSekQuellen', 'pfSekKapital']) {
       expect(dashboard).toContain(`<div id="${id}" hidden>`);
     }
     expect(dashboard).toContain('<div class="hint" id="pfLeer" hidden>');
@@ -119,6 +119,7 @@ describe('Text-Diät Stufe 2 — Performance-Sektionen zu statt Leersatz-Stapel'
     expect(dashboard).toContain("zeigePfSektion('pfSekExits', total > 0);");
     expect(dashboard).toContain("zeigePfSektion('pfSekKosten', !!c && c.n > 0);");
     expect(dashboard).toContain("zeigePfSektion('pfSekReibung', klassen.length > 0);");
+    expect(dashboard).toContain("zeigePfSektion('pfSekQuellen', gruppen.length > 0);");
     expect(dashboard).toContain("zeigePfSektion('pfSekKapital', !!k);");
   });
 

@@ -1080,6 +1080,10 @@ function layout(email: string): string {
         <label class="lbl" style="margin-top:10px">${t('pf.fillReibung')} ${iBtn('fillReibung')}</label>
         <div id="pfReibung" class="fl-tbl"></div>
         </div>
+        <div id="pfSekQuellen" hidden>
+        <label class="lbl" style="margin-top:10px">${t('pf.quellen')} ${iBtn('quellen')}</label>
+        <div id="pfQuellen" class="fl-tbl q-tbl"></div>
+        </div>
         <div id="pfSekKapital" hidden>
         <label class="lbl" style="margin-top:10px">${t('pf.kapitalEinsatz')} ${iBtn('kapitalEinsatz')}</label>
         <div id="pfKapital" class="fl-tbl"></div>
@@ -9262,6 +9266,7 @@ function renderPfStats(): void {
   renderExits(s);
   renderCosts(s);
   renderReibung(s);
+  renderQuellen(s);
   renderKapital(s);
   aktualisierePfLeer();
 }
@@ -10097,7 +10102,7 @@ function wireDepotVerlauf(z: ReturnType<typeof zerlegeDepot>): void {
  * solange mindestens eine Sektion fehlt — bei einem frischen Konto ersetzt
  * er vier gestapelte Erklärabsätze durch eine Zeile.
  */
-const PF_SEKTIONEN = ['pfSekExits', 'pfSekKosten', 'pfSekReibung', 'pfSekKapital'] as const;
+const PF_SEKTIONEN = ['pfSekExits', 'pfSekKosten', 'pfSekReibung', 'pfSekQuellen', 'pfSekKapital'] as const;
 
 function zeigePfSektion(id: (typeof PF_SEKTIONEN)[number], hat: boolean): void {
   const sek = document.getElementById(id);
@@ -10230,6 +10235,92 @@ function renderReibung(s: PortfolioStatsDoc): void {
       );
     })
     .join('');
+}
+
+/** Klarnamen der Einstiegswege (Task 18b) — Schlüssel aus `tradeQuelle`. */
+const QUELLE_LABEL: Record<string, string> = {
+  konfluenz: t('pf.quelleKonfluenz'),
+  regelbaum: t('pf.quelleRegelbaum'),
+  momentum: t('pf.quelleMomentum'),
+  sockel: t('pf.quelleSockel'),
+  ki_probe: t('pf.quelleKiProbe'),
+  hand: t('pf.quelleHand'),
+  sync: t('pf.quelleSync'),
+  unbekannt: t('pf.quelleUnbekannt'),
+};
+
+/**
+ * Ergebnis je Anlageklasse UND Einstiegsweg (Task 18b) — die eigene,
+ * ungekürzte Sicht auf `stats/main.byClassQuelle`. Das öffentliche Aggregat
+ * zeigt Kante und Gebühr je Quelle erst ab der Konten-Schwelle; das eigene
+ * Konto darf seine Zahlen immer sehen.
+ *
+ * Aufbau nach UI-Kritik 08.10.: Legende als Kopfzeile IN der Tabelle (nicht
+ * im Label — dort wird „n" zu „N"), je Klasse ein Gruppenkopf mit Summe
+ * (Trades, P&L) — schlechteste Klassen-Summe zuerst, damit der größte
+ * Verlust oben steht und nicht als „--"-Zeile ganz unten verschwindet —,
+ * darunter die Wege OHNE Klassen-Präfix (die Ellipse fraß sonst genau den
+ * Weg). Innerhalb der Klasse: schlechteste Kante zuerst, ungemessene ans
+ * Ende und gedämpft als Messlücke gezeichnet. Die Ampel trägt die KANTE
+ * (die Entscheidungszahl), der P&L bleibt neutral — zwei gefärbte Spalten
+ * bei 11 px sind zu viel.
+ */
+function renderQuellen(s: PortfolioStatsDoc): void {
+  const box = $('pfQuellen');
+  const je = s.byClassQuelle ?? {};
+  type Zeile = { quelle: string; n: number; pnl: number; kantePct: number | null };
+  const gruppen: { klasse: string; n: number; pnl: number; zeilen: Zeile[] }[] = [];
+  for (const [klasse, quellen] of Object.entries(je)) {
+    const zeilen: Zeile[] = [];
+    for (const [quelle, w] of Object.entries(quellen ?? {})) {
+      if (!w || !(w.n > 0)) continue;
+      zeilen.push({ quelle, n: w.n, pnl: w.pnl, kantePct: typeof w.kantePct === 'number' ? w.kantePct : null });
+    }
+    if (zeilen.length === 0) continue;
+    zeilen.sort((a, b) => {
+      const ka = a.kantePct ?? Number.POSITIVE_INFINITY;
+      const kb = b.kantePct ?? Number.POSITIVE_INFINITY;
+      return ka - kb || b.n - a.n;
+    });
+    gruppen.push({ klasse, n: zeilen.reduce((x, z) => x + z.n, 0), pnl: zeilen.reduce((x, z) => x + z.pnl, 0), zeilen });
+  }
+  zeigePfSektion('pfSekQuellen', gruppen.length > 0);
+  if (gruppen.length === 0) {
+    box.innerHTML = '';
+    return;
+  }
+  gruppen.sort((a, b) => a.pnl - b.pnl);
+  // Ein Zahlenformat in dieser Karte (§8 Naht): Prozent mit Leerzeichen wie
+  // der Max-Drawdown, „+" am P&L wie bei „Gesamt P&L".
+  const kante = (v: number | null): string => (v === null ? '--' : `${v.toFixed(2)} %`);
+  const kanteTon = (v: number | null): string => (v === null ? 'q-luecke' : v < 0 ? 'c-rd' : v > 0 ? 'c-gn' : '');
+  const geld = (v: number): string => (v > 0 ? '+' : '') + money(v);
+  const kopf =
+    `<div class="fl-row q-row fl-head"><span>${t('pf.quelleWeg')}</span><span>${t('pf.quelleTrades')}</span>` +
+    `<span>${t('pf.quelleKante')}</span><span>P&amp;L</span></div>`;
+  box.innerHTML =
+    kopf +
+    gruppen
+      .map((g) => {
+        // Klassen-Schlüssel kommen aus der Datenbank — auf harmlose Zeichen beschränken.
+        const klasse = CLASS_LABELS[g.klasse] ?? g.klasse.replace(/[^\w-]/g, '');
+        const summe =
+          `<div class="fl-row q-row q-klasse"><span>${klasse}</span><span class="mono">${g.n}×</span>` +
+          `<span></span><span class="mono ${g.pnl < 0 ? 'c-rd' : g.pnl > 0 ? 'c-gn' : ''}">${geld(g.pnl)}</span></div>`;
+        const wege = g.zeilen
+          .map((z) => {
+            const weg = QUELLE_LABEL[z.quelle] ?? z.quelle.replace(/[^\w-]/g, '');
+            const luecke = z.kantePct === null ? ` title="${t('pf.quelleLuecke')}"` : '';
+            return (
+              `<div class="fl-row q-row${z.kantePct === null ? ' q-luecke' : ''}"${luecke}><span>${weg}</span>` +
+              `<span class="mono">${z.n}×</span><span class="mono ${kanteTon(z.kantePct)}">${kante(z.kantePct)}</span>` +
+              `<span class="mono">${geld(z.pnl)}</span></div>`
+            );
+          })
+          .join('');
+        return summe + wege;
+      })
+      .join('');
 }
 
 /**
