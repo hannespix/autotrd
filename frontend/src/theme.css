@@ -747,6 +747,10 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
 .dsheet .dkz div { display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid var(--hair); padding-bottom: 5px; min-width: 0; }
 .dsheet .dkz dt { font-size: 10px; text-transform: uppercase; letter-spacing: .4px; color: var(--t3); font-family: inherit; }
 .dsheet .dkz dd { color: var(--t1); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0; }
+/* Profil-Zeile über dem Fundamental-Raster (Task 19, Teil 2) */
+.dsheet .dprofil { margin-top: 10px; font-size: 11px; line-height: 1.5; }
+.dsheet .dprofil a { color: var(--ac); text-decoration: none; }
+.dsheet .dprofil a:hover { text-decoration: underline; }
 /* Schlagzeilen im Detail-Sheet (News-Rückkehr 29.07.) */
 .dsheet .dnews { display: flex; flex-direction: column; gap: 8px; }
 .dsheet .dnews-item { display: grid; grid-template-columns: 8px 1fr; column-gap: 8px; align-items: baseline; text-decoration: none; color: var(--t1); font-size: 12px; line-height: 1.35; }
