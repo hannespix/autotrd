@@ -119,6 +119,17 @@ export interface KiFakten {
   signalSchatten?: Record<string, { n?: number; trefferquote?: number | null; kantePct?: number | null }>;
   konten?: Record<string, number | string>;
   regime?: { state?: string; vix?: number; aboveSma200?: boolean };
+  /** KI-Nachrichten (Stufe 3/4a): gemessene Güte der Urteile — nur Summen aus meta/health.kiBewertung. */
+  kiBewertung?: {
+    faelleWirksam?: number;
+    faelleGesamt?: number;
+    quotePct?: number | null;
+    nettoAvgPct?: number | null;
+    ueberMarktQuotePct?: number | null;
+    holdoutQuotePct?: number | null;
+    holdoutN?: number;
+    gewicht?: number;
+  };
 }
 
 const pz = (x: number, s = 2): string => x.toFixed(s).replace('.', ',');
@@ -176,6 +187,19 @@ export function baueEingabe(chronik: ErkenntnisChronik, fakten: KiFakten): strin
         `- ${k}: n=${v.n ?? 0}, Trefferquote ${v.trefferquote ?? '--'}, Kante ${v.kantePct ?? '--'} %`,
       );
     }
+  }
+
+  const ki = fakten.kiBewertung;
+  if (ki) {
+    zeilen.push('', 'KI-NACHRICHTEN (Urteile nach Horizont gegen den Markt bewertet, netto nach Kosten):');
+    zeilen.push(
+      `- wirksame Urteile: n=${ki.faelleWirksam ?? 0}, Trefferquote ${ki.quotePct ?? '--'} %, ` +
+        `Ø netto ${ki.nettoAvgPct ?? '--'} %, über Markt-Drift ${ki.ueberMarktQuotePct ?? '--'} %`,
+    );
+    zeilen.push(
+      `- Holdout B (nicht steuernd): n=${ki.holdoutN ?? 0}, Trefferquote ${ki.holdoutQuotePct ?? '--'} %; ` +
+        `alle Urteile n=${ki.faelleGesamt ?? 0}; Gewicht der KI-Stimme ×${ki.gewicht ?? 1}`,
+    );
   }
 
   if (fakten.regime) {

@@ -14,6 +14,10 @@ import {
   etTag,
   fallSchluessel,
   handelbarZurBezugszeit,
+  holdoutArm,
+  benchmarkPct,
+  BENCHMARK_MIN_FENSTER,
+  fallKennzahlen,
   isoWocheEt,
   KI_GEWICHT_BUCKET,
   KI_GEWICHT_MAX,
@@ -152,7 +156,9 @@ describe('bewerteUrteil — Gate und Rechnung', () => {
 describe('Buckets und Fälle', () => {
   it('wirksam heißt: der Scan hat TATSÄCHLICH gestimmt (gestimmtAt) — Long und Short getrennt', () => {
     expect(KI_GEWICHT_BUCKET).toBe('wirksam_long');
-    expect(bucketsFuer(urteil())).toEqual(['gesamt', 'pruefung', 'wirksam_long', 'handelbar', 'ereignis_zahlen']);
+    // Stufe 4a: der Gewichts-Bucket bekommt zusätzlich seinen Holdout-Arm (Hash des Fallschlüssels).
+    const arm = holdoutArm('AAPL|2026-09-01');
+    expect(bucketsFuer(urteil())).toEqual(['gesamt', 'pruefung', 'wirksam_long', `holdout_${arm}`, 'handelbar', 'ereignis_zahlen']);
     expect(bucketsFuer(urteil({ richtung: 'negativ' }))).toEqual(['gesamt', 'pruefung', 'wirksam_short', 'handelbar', 'ereignis_zahlen']);
     // „hätte dürfen" ohne abgegebene Stimme ist Schatten
     expect(bucketsFuer(urteil({ gestimmtAt: undefined }))).toEqual(['gesamt', 'pruefung', 'schatten', 'handelbar', 'ereignis_zahlen']);
@@ -246,5 +252,65 @@ describe('Wochenbericht', () => {
     expect(t).toContain('9 Fälle, Trefferquote 44 %, Ø netto -0.11 %');
     expect(t).toContain('×1.00 (unter 40 wirksamen Fällen bleibt es bei Stufe 2b).');
     expect(wochenNachricht('2026-W41', null, null, 1)).toContain('noch keine bewerteten Fälle');
+  });
+});
+
+describe('Stufe 4a — Benchmark, Holdout, Kennzahlen', () => {
+  const reihe = (n: number, start = '2026-06-01'): { date: string; close: number }[] => {
+    const out: { date: string; close: number }[] = [];
+    const d = new Date(`${start}T00:00:00Z`);
+    let close = 100;
+    while (out.length < n) {
+      if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) {
+        close = Math.round(close * 1.01 * 100) / 100; // +1 % je Handelstag
+        out.push({ date: d.toISOString().slice(0, 10), close });
+      }
+      d.setUTCDate(d.getUTCDate() + 1);
+    }
+    return out;
+  };
+  it('benchmarkPct = mittlere h-Tage-Bewegung VOR dem Bezugstag; nie eine Kerze danach', () => {
+    const r = reihe(80);
+    const bezug = r[70]!.date;
+    const b = benchmarkPct(r, bezug, 3);
+    expect(b).not.toBeNull();
+    expect(b!).toBeCloseTo(3.03, 1); // (1.01^3 − 1) × 100
+    // Kerzen nach dem Bezug ändern NICHTS (Lookahead-frei)
+    const manipuliert = r.map((s) => (s.date > bezug ? { ...s, close: s.close * 10 } : s));
+    expect(benchmarkPct(manipuliert, bezug, 3)).toBe(b);
+  });
+  it('zu wenig Vorlauf → null (unter BENCHMARK_MIN_FENSTER Fenster)', () => {
+    expect(BENCHMARK_MIN_FENSTER).toBe(20);
+    const r = reihe(15);
+    expect(benchmarkPct(r, r[14]!.date, 3)).toBeNull();
+  });
+  it('bewerteUrteil trägt Markt und Über-Markt; ohne Vorlauf null', () => {
+    const r = reihe(80);
+    const bezugTag = r[70]!.date;
+    const u = urteil({
+      firstSeenAt: `${bezugTag}T14:00:00Z`, decidedAt: `${bezugTag}T14:05:00Z`, gespeichertAt: `${bezugTag}T14:06:00Z`,
+      pruefung: null, horizontTage: 3,
+    });
+    const x = bewerteUrteil(u, r, 0, '2026-12-31');
+    expect(x.stand).toBe('bewertet');
+    if (x.stand !== 'bewertet') return;
+    expect(x.marktPct).toBeCloseTo(3.03, 1);
+    expect(x.ueberMarktPct).toBeCloseTo(x.bruttoPct - 3.03, 1);
+    const y = bewerteUrteil(urteil({ pruefung: null }), schluesse, 0, '2026-09-10');
+    expect(y.stand === 'bewertet' && y.marktPct === null && y.ueberMarktPct === null).toBe(true);
+  });
+  it('holdoutArm ist deterministisch, hängt am Fall, und beide Arme kommen vor', () => {
+    expect(holdoutArm('AAPL|2026-09-01')).toBe(holdoutArm('AAPL|2026-09-01'));
+    const arme = new Set(['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'META', 'GOOG', 'BTC-USD'].map((s) => holdoutArm(`${s}|2026-09-01`)));
+    expect(arme.size).toBe(2);
+  });
+  it('fallKennzahlen: Quote, Ø netto, Über-Markt-Quote — null ohne Fälle', () => {
+    expect(fallKennzahlen({ n: 4, treffer: 3, nettoSum: 2, nMarkt: 2, trefferMarkt: 1 })).toEqual({ n: 4, quotePct: 75, nettoAvgPct: 0.5, ueberMarktQuotePct: 50 });
+    expect(fallKennzahlen(undefined)).toEqual({ n: 0, quotePct: null, nettoAvgPct: null, ueberMarktQuotePct: null });
+  });
+  it('Wochenbericht nennt den Holdout und die Über-Markt-Quote', () => {
+    const t = wochenNachricht('2026-W41', { n: 40, treffer: 24, nettoSum: 8, nMarkt: 30, trefferMarkt: 15 }, null, 1, { n: 20, treffer: 9, nettoSum: -1 });
+    expect(t).toContain('über Markt 50 %');
+    expect(t).toContain('Holdout B: 20 Fälle, Trefferquote 45 %');
   });
 });

@@ -96,6 +96,10 @@ export type KiBewertungStand =
       nettoPct: number;
       kostenPct: number;
       treffer: boolean;
+      /** Unbedingte h-Tage-Bewegung des Symbols vor dem Bezug (Stufe 4a, Benchmark); null ohne Vorlauf. */
+      marktPct: number | null;
+      /** Brutto in Urteilsrichtung minus Markt-Drift in Urteilsrichtung — was das Urteil über die Drift hinaus wusste. */
+      ueberMarktPct: number | null;
     };
 
 /** Zeitwert aus ISO-String, Firestore-Timestamp oder {seconds} — sonst null. */
@@ -143,6 +147,29 @@ export function horizontVon(u: KiUrteilRoh): number {
   const h = u.horizontTage;
   if (typeof h !== 'number' || !Number.isFinite(h)) return KI_HORIZONT_DEFAULT;
   return Math.min(KI_HORIZONT_MAX, Math.max(1, Math.round(h)));
+}
+
+/** Wie viele Handelstage Vorlauf die Benchmark mindestens braucht. */
+export const BENCHMARK_MIN_FENSTER = 20;
+/** Höchstens so viele Handelstage Vorlauf gehen in die Benchmark ein. */
+export const BENCHMARK_MAX_FENSTER = 60;
+
+/**
+ * Benchmark (Stufe 4a, Red-Team B3c): die mittlere h-Tage-Bewegung des
+ * Symbols über die letzten Handelstage VOR dem Bezugstag. Ein positives
+ * Urteil in einem Aufwärtsmarkt bekommt die Drift sonst gratis gutgeschrieben,
+ * ein negatives wird dafür bestraft. Nur Kerzen ≤ Bezugstag — kein Blick nach
+ * vorn. null, wenn weniger als BENCHMARK_MIN_FENSTER Fenster vorhanden sind.
+ */
+export function benchmarkPct(schluesse: ReadonlyArray<TagesSchluss>, bezugTag: string, h: number): number | null {
+  const vor = [...schluesse]
+    .filter((s) => s.date <= bezugTag && Number.isFinite(s.close) && s.close > 0)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+    .slice(-(BENCHMARK_MAX_FENSTER + h));
+  const fenster: number[] = [];
+  for (let i = 0; i + h < vor.length; i += 1) fenster.push((vor[i + h]!.close / vor[i]!.close - 1) * 100);
+  if (fenster.length < BENCHMARK_MIN_FENSTER) return null;
+  return rund(fenster.reduce((s, v) => s + v, 0) / fenster.length);
 }
 
 const kalenderTageZwischen = (tagA: string, tagB: string): number =>
@@ -204,6 +231,8 @@ export function bewerteUrteil(
   const bruttoPct = rund((ende.close / einstieg - 1) * 100 * richtung);
   const kostenPct = rund(Math.max(0, kostenRoundtripRate) * 100);
   const nettoPct = rund(bruttoPct - kostenPct);
+  const marktPct = benchmarkPct(schluesse, bezugTag, h);
+  const ueberMarktPct = marktPct === null ? null : rund(bruttoPct - marktPct * richtung);
   return {
     stand: 'bewertet',
     einstieg: rund(einstieg, 6),
@@ -216,6 +245,8 @@ export function bewerteUrteil(
     nettoPct,
     kostenPct,
     treffer: nettoPct > 0,
+    marktPct,
+    ueberMarktPct,
   };
 }
 
@@ -230,6 +261,23 @@ export interface KiFallStat {
   treffer: number;
   nettoSum: number;
   bruttoSum: number;
+  /** Fälle mit Benchmark (Stufe 4a) — Nenner für die Über-Markt-Quote. */
+  nMarkt?: number;
+  /** Davon: netto über der Markt-Drift (nettoPct − Drift in Urteilsrichtung > 0). */
+  trefferMarkt?: number;
+  ueberMarktSum?: number;
+}
+
+/**
+ * Holdout (Stufe 4a, Red-Team B3d): Jeder Fall gehört fest zu Arm A oder B
+ * (Hash des Fallschlüssels, nicht die Zeit — sonst wäre B nur „später").
+ * Das Gewicht rechnet aus A; B ist die Out-of-Sample-Kontrolle, die im
+ * Wochenbericht steht und ohne die Stufe 4b keine Verstärkung freigibt.
+ */
+export function holdoutArm(fall: string): 'a' | 'b' {
+  let h = 0;
+  for (let i = 0; i < fall.length; i += 1) h = (h * 31 + fall.charCodeAt(i)) >>> 0;
+  return h % 2 === 0 ? 'a' : 'b';
 }
 
 /** War der Markt der Klasse zur Bezugszeit offen? (Nur dann konnte die Engine binnen 120 min handeln.) */
@@ -256,8 +304,11 @@ export function bucketsFuer(u: KiUrteilRoh): string[] {
   const out = ['gesamt'];
   out.push(u.stufe === 'pruefung' ? 'pruefung' : 'sichtung');
   const gestimmt = zeitMs(u.gestimmtAt) !== null;
-  if (gestimmt && u.richtung === 'positiv') out.push('wirksam_long');
-  else if (gestimmt && u.richtung === 'negativ') out.push('wirksam_short');
+  if (gestimmt && u.richtung === 'positiv') {
+    out.push('wirksam_long');
+    const fall = fallSchluessel(u);
+    if (fall !== null) out.push(`holdout_${holdoutArm(fall)}`);
+  } else if (gestimmt && u.richtung === 'negativ') out.push('wirksam_short');
   else out.push('schatten');
   out.push(handelbarZurBezugszeit(u) ? 'handelbar' : 'ausserhalb');
   const ereignis = u.sichtung?.ereignis;
@@ -345,22 +396,43 @@ export function isoWocheEt(ms: number): string {
 }
 
 /** Text der Wochen-Nachricht an die Admins (nur Summen, keine Konten). */
+/** Kennzahlen eines Buckets für Bericht und Herzschlag — nur Summen, gerundet. */
+export function fallKennzahlen(s: Partial<KiFallStat> | null | undefined): {
+  n: number;
+  quotePct: number | null;
+  nettoAvgPct: number | null;
+  ueberMarktQuotePct: number | null;
+} {
+  const n = s?.n ?? 0;
+  const nMarkt = s?.nMarkt ?? 0;
+  return {
+    n,
+    quotePct: n > 0 ? Math.round(((s?.treffer ?? 0) / n) * 1000) / 10 : null,
+    nettoAvgPct: n > 0 ? Math.round(((s?.nettoSum ?? 0) / n) * 100) / 100 : null,
+    ueberMarktQuotePct: nMarkt > 0 ? Math.round(((s?.trefferMarkt ?? 0) / nMarkt) * 1000) / 10 : null,
+  };
+}
+
 export function wochenNachricht(
   woche: string,
   wirksam: Partial<KiFallStat> | null | undefined,
   gesamt: Partial<KiFallStat> | null | undefined,
   gewicht: number,
+  holdout?: Partial<KiFallStat> | null,
 ): string {
   const q = (s: Partial<KiFallStat> | null | undefined): string => {
-    const n = s?.n ?? 0;
-    if (n === 0) return 'noch keine bewerteten Fälle';
-    const quote = Math.round(((s?.treffer ?? 0) / n) * 100);
-    const netto = (s?.nettoSum ?? 0) / n;
-    return `${n} Fälle, Trefferquote ${quote} %, Ø netto ${netto >= 0 ? '+' : ''}${netto.toFixed(2)} %`;
+    const k = fallKennzahlen(s);
+    if (k.n === 0) return 'noch keine bewerteten Fälle';
+    const netto = k.nettoAvgPct ?? 0;
+    return (
+      `${k.n} Fälle, Trefferquote ${Math.round(k.quotePct ?? 0)} %, Ø netto ${netto >= 0 ? '+' : ''}${netto.toFixed(2)} %`
+      + (k.ueberMarktQuotePct === null ? '' : `, über Markt ${Math.round(k.ueberMarktQuotePct)} %`)
+    );
   };
   return (
-    `🤖 System: KI-Wochenbericht ${woche} — wirksame Urteile: ${q(wirksam)}; alle Urteile: ${q(gesamt)}. `
-    + `Gewicht der KI-Stimme: ×${gewicht.toFixed(2)}`
+    `🤖 System: KI-Wochenbericht ${woche} — wirksame Urteile: ${q(wirksam)}; alle Urteile: ${q(gesamt)}`
+    + (holdout ? `; Holdout B: ${q(holdout)}` : '')
+    + `. Gewicht der KI-Stimme: ×${gewicht.toFixed(2)}`
     + (gewicht === 1 && (wirksam?.n ?? 0) < KI_MIN_FAELLE
       ? ` (unter ${KI_MIN_FAELLE} wirksamen Fällen bleibt es bei Stufe 2b).`
       : '.')
