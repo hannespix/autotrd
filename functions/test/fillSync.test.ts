@@ -159,7 +159,8 @@ describe('Quelltext-Wächter: die Verdrahtung', () => {
   it('M1/M2: das Buch zählt auch das Archiv; ein echter Short-Fill wird nie an der Deckung abgewiesen', () => {
     const broker = lies('core', 'broker.ts');
     expect(broker).toContain("userRef.collection('tradesArchive').where('brokerOrderId', '==', brokerOrderId).get().catch(() => null),");
-    expect(broker).toContain('      if (!echterFill) {\n        if (req.margin) {');
+    // Anker mit der Kommentarzeile des SHORT-Zweigs — der Kauf-Zweig trägt denselben Rumpf
+    expect(broker).toContain('// Broker hält den Short längst; das Buch darf ihn nicht verweigern.\n      if (!echterFill) {');
   });
   it('bei Fehlschlag fällt der Cursor zurück; nach FILL_FEHLER_MAX wird laut aufgegeben', () => {
     expect(sync).toContain('cursorNeu = cursorVor(fills, o.zuerst, cursorAlt);\n    wartet = true;\n    break;');
