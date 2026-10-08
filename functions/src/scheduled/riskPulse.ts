@@ -113,6 +113,20 @@ export interface PulseResult {
   skipped?: string;
 }
 
+/** Herzschlag-Takt des Pulses in Minuten (Messkorrektur 08.10.). */
+export const PULSE_HERZSCHLAG_MIN = 5;
+
+/**
+ * Schreibt dieser Lauf einen Herzschlag? Bei einem Ereignis immer; sonst im
+ * 5-Minuten-Takt. Vorher nur bei Ereignis — ein Puls, der stillsteht, sah
+ * genauso aus wie einer, der nichts zu tun hat (`meta/health.pulse` hatte
+ * keinen Leser und keinen Takt). 288 statt 1440 Schreibvorgänge am Tag für
+ * die Antwort auf „läuft er?".
+ */
+export function pulsHerzschlagFaellig(now: Date, ereignis: boolean): boolean {
+  return ereignis || now.getUTCMinutes() % PULSE_HERZSCHLAG_MIN === 0;
+}
+
 export async function runPulse(now = new Date()): Promise<PulseResult> {
   const db = getFirestore();
 
@@ -299,13 +313,23 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
     }
   }
 
-  // Heartbeat nur, wenn tatsächlich etwas passiert ist — ein Schreibvorgang
-  // je Minute wäre 1440 am Tag für die Information „nichts passiert".
-  if (exits > 0 || waterMarks > 0) {
+  // Herzschlag: bei Ereignis sofort, sonst im 5-Minuten-Takt (siehe
+  // pulsHerzschlagFaellig) — „nichts passiert" und „läuft nicht" müssen
+  // unterscheidbar bleiben.
+  if (pulsHerzschlagFaellig(now, exits > 0 || waterMarks > 0 || marginCalls > 0)) {
     await db
       .doc('meta/health')
       .set(
-        { pulse: { at: now.toISOString(), watched: symbole.length, exits, waterMarks, marginCalls } },
+        {
+          pulse: {
+            at: now.toISOString(),
+            positions: alle.size,
+            watched: symbole.length,
+            exits,
+            waterMarks,
+            marginCalls,
+          },
+        },
         { merge: true },
       )
       .catch(() => undefined);

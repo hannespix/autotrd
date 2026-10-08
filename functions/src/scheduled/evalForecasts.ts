@@ -20,6 +20,7 @@ import {
   comboKey,
   isForecastDue,
   isIntradayForecastDue,
+  MIN_TOTAL_SCORES,
   scoreForecast,
   scoreIntradayForecast,
   sentimentHit,
@@ -32,6 +33,45 @@ import { getMarketSnapshot } from '../core/marketData.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 
 const BATCH_LIMIT = 200;
+
+/* ── Messkorrektur (Red-Team 05.10., H1/H2) ───────────────────────────────
+ *
+ * H1 „Tagesbewertung verhungert": Der Tageslauf holte 200 unbewertete
+ * Dokumente OHNE Sortierung — in Pfad-Reihenfolge, also die alphabetisch
+ * ersten Symbole zuerst. Blieben die unbewertbar (Symbol ohne Snapshot,
+ * End-Tag auf einem Feiertag, der nie als Kerze erscheint), füllten sie das
+ * Limit jeden Werktag aufs Neue, und neuere Fälle kamen nie an die Reihe.
+ * Derselbe Stau wie intraday am 27.07., nur langsamer. Zwei Gegenmittel,
+ * beide aus dem Intraday-Pfad: nach Basistag sortieren (die Schlange
+ * wandert) und das, was nach TAGES_VERFALL_TAGE immer noch nicht bewertbar
+ * ist, verfallen lassen. Verfallen ist die KONSERVATIVE Richtung: Es wird
+ * nie mit unvollständigen Daten bewertet, sondern gar nicht — das
+ * Lookahead-Gate bleibt unangetastet.
+ *
+ * H2 „scored zählt Dokumente statt Fälle": `scored` war die Summe der n
+ * über alle Lookback-Kombis — ein Fall (Symbol, Basistag) zählte dreifach,
+ * und `accuracyWeightedVote` hielt 7 Fälle für 21 Messpunkte. Jetzt ist
+ * `scored` die Zahl der FÄLLE (das größte n einer Kombi — alle Kombis sehen
+ * dieselben Fälle, Batch-Grenzen können Geschwister höchstens um eins
+ * versetzen). Die Trefferquote bleibt über die Arme gepoolt: Sie ist damit
+ * frei von der Auswahl des besten Arms (kein Winner's Curse), nur die
+ * Stichprobengröße ist jetzt ehrlich. Stimmrecht gibt es damit erst nach
+ * 20 Fällen statt nach 7 — Guards nur verschärft. */
+export const TAGES_VERFALL_TAGE = 30;
+
+/** Ist der End-Tag einer Tages-Prognose so alt, dass er nie mehr als Kerze
+ *  erscheinen wird? Kalendertage, UTC-Mitternacht, strikt größer. */
+export function tagesPrognoseVerfallen(endTag: string, today: string, tage = TAGES_VERFALL_TAGE): boolean {
+  const ende = Date.parse(`${endTag}T00:00:00Z`);
+  const heute = Date.parse(`${today}T00:00:00Z`);
+  if (!Number.isFinite(ende) || !Number.isFinite(heute)) return false;
+  return heute - ende > tage * 86_400_000;
+}
+
+/** Fälle statt Dokumente: das größte n einer Kombi (H2). */
+export function fallZahl(combos: Record<string, ComboStat>): number {
+  return Object.values(combos).reduce((m, d) => Math.max(m, d?.n ?? 0), 0);
+}
 
 /**
  * Sentiment-Schatten (News-Rückkehr 29.07.): Trefferzählung „hätte das
@@ -59,8 +99,8 @@ const emptySentDelta = (): SentDelta => ({ pos: { n: 0, hits: 0 }, neg: { n: 0, 
  * Lernschleife auf dieser Zahl hätte Rauschen für Evidenz gehalten.
  *
  * Bewusst KEIN Merker im Speicher: Der Tageslauf holt 200 unbewertete
- * Dokumente ohne Sortierung, die Geschwister eines Falls können also in
- * verschiedenen Läufen landen. Nur eine Regel am Dokument selbst zählt
+ * Dokumente (seit 08.10. nach Basistag sortiert), die Geschwister eines
+ * Falls können an einer Batch-Grenze also in verschiedenen Läufen landen. Nur eine Regel am Dokument selbst zählt
  * laufübergreifend genau einmal — der kleinste Lookback des Gitters. Die
  * Geschwister entstehen gemeinsam oder gar nicht (alle Lookbacks brauchen
  * dieselben ≥ 5 Schlusskurse, geschrieben wird in einem Batch); fehlte der
@@ -113,6 +153,11 @@ async function writeSentStats(scope: 'daily' | 'intraday', delta: SentDelta): Pr
 export interface EvalResult {
   scored: number;
   bestParams: { lookback: number };
+  /** Diagnose (H1): offen geholt, davon fällig, verfallen, fällig-aber-unrealisiert. */
+  pending: number;
+  due: number;
+  expired: number;
+  unrealized: number;
 }
 
 /** Alle fälligen Prognosen bewerten; liefert Anzahl + neue best_params. */
@@ -179,26 +224,37 @@ export async function evaluateDue(): Promise<EvalResult> {
   const db = getFirestore();
   const today = new Date().toISOString().slice(0, 10);
 
-  const pending = await db
-    .collectionGroup('forecasts')
-    .where('evaluated', '==', false)
-    .limit(BATCH_LIMIT)
-    .get();
+  // Nach Basistag sortiert — Begründung oben (H1) und im Intraday-Zwilling.
+  const base = db.collectionGroup('forecasts').where('evaluated', '==', false);
+  let pending;
+  try {
+    pending = await base.orderBy('baseDate', 'asc').limit(BATCH_LIMIT).get();
+  } catch (err) {
+    // Der zusammengesetzte Index (evaluated, baseDate) baut nach dem Deploy
+    // ein paar Minuten — bis dahin unsortiert, nie gar nicht.
+    logger.warn('evalForecasts: Index (evaluated, baseDate) noch nicht bereit — unsortiert', err);
+    pending = await base.limit(BATCH_LIMIT).get();
+  }
 
   // Fällige nach Symbol gruppieren (Actuals einmal pro Symbol holen)
   const dueBySymbol = new Map<string, Array<{ ref: FirebaseFirestore.DocumentReference; doc: ForecastDoc }>>();
+  let due = 0;
   for (const snap of pending.docs) {
     const doc = snap.data() as ForecastDoc;
     if (!isForecastDue(doc.points, today)) continue;
     const symbol = snap.ref.parent.parent?.id;
     if (!symbol) continue;
+    due += 1;
     const list = dueBySymbol.get(symbol) ?? [];
     list.push({ ref: snap.ref, doc });
     dueBySymbol.set(symbol, list);
   }
 
   let scored = 0;
+  let expired = 0;
+  let unrealized = 0;
   const sentDelta = emptySentDelta();
+  const endTagVon = (doc: ForecastDoc): string => doc.points[doc.points.length - 1]!.time;
 
   /* Das Aggregat wird JE SYMBOL fortgeschrieben, im selben Batch wie die
    * `evaluated`-Marker (Audit-Befund 11.08.).
@@ -234,6 +290,16 @@ export async function evaluateDue(): Promise<EvalResult> {
       actuals = Object.fromEntries(snap.bars.map((b) => [b.date, b.close]));
     } catch (err) {
       logger.warn(`evalForecasts: keine Actuals für ${symbol}`, err);
+      // Ohne Snapshot (Symbol vom Markt, Quelle tot) bliebe der Fall ewig am
+      // Kopf der sortierten Schlange — nach der Verfallsfrist verfallen
+      // lassen, nie bewerten (H1).
+      const alt = entries.filter(({ doc }) => tagesPrognoseVerfallen(endTagVon(doc), today));
+      if (alt.length > 0) {
+        const batch = db.batch();
+        for (const { ref } of alt) batch.update(ref, { evaluated: true, expired: true });
+        await batch.commit().catch((e) => logger.warn('evalForecasts: Verfall nicht geschrieben', e));
+        expired += alt.length;
+      }
       continue;
     }
 
@@ -241,8 +307,19 @@ export async function evaluateDue(): Promise<EvalResult> {
     const symbolDelta = new Map<string, ComboStat>();
     for (const { ref, doc } of entries) {
       const score = scoreForecast(doc.points, doc.baseClose, actuals);
-      if (!score) continue; // End-Tag (noch) nicht realisiert → später erneut
-      const endTag = doc.points[doc.points.length - 1]!.time;
+      const endTag = endTagVon(doc);
+      if (!score) {
+        // End-Tag (noch) nicht realisiert → später erneut; nach der
+        // Verfallsfrist verfallen (ein Feiertag als End-Tag erscheint nie
+        // als Kerze). NIEMALS mit unvollständigen Daten scoren.
+        if (tagesPrognoseVerfallen(endTag, today)) {
+          batch.update(ref, { evaluated: true, expired: true });
+          expired += 1;
+        } else {
+          unrealized += 1;
+        }
+        continue;
+      }
       const sentVertreter = vertrittSentimentFall(doc.lookback, LOOKBACK_GRID);
       // Der Treffer je FALL steht am Vertreter — aus Zählern allein ließe
       // sich später keine Abhängigkeit zwischen Nachbartagen herausrechnen.
@@ -276,20 +353,24 @@ export async function evaluateDue(): Promise<EvalResult> {
   const combos =
     ((await statsRef.get()).get('combos') as Record<string, ComboStat> | undefined) ?? {};
   const bp = bestParams(combos);
+  // H2: `scored` = Fälle, Trefferquote über die Arme gepoolt (Begründung oben).
+  const faelle = fallZahl(combos);
   const total = Object.values(combos).reduce((s, d) => s + d.n, 0);
   const hits = Object.values(combos).reduce((s, d) => s + d.hits, 0);
   await statsRef.set(
     {
       best: bp,
-      scored: total,
+      scored: faelle,
       dirAccuracy: total > 0 ? Math.round((hits / total) * 1000) / 10 : null,
-      tuningActive: total >= 20,
+      tuningActive: faelle >= MIN_TOTAL_SCORES,
     },
     { merge: true },
   );
 
-  logger.info(`evalForecasts: ${scored} bewertet, bester Lookback=${bp.lookback}`);
-  return { scored, bestParams: bp };
+  logger.info(
+    `evalForecasts: ${scored} bewertet, ${expired} verfallen, ${unrealized} unrealisiert, bester Lookback=${bp.lookback}`,
+  );
+  return { scored, bestParams: bp, pending: pending.size, due, expired, unrealized };
 }
 
 /* ── Intraday-Eval (Prognose 2.0 Teil 2) ─────────────────────────────────────
@@ -481,14 +562,16 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
     const combos =
       ((await statsRef.get()).get('combos') as Record<string, ComboStat> | undefined) ?? {};
     const bp = bestParams(combos, DEFAULT_INTRADAY_LOOKBACK);
+    // H2 wie im Tagespfad: Fälle statt Dokumente (hier 2 je Fall).
+    const faelle = fallZahl(combos);
     const total = Object.values(combos).reduce((s, d) => s + d.n, 0);
     const hits = Object.values(combos).reduce((s, d) => s + d.hits, 0);
     await statsRef.set(
       {
         best: bp,
-        scored: total,
+        scored: faelle,
         dirAccuracy: total > 0 ? Math.round((hits / total) * 1000) / 10 : null,
-        tuningActive: total >= 20,
+        tuningActive: faelle >= MIN_TOTAL_SCORES,
       },
       { merge: true },
     );
@@ -535,6 +618,11 @@ export const evalForecasts = onSchedule(
             date: now.toISOString().slice(0, 10),
             scored: res.scored,
             best: res.bestParams,
+            // H1-Diagnose: Steht `pending` dauerhaft auf dem Limit, staut es.
+            pending: res.pending,
+            due: res.due,
+            expired: res.expired,
+            unrealized: res.unrealized,
           },
         },
         { merge: true },
