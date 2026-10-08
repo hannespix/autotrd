@@ -119,7 +119,7 @@ describe('Text-Diät Stufe 2 — Performance-Sektionen zu statt Leersatz-Stapel'
     expect(dashboard).toContain("zeigePfSektion('pfSekExits', total > 0);");
     expect(dashboard).toContain("zeigePfSektion('pfSekKosten', !!c && c.n > 0);");
     expect(dashboard).toContain("zeigePfSektion('pfSekReibung', klassen.length > 0);");
-    expect(dashboard).toContain("zeigePfSektion('pfSekQuellen', zeilen.length > 0);");
+    expect(dashboard).toContain("zeigePfSektion('pfSekQuellen', gruppen.length > 0);");
     expect(dashboard).toContain("zeigePfSektion('pfSekKapital', !!k);");
   });
 

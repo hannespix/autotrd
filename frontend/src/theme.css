@@ -983,8 +983,15 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
    Breite (max-content), der Klarname links gibt nach (Ellipse) — sonst
    schnitt das 5er-Raster den Geldbetrag in der 280-px-Seitenspalte ab
    (Bildbefund 08.10., CLAUDE.md §6: Geometrie statt geschätzter Breite). */
-.q-row { grid-template-columns: minmax(0, 1fr) max-content max-content; }
+.q-row { grid-template-columns: minmax(0, 1fr) max-content max-content max-content; }
 .q-row span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.q-klasse { font-weight: 600; background: var(--hair); }
+.q-klasse span:first-child { color: var(--t1); }
+.q-luecke { color: var(--t3); }
+/* Die Quellen-Tabelle ist eine Entscheidungstabelle: Legende + je Klasse
+   Kopf und Wege. Mit dem 168-px-Deckel von .fl-tbl lag die beste Zeile
+   hinter dem Scroll (Bildbefund 08.10.) — 2 Klassen × 4 Wege passen in 360 px. */
+.q-tbl { max-height: 360px; }
 .fl-head { color: var(--t3); font-weight: 500; position: sticky; top: 0; background: var(--card-solid); z-index: 1; }
 .fl-best { outline: 1.5px solid var(--ac); outline-offset: -1.5px; font-weight: 700; border-radius: 4px; }
 .st-spark { width: 100%; height: 64px; display: block; margin: 8px 0 4px; }
