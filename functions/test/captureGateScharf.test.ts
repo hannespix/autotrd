@@ -46,3 +46,12 @@ describe('captureGate scharf — Opt-out statt Opt-in', () => {
     expect(DEFAULT_STRATEGY.signals.captureGate).toBe(true);
   });
 });
+
+describe('Hebel 1a (08.10.): Klassen-Boden fürs Kostenvielfache im Scan', () => {
+  it('die scharfe Hürde rechnet mit dem wirksamen Vielfachen; der Zähler misst nur den Boden', () => {
+    expect(scan).toContain('multiple: wirksamesKostenvielfaches(clamped.signals.minEdgeMultiple, klasse),');
+    expect(scan).toContain("multiple: wirksamesKostenvielfaches(clamped.signals.minEdgeMultiple, 'ohne_boden'),");
+    expect(scan).toContain('if (!kosten.ok && ohneKlassenBoden.ok) gate.klassen_vielfaches_blockt += 1;');
+    expect(scan.split('klassen_vielfaches_blockt: 0,').length - 1).toBe(2);
+  });
+});

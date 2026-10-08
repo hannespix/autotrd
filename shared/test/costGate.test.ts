@@ -19,6 +19,8 @@ import {
   DEFAULT_CAPTURE,
   captureForClass,
   shortFinanzierungPct,
+  KLASSEN_KOSTENVIELFACHES,
+  wirksamesKostenvielfaches,
 } from '../src/costGate.js';
 import { DEFAULT_MARGIN_RATE } from '../src/margin.js';
 import { feeRateForClass } from '../src/strategy.js';
@@ -311,5 +313,29 @@ describe('captureForClass', () => {
       expect(q).toBeGreaterThanOrEqual(0.05);
       expect(q).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+describe('Klassen-Boden fürs Kostenvielfache (Hebel 1a, 08.10.)', () => {
+  it('Krypto mindestens 5, sonst das Konto-Vielfaches; fehlend = MIN_EDGE_MULTIPLE', () => {
+    expect(KLASSEN_KOSTENVIELFACHES).toEqual({ crypto: 5 });
+    expect(wirksamesKostenvielfaches(3, 'crypto')).toBe(5);
+    expect(wirksamesKostenvielfaches(8, 'crypto')).toBe(8);
+    expect(wirksamesKostenvielfaches(undefined, 'crypto')).toBe(5);
+    expect(wirksamesKostenvielfaches(undefined, 'stocks_us')).toBe(MIN_EDGE_MULTIPLE);
+    expect(wirksamesKostenvielfaches(2, 'stocks_us')).toBe(2);
+  });
+  it('nur strenger: 0 schaltet die Konto-Hürde ab, NICHT den Klassen-Boden', () => {
+    expect(wirksamesKostenvielfaches(0, 'stocks_us')).toBe(0);
+    expect(wirksamesKostenvielfaches(0, 'crypto')).toBe(5);
+    expect(wirksamesKostenvielfaches(Number.NaN, 'crypto')).toBe(5);
+    expect(wirksamesKostenvielfaches(-1, 'stocks_us')).toBe(MIN_EDGE_MULTIPLE);
+  });
+  it('die Hürde selbst: dieselbe Bewegung reißt bei Krypto mit 5× und trägt bei 3×', () => {
+    const basis = { atrPct: 3, minHoldMin: 2880, timeframe: 'daily' as const, atrSessionMin: 1440, feeRate: 0.0025, capture: 0.1 };
+    // Kosten 0,5 % → Bedarf 1,5 % (3×) bzw. 2,5 % (5×); Kante = 3 % × √2 × 0,1 ≈ 0,42 % … zu klein für beide → andere Bewegung wählen
+    const gross = { ...basis, atrPct: 14 }; // Kante ≈ 14 × √2 × 0,1 ≈ 1,98 %
+    expect(costGate({ ...gross, multiple: 3 }).ok).toBe(true);
+    expect(costGate({ ...gross, multiple: wirksamesKostenvielfaches(3, 'crypto') }).ok).toBe(false);
   });
 });

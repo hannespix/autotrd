@@ -42,6 +42,8 @@ describe('Engine-Why-Karte zeigt jeden Grund, den der Scan zählt', () => {
       'ohne_atr_durchgelassen',
       'kante_wuerde_blocken',
       'short_zins_blockt',
+      // Teilmenge von unter_kosten (Hebel 1a, Klassen-Boden fürs Kostenvielfache)
+      'klassen_vielfaches_blockt',
       'quote_wuerde_blocken',
     ]);
     const block = dashboard.slice(

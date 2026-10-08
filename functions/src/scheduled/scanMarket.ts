@@ -39,6 +39,7 @@ import {
   type SchattenKlasse,
   BAR_MINUTES,
   captureForClass,
+  wirksamesKostenvielfaches,
   sessionMinutesForClass,
   wirksameEinfangquote,
   wirksameMindesthalte,
@@ -350,6 +351,10 @@ export interface EntryGateStats {
   unter_kosten: number;
   /** Schatten (04.08.): Was die Kanten-Fassung ZUSÄTZLICH blocken würde. */
   kante_wuerde_blocken: number;
+  /** Abgelehnt NUR wegen des Klassen-Bodens fürs Kostenvielfache (Hebel 1a,
+   *  08.10.: Krypto 5× statt 3×) — Teilmenge von `unter_kosten`, getrennt
+   *  gezählt, damit die Wirkung des Bodens je Lauf messbar bleibt. */
+  klassen_vielfaches_blockt: number;
   /** Abgelehnt: SHORT, dessen Hürde erst MIT der Leihe (shortFinanzierungPct)
    *  reißt — die Basis-Hürde hätte durchgelassen (Hebel 3, 15.08.). Getrennt
    *  von `unter_kosten`, damit die Wirkung der Leihe je Lauf messbar bleibt. */
@@ -662,6 +667,7 @@ async function executeUserTrades(
     ki_veto: 0,
     unter_kosten: 0,
     kante_wuerde_blocken: 0,
+    klassen_vielfaches_blockt: 0,
     short_zins_blockt: 0,
     klasse_aus: 0,
     breaker_aktiv: 0,
@@ -1668,10 +1674,17 @@ async function executeUserTrades(
           // bewusst in Tages-Anteile übersetzt (Einheiten-Fix, Audit HOCH-4).
           atrSessionMin: sessionMinutesForClass(klasse),
           feeRate: feeRateForClass(klasse),
-          ...(typeof clamped.signals.minEdgeMultiple === 'number'
-            ? { multiple: clamped.signals.minEdgeMultiple }
-            : {}),
+          // Hebel 1a (08.10.): Konto-Vielfaches, mindestens der Klassen-Boden
+          // (Krypto 5). Nur strenger — siehe KLASSEN_KOSTENVIELFACHES.
+          multiple: wirksamesKostenvielfaches(clamped.signals.minEdgeMultiple, klasse),
         };
+        // Dieselbe Hürde OHNE Klassen-Boden — nur für den Zähler, was der
+        // Boden zusätzlich blockt (entscheidet nichts).
+        const ohneKlassenBoden = costGate({
+          ...kostenBasis,
+          multiple: wirksamesKostenvielfaches(clamped.signals.minEdgeMultiple, 'ohne_boden'),
+          ...(clamped.signals.captureGate !== false ? { capture: captureForClass(klasse) } : {}),
+        });
         // Die Kostenschwelle wird ZWEIMAL gerechnet (04.08.):
         //
         //  `kostenOhneKante` — nur Auslenkung gegen Kosten (Alt-Fassung).
@@ -1740,6 +1753,9 @@ async function executeUserTrades(
           // derselbe Einstieg in beiden Zählern und die Zahl läse sich wie
           // ein doppelter Effekt.
           if (kosten.ok && !mitKante.ok) gate.kante_wuerde_blocken += 1;
+          // Hebel 1a: Blocks, die NUR der Klassen-Boden verursacht (die
+          // Konto-Hürde hätte durchgelassen) — Teilmenge von unter_kosten.
+          if (!kosten.ok && ohneKlassenBoden.ok) gate.klassen_vielfaches_blockt += 1;
           // Hebel 1a: Dieselbe Buchführung wie eine Zeile darüber — nur
           // zählen, wenn die SCHARFE Fassung durchlässt. Sonst stünde
           // derselbe Einstieg in zwei Zählern und läse sich wie doppelte
@@ -4227,6 +4243,7 @@ export async function runScan(force = false): Promise<ScanResult> {
     ki_veto: 0,
     unter_kosten: 0,
     kante_wuerde_blocken: 0,
+    klassen_vielfaches_blockt: 0,
     short_zins_blockt: 0,
     klasse_aus: 0,
     breaker_aktiv: 0,

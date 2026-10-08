@@ -62,6 +62,30 @@
 export const MIN_EDGE_MULTIPLE = 3;
 
 /**
+ * Klassen-Boden für das Kostenvielfache (Hebel 1a, 08.10.).
+ *
+ * Die Klassen-Attribution zeigt für Krypto −625 $ bei 1 316 $ Gebühren:
+ * 146 Trades, die ihre Reibung nicht tragen. Ein Konto-Vielfaches für ALLE
+ * Klassen passt nicht zu einer Klasse, deren Roundtrip (0,40–0,50 %) das
+ * Fünf- bis Zehnfache einer US-Aktie kostet und deren Einfangquote die
+ * niedrigste im Katalog ist (0,10). Für Krypto muss die erwartete Bewegung
+ * die Kosten DEUTLICH übersteigen — fünffach statt dreifach.
+ *
+ * Nur strenger: Der Boden hebt das Konto-Vielfache an, nie senkt er es —
+ * und er lässt sich nicht mit `minEdgeMultiple: 0` abschalten (0 schaltet
+ * nur die Konto-Hürde ab; die Klassen-Hürde bleibt). Was der Boden
+ * zusätzlich blockt, zählt der Scan als `klassen_vielfaches_blockt`.
+ */
+export const KLASSEN_KOSTENVIELFACHES: Record<string, number> = { crypto: 5 };
+
+/** Wirksames Kostenvielfaches: Konto-Wert (fehlend = MIN_EDGE_MULTIPLE), mindestens der Klassen-Boden. */
+export function wirksamesKostenvielfaches(konto: number | null | undefined, assetClass: string): number {
+  const user = typeof konto === 'number' && Number.isFinite(konto) && konto >= 0 ? konto : MIN_EDGE_MULTIPLE;
+  const boden = KLASSEN_KOSTENVIELFACHES[assetClass] ?? 0;
+  return Math.max(user, boden);
+}
+
+/**
  * Wie viel der erwarteten Auslenkung ein Signal tatsächlich einfängt.
  *
  * ── Der Denkfehler, den diese Zahl behebt ─────────────────────────────────
