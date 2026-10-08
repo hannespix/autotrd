@@ -64,16 +64,18 @@ describe('Cursor und Abbruchgründe (H1)', () => {
 
   it('403 am ERSTEN Symbol oder 401 irgendwo = Schlüsselproblem: Abbruch mit Grund, Cursor bleibt davor stehen', async () => {
     const r1 = await runProfilSync(AM_ABEND, fakeFetch({ [kand[0]!]: 403 }).f, 0);
-    expect(r1).toMatchObject({ grund: 'kein_zugriff', geschrieben: 0, cursor: 0 });
+    expect(r1).toMatchObject({ grund: 'kein_zugriff', status: 403, geschrieben: 0, cursor: 0 });
     store.clear();
     const r2 = await runProfilSync(AM_ABEND, fakeFetch({ [kand[3]!]: 401 }).f, 0);
-    expect(r2).toMatchObject({ grund: 'kein_zugriff', geschrieben: 3, cursor: 3 });
-    expect(store.get('meta/profilStand')).toMatchObject({ grund: 'kein_zugriff', cursor: 3, v: 2 });
+    expect(r2).toMatchObject({ grund: 'kein_zugriff', status: 401, geschrieben: 3, cursor: 3 });
+    // Diagnose ohne Wert: Status und Schlüssel-Form (Länge, Zeichenklasse) im Stand.
+    expect(store.get('meta/profilStand')).toMatchObject({ grund: 'kein_zugriff', status: 401, cursor: 3, v: 2, schluessel: { laenge: 'test-schluessel'.length, form: false } });
+    expect(JSON.stringify(store.get('meta/profilStand'))).not.toContain('test-schluessel');
   });
 
   it('429 bricht ab und setzt beim selben Symbol wieder an (die Drossel ist nicht symbolbezogen)', async () => {
     const r = await runProfilSync(AM_ABEND, fakeFetch({ [kand[2]!]: 429 }).f, 0);
-    expect(r).toMatchObject({ grund: 'rate_limit', geschrieben: 2, cursor: 2 });
+    expect(r).toMatchObject({ grund: 'rate_limit', status: 429, geschrieben: 2, cursor: 2 });
   });
 });
 
@@ -86,6 +88,7 @@ describe('Zeitbudget (M1)', () => {
     const r1 = await runProfilSync(AM_ABEND, f, 0, uhr);
     // beginn=100 s; Prüfungen bei 200…500 s ≤ 450 s → 4 Symbole, die 5. Prüfung (600 s) bricht ab … rechnerisch:
     expect(r1.grund).toBe('zeit');
+    expect(r1.status).toBeNull();
     expect(r1.geschrieben).toBeGreaterThan(0);
     expect(r1.geschrieben).toBeLessThan(kand.length);
     expect(r1.cursor).toBe(r1.geschrieben);
