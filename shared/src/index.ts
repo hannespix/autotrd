@@ -63,4 +63,5 @@ export * from './nachrichten.js';
 export * from './momentumQualitaet.js';
 export * from './kennzahlen.js';
 export * from './profil.js';
+export * from './fundamentalSchatten.js';
 export * from './pdt.js';

@@ -6812,6 +6812,12 @@ const GATE_TEXT: ReadonlyArray<[string, string]> = [
   ['pos_limit', t('gate.posLimit')],
   ['cooldown_aktiv', t('gate.cooldownAktiv')],
   ['sockel_besitz', t('gate.sockelBesitz')],
+  /* Task 19 Teil 2c: Fundamental-Schatten — KEINE Ablehnung, aber sichtbar,
+   * sonst misst niemand, was ein Veto kosten würde (dieselbe Lücke wie beim
+   * Quoten-Schatten). Die Texte sagen „würde blocken“, nicht „geblockt“. */
+  ['gewinntermin_wuerde_blocken', t('gate.gewinterminSchatten')],
+  ['illiquide_wuerde_blocken', t('gate.illiquideSchatten')],
+  ['kleinstwert_wuerde_blocken', t('gate.kleinstwertSchatten')],
 ];
 
 const REGIME_TEXT: Record<string, { t: string; c: string }> = {

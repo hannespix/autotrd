@@ -148,6 +148,16 @@ export interface KiFakten {
     faelleWirksamLong?: number;
     gewicht?: number;
   };
+  /** Task 19 Teil 2c: Fundamental-Schatten (meta/health.fundamentalSchatten) — Zähler, kein Tor. */
+  fundamentalSchatten?: {
+    mitProfil?: number;
+    ohneProfil?: number;
+    mitVolumen?: number;
+    gewinnterminNah?: number;
+    illiquide?: number;
+    kleinstwert?: number;
+    parameter?: { sperrtage?: number; dollarVolMinUsd?: number; marktkapMinMio?: number };
+  };
 }
 
 const pz = (x: number, s = 2): string => x.toFixed(s).replace('.', ',');
@@ -254,6 +264,17 @@ export function baueEingabe(chronik: ErkenntnisChronik, fakten: KiFakten): strin
       `- Holdout B (steuert nicht): n=${ki.holdoutN ?? 0}, Trefferquote ${z(ki.holdoutQuotePct)} %; ` +
         `wirksame Long-Urteile gesamt n=${ki.faelleWirksamLong ?? 0}; alle Urteile n=${ki.faelleGesamt ?? 0}; ` +
         `Gewicht der KI-Stimme ×${z(ki.gewicht ?? 1)}`,
+    );
+  }
+
+  const fs = fakten.fundamentalSchatten;
+  if (fs && (fs.mitProfil ?? 0) + (fs.ohneProfil ?? 0) > 0) {
+    const p = fs.parameter ?? {};
+    zeilen.push(
+      '',
+      'FUNDAMENTAL-SCHATTEN (Messung im letzten Scan, blockt nichts — Einstiege, die das Kosten-Tor durchließ und die ein Veto getroffen hätte):',
+      `- Deckung: ${fs.mitProfil ?? 0} Symbole mit Profil, ${fs.ohneProfil ?? 0} ohne, ${fs.mitVolumen ?? 0} mit Ø-Volumen`,
+      `- Gewinntermin ≤ ${p.sperrtage ?? '?'} Tage: ${fs.gewinnterminNah ?? 0}; Tagesumsatz < ${typeof p.dollarVolMinUsd === 'number' ? Math.round(p.dollarVolMinUsd / 1e6) : '?'} Mio USD: ${fs.illiquide ?? 0}; Marktkap < ${p.marktkapMinMio ?? '?'} Mio USD: ${fs.kleinstwert ?? 0}`,
     );
   }
 
