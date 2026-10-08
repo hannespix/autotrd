@@ -1119,7 +1119,23 @@ export interface HealthDoc {
     vetoAufgehoben?: number;
     verkauft?: number;
     stops?: number;
+    /** Stufe 3: gemessenes Gewicht der KI-Stimme (1 = unverändert, 0,25–2). */
+    gewicht?: number;
   } | null;
+  /** KI-Kaskade Stufe 3: Stand der Urteils-Bewertung (Zähler, Gewicht,
+   *  wirksame Fälle). null, wenn noch nie bewertet wurde. */
+  kiBewertung?: {
+    at?: string;
+    bewertet?: number;
+    offen?: number;
+    verfallen?: number;
+    gewicht?: number;
+    faelleWirksam?: number;
+    faelleGesamt?: number;
+  } | null;
+  /** KI-Kaskade Stufe 3: Untätigkeits-Alarm — Urteile liegen vor, aber über
+   *  zwei Handelstage kam keine KI-Aktion zustande (GELB, nichts ist kaputt). */
+  kiWirkung?: { aktiv?: boolean; text?: string; seit?: string; at?: string } | null;
   /** Ereigniskanal für Ausführungen (Drift-Paket 2, 08.10.). */
   fillSync?: {
     at?: string;

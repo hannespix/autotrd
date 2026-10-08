@@ -215,6 +215,7 @@ export function kiStimme(
   atrPct: number | null | undefined,
   jetztMs: number,
   genutzt?: KiGenutzt | null,
+  gewicht = 1,
 ): { dir: 'buy' | 'sell'; weight: number } | null {
   if (hatPosition || !traegt(s)) return null;
   if (kiKuerzlichGenutzt(genutzt, s.newsId, jetztMs)) return null;
@@ -224,8 +225,23 @@ export function kiStimme(
   // BEIDSEITIG (Red-Team R2): Ist der Kurs seither 1,5 ATR GEGEN die
   // Meldung gelaufen, widerspricht der Markt — kein Griff ins fallende Messer.
   if (atr === null || gelaufen === null || Math.abs(gelaufen) >= KI_EINGEPREIST_ATR * atr) return null;
-  const weight = Math.max(1, Math.ceil(requiredConfluence));
+  const weight = kiStimmGewicht(requiredConfluence, gewicht);
+  if (weight === 0) return null;
   return { dir: s.richtung === 'positiv' ? 'buy' : 'sell', weight };
+}
+
+/**
+ * Stimmgewicht aus geforderter Konfluenz und gemessenem Faktor (Stufe 3):
+ * Faktor 1 = die volle Konfluenz (die KI kann allein tragen, wie in 2b);
+ * darunter anteilig abgerundet — bei 0,5 braucht sie einen Indikator dazu,
+ * bei 0,25 schweigt sie ganz (0). Über 1 bleibt es bei der Konfluenz: Mehr
+ * Stimmen als gefordert würden technische GEGENstimmen überrollen, und das
+ * ist nicht „mehr Vertrauen", sondern ein anderes Regelwerk.
+ */
+export function kiStimmGewicht(requiredConfluence: number, gewicht: number): number {
+  const voll = Math.max(1, Math.ceil(requiredConfluence));
+  const f = Number.isFinite(gewicht) && gewicht > 0 ? gewicht : 1;
+  return Math.min(voll, Math.floor(voll * f));
 }
 
 /** Indikator-Stimmen (ohne Prognose) in Richtung `dir`. */
@@ -281,8 +297,18 @@ export function mitStimmen(
  * nicht zustande gekommen wäre. Bestätigt die KI nur, was die Technik ohnehin
  * sagt, bleibt die Größe unverändert.
  */
-export function kiGroessenFaktor(richtungOhneKi: SignalDirection, richtungMitKi: SignalDirection): number {
-  return richtungMitKi !== 'hold' && richtungOhneKi !== richtungMitKi ? KI_PROBE_FAKTOR : 1;
+export function kiGroessenFaktor(
+  richtungOhneKi: SignalDirection,
+  richtungMitKi: SignalDirection,
+  gewicht = 1,
+): number {
+  if (!(richtungMitKi !== 'hold' && richtungOhneKi !== richtungMitKi)) return 1;
+  // Probegröße × gemessenes Gewicht (Stufe 3), nie über die volle Größe und
+  // nie unter ein Viertel: Eine bewährte KI handelt voll, eine schlechte
+  // bleibt winzig. Bestätigt die KI nur die Technik, bleibt die Größe 1 —
+  // das Gewicht vergrößert keine Positionen, die auch ohne KI entstünden.
+  const f = Number.isFinite(gewicht) && gewicht > 0 ? gewicht : 1;
+  return Math.min(1, Math.max(0.25, Math.round(KI_PROBE_FAKTOR * f * 100) / 100));
 }
 
 /**

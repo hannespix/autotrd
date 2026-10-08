@@ -6944,6 +6944,28 @@ function renderEngineWhy(): void {
       ampel.append(chip);
     }
   }
+  /* KI-Kaskade Stufe 3: das gemessene Gewicht der KI-Stimme — nur, wenn es
+   * von ×1 abweicht (×1 ist der Normalfall und keine Nachricht). Grün über 1,
+   * gelb darunter: Beides ist eine Messung, kein Fehler. */
+  if (typeof h.ki?.gewicht === 'number' && h.ki.gewicht !== 1) {
+    const gewicht = h.ki.gewicht;
+    const chip = whyChip(
+      `${t('ew.kiGewicht')} ×${gewicht.toFixed(2)}`,
+      gewicht > 1 ? 'var(--gn)' : 'var(--yl,#d9a441)',
+    );
+    const faelle = h.kiBewertung?.faelleWirksam;
+    chip.title =
+      t('ew.kiGewichtTitel') + (typeof faelle === 'number' ? ` (${faelle} ${t('ew.kiFaelle')})` : '');
+    ampel.append(chip);
+  }
+  /* Stufe 3, Untätigkeits-Alarm: Urteile lagen vor, aber über zwei
+   * Handelstage kam keine KI-Aktion zustande. GELB, nicht rot — nichts ist
+   * kaputt, es wird nur nicht gehandelt; der Übergang ist zu prüfen. */
+  if (h.kiWirkung?.aktiv === true) {
+    const chip = whyChip(t('ew.kiWirkungAlarm'), 'var(--yl,#d9a441)');
+    chip.title = h.kiWirkung.text ?? t('ew.kiWirkungTitel');
+    ampel.append(chip);
+  }
   /* Signal-Kanten-Chip (MI → 07.08.): Die Regime-Variante ist nach der
    * vorregistrierten Regel EINGESTELLT (n=5187, Kante −0,29 %, roh −0,004 %
    * gegen live −0,247 %/+0,021 % — sie schlug die gehandelte Logik nicht).

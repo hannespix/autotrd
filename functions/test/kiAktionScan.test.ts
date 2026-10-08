@@ -140,14 +140,14 @@ describe('Quelltext-Wächter: Verdrahtung im Scan', () => {
 
   it('Probegröße an beiden Einstiegen, und ein Probe-Einstieg bekommt nie Hebel', () => {
     expect(anzahl('sb.ueberzeugung * klassenGewicht(clamped, symbol) * regimeGroessenFaktor(regime) * kiFaktor;')).toBe(2);
-    expect(anzahl('const budget = kiFaktor < 1 ? null : hebelBudget(konfluenz, {')).toBe(2);
+    expect(anzahl('const budget = kiAllein ? null : hebelBudget(konfluenz, {')).toBe(2); // Stufe 3: eigener Marker, nicht der Zahlenwert
     // der Hebel hängt am TECHNISCHEN Steckbrief
     expect(anzahl('bucket: filterBuckets[sb.tech] ?? null,')).toBe(2);
   });
 
   it('H1: Sperre und Überzeugung hängen am technischen Steckbrief — das KI-Etikett nur bei der Probe', () => {
     expect(anzahl('const tech = bucketKey({ ...basis, signature: signalSignature(sig.votes, dir) });')).toBe(1);
-    expect(anzahl('const gebucht = kiFaktor < 1 ? bucketKey({ ...basis, signature: signalSignature(votesMitKi(dir), dir) }) : tech;')).toBe(1);
+    expect(anzahl('const gebucht = kiAllein ? bucketKey({ ...basis, signature: signalSignature(votesMitKi(dir), dir) }) : tech;')).toBe(1);
     expect(anzahl('gesperrt: bucketVerdict(filterBuckets[tech]).blocked || bucketVerdict(filterBuckets[gebucht]).blocked,')).toBe(1);
     expect(anzahl('ueberzeugung: Math.min(ueberzeugung(tech), ueberzeugung(gebucht)),')).toBe(1);
     expect(anzahl("const sb = steckbriefe('buy', 'long');")).toBe(1);

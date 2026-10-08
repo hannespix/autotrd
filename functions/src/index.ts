@@ -32,6 +32,8 @@ export { fillSync, fillSyncNow } from './scheduled/fillSync.js';
 export { wachhund, wachhundNow } from './scheduled/wachhund.js';
 export { kiBericht, kiBerichtNow } from './scheduled/kiBericht.js';
 export { kiStimme, kiStimmeNow } from './scheduled/kiStimme.js';
+// KI-Kaskade Stufe 3 (08.10.): Urteile nach Horizont bewerten, Gewicht, Wochenbericht, Alarm.
+export { kiBewertung, kiBewertungNow } from './scheduled/kiBewertung.js';
 export { ensureProfile } from './callable/profile.js';
 export { nachricht } from './callable/nachricht.js';
 export { saveStrategy } from './callable/strategy.js';
