@@ -6786,16 +6786,18 @@ const KALENDER_TEXT: Record<string, string> = {
   cpi: t('kal.cpi'),
 };
 
-/** Tooltip-Text der Kante je Regime (Hebel 2, Messung): nur Zahlen und Enum-Namen, keine Übersetzung nötig. */
+/**
+ * Tooltip-Text der Kante je Regime (Hebel 2, Messung): nur Anzahl und ganze
+ * Prozent (kein Dezimaltrenner → keine DE/EN-Naht), kein Geldbetrag.
+ */
 function regimeKanteTooltip(
-  rk: Record<string, { n?: number; winRatePct?: number | null; pnlAvg?: number | null }> | null | undefined,
+  rk: Record<string, { n?: number; winRatePct?: number | null }> | null | undefined,
 ): string {
   if (!rk) return '';
   return Object.entries(rk)
     .map(([k, v]) => {
-      const quote = typeof v.winRatePct === 'number' ? ` · ${v.winRatePct} %` : '';
-      const avg = typeof v.pnlAvg === 'number' ? ` · Ø ${v.pnlAvg}` : '';
-      return `${k}: n=${v.n ?? 0}${quote}${avg}`;
+      const quote = typeof v.winRatePct === 'number' ? ` · ${Math.round(v.winRatePct)} %` : '';
+      return `${k}: n=${v.n ?? 0}${quote}`;
     })
     .join('\n');
 }

@@ -17,6 +17,7 @@ import {
   type BucketStat,
   kanteJeRegime,
   MIN_BUCKET_N_REGIME,
+  REGIME_OHNE,
 } from '../src/tradeFilter.js';
 
 const fuellen = (pnls: number[]): BucketStat =>
@@ -122,15 +123,29 @@ describe('kanteJeRegime — Hebel 2, Messung (08.10.)', () => {
       'stocks_us|daily|rsi+macd|long|trend': { n: 8, wins: 5, pnlSum: 40, pnlSqSum: 0 },
       'crypto|daily|rsi|long|trend': { n: 4, wins: 1, pnlSum: -20, pnlSqSum: 0 },
       'stocks_us|daily|rsi|long|seitwaerts': { n: 6, wins: 2, pnlSum: -12, pnlSqSum: 0 },
-      'stocks_us|daily|rsi|long': { n: 3, wins: 2, pnlSum: 3, pnlSqSum: 0 }, // Altbestand ohne Segment → 'alle'
+      'stocks_us|daily|rsi|long': { n: 3, wins: 2, pnlSum: 3, pnlSqSum: 0 }, // hypothetischer 4-Segment-Schlüssel
+      'crypto|daily|momentum|long|alle': { n: 9, wins: 4, pnlSum: 90, pnlSqSum: 0 }, // der REALE Weg: Default-Segment 'alle'
       'kaputt|x|y|long|stress': { n: 0, wins: 0, pnlSum: 0, pnlSqSum: 0 }, // leer zählt nicht
     };
+    expect(REGIME_OHNE).toBe('ohne_regime');
     expect(kanteJeRegime(buckets)).toEqual({
-      trend: { n: 12, winRatePct: 50, pnlAvg: 1.67 },
-      seitwaerts: { n: 6, winRatePct: null, pnlAvg: null },
-      alle: { n: 3, winRatePct: null, pnlAvg: null },
+      trend: { n: 12, winRatePct: 50 },
+      seitwaerts: { n: 6, winRatePct: null },
+      // 'alle' und fehlendes Segment fallen ZUSAMMEN — und erscheinen nicht als viertes Regime
+      ohne_regime: { n: 12, winRatePct: 50 },
     });
     expect(kanteJeRegime({})).toEqual({});
     expect(kanteJeRegime(undefined)).toEqual({});
+  });
+
+  it('weist KEINEN Geldbetrag aus — und verträgt Altbestand ohne wins/pnlSum', () => {
+    const buckets = {
+      'stocks_us|daily|rsi|long|trend': { n: 10 } as unknown as BucketStat,
+      'stocks_us|daily|macd|long|trend': { n: 2, wins: Number.NaN, pnlSum: Number.NaN, pnlSqSum: 0 },
+    };
+    const k = kanteJeRegime(buckets);
+    expect(k).toEqual({ trend: { n: 12, winRatePct: 0 } });
+    expect(Object.keys(k.trend!)).toEqual(['n', 'winRatePct']);
+    expect(JSON.stringify(k)).not.toMatch(/pnl/i);
   });
 });

@@ -1179,7 +1179,7 @@ export interface HealthDoc {
   konten?: Record<string, number>;
   regime?: { state?: string; vix?: number | null; realizedVolPct?: number | null; aboveSma200?: boolean | null };
   /** Kante je Regime aus den Steckbriefen (Hebel 2, Messung 08.10.). */
-  regimeKante?: Record<string, { n?: number; winRatePct?: number | null; pnlAvg?: number | null }> | null;
+  regimeKante?: Record<string, { n?: number; winRatePct?: number | null }> | null;
   kalender?: { bevorstehend?: string | null; stundenBis?: number | null; turnOfMonth?: boolean; fomcVeraltet?: boolean };
   watched?: string[];
 }

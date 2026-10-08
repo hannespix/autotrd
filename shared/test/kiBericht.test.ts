@@ -114,6 +114,7 @@ describe('baueEingabe', () => {
     },
     signalSchatten: { live: { n: 523, trefferquote: 0.5277, kantePct: -0.3269 } },
     regime: { state: 'trend', vix: 14.9, aboveSma200: true },
+    regimeKante: { trend: { n: 12, winRatePct: 50 }, seitwaerts: { n: 6, winRatePct: null }, stress: { n: 1, winRatePct: null }, ohne_regime: { n: 30, winRatePct: 43.3 } },
   };
 
   it('trägt Thesen samt Status und Belegen hinein', () => {
@@ -173,9 +174,15 @@ describe('Hebel 2, Messung — Kante je Regime im Lagebericht', () => {
   it('erscheint nur mit Daten, mit Kommazahlen', () => {
     const chronik = { date: '2026-10-08', eintraege: {} } as unknown as Parameters<typeof baueEingabe>[0];
     expect(baueEingabe(chronik, {})).not.toContain('KANTE JE REGIME');
-    const text = baueEingabe(chronik, { regimeKante: { trend: { n: 12, winRatePct: 50, pnlAvg: 1.67 }, seitwaerts: { n: 6, winRatePct: null, pnlAvg: null } } });
-    expect(text).toContain('KANTE JE REGIME (realisierte Trades aller Konten, Seitwärts-Bremse seit 15.08.):');
-    expect(text).toContain('- trend: n=12, Trefferquote 50,00 %, Ø P&L je Trade 1,67');
-    expect(text).toContain('- seitwaerts: n=6, Trefferquote -- %, Ø P&L je Trade --');
+    const text = baueEingabe(chronik, { regimeKante: { trend: { n: 12, winRatePct: 50 }, seitwaerts: { n: 6, winRatePct: null }, ohne_regime: { n: 30, winRatePct: 43.3 } } });
+    expect(text).toContain('KANTE JE REGIME (realisierte Regelbaum-/Konfluenz-Trades aller Konten, UNTER der Seitwärts-Bremse seit 15.08. gemessen — ');
+    expect(text).toContain('nur Trefferquote, weil die Bremse die Größe halbiert; ohne_regime = Momentum/Sockel/Hand/Altbestand ohne Bremse):');
+    expect(text).toContain('- trend: n=12, Trefferquote 50,00 %');
+    expect(text).toContain('- seitwaerts: n=6, Trefferquote -- %');
+    expect(text).toContain('- ohne_regime: n=30, Trefferquote 43,30 %');
+    // kein Geldbetrag — auch nicht, wenn ein alter Herzschlag noch pnlAvg trüge
+    const alt = baueEingabe(chronik, { regimeKante: { trend: { n: 12, winRatePct: 50, pnlAvg: 1.67 } as never } });
+    expect(alt).not.toContain('1,67');
+    expect(alt).not.toContain('P&L je Trade');
   });
 });
