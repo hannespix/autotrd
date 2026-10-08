@@ -46,6 +46,42 @@ import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 /** Wie viele Varianten gleichzeitig laufen — siehe tuneGrid zur Begründung. */
 export const FLEET_SIZE = 6;
 
+/* ── Messkorrektur M3 (Red-Team 05.10.): Konten wurden täglich neu gezählt ──
+ *
+ * `mergeAxisStat` verlangt `neuesKonto` genau dann, wenn dieses Konto zu
+ * dieser Variante ZUM ERSTEN MAL beiträgt. Der Aufrufer übergab immer
+ * `true` — ein Konto, das dieselbe Variante zwanzig Tage prüft, war zwanzig
+ * „Konten", und `MIN_ACCOUNTS = 3` war nach drei Abenden mit EINEM Konto
+ * erfüllt. Das Vorwissen sprach, bevor es Breite hatte.
+ *
+ * Jetzt merkt sich jedes Konto unter users/{uid}/kollektiv/beitrag, zu
+ * welchen Varianten es schon beigetragen hat (nur Variantenschlüssel und
+ * Datum — keine Zahlen, keine Trades). BEWUSST nicht unter `tuning`: Der
+ * Konto-Reset löscht `tuning` komplett (reset.ts GELOESCHTE_SAMMLUNGEN) —
+ * dort läge der Merker, zählte ein Konto je Reset erneut, und drei Resets
+ * an einem Abend erfüllten MIN_ACCOUNTS allein (Red-Team B3). Der Beitrag
+ * zum Kollektiv ist Historie, kein Kontostand; die Kontolöschung nimmt ihn
+ * mit (recursiveDelete über das ganze Nutzerdokument). Der aufgeblähte Altbestand von
+ * `accounts` lässt sich nicht zurückrechnen (es wurden nie Kennungen
+ * gespeichert, mit Absicht): Beim ersten Lauf der Fassung KONTEN_ZAEHLUNG_V
+ * werden alle `accounts` auf 0 gesetzt und zählen ab da ehrlich hoch. Bis
+ * genügend echte Konten beigetragen haben, schweigt der Prior — die
+ * Ursprungsordnung der Flotte gilt. Das ist die konservative Richtung. */
+export const KONTEN_ZAEHLUNG_V = 2;
+
+/** Unterliste des Konto-Merkers — darf NIE in reset.ts GELOESCHTE_SAMMLUNGEN stehen. */
+export const KOLLEKTIV_SAMMLUNG = 'kollektiv';
+
+/** Variantenschlüssel als Firestore-Feldname (Punkte verschachteln Pfade). */
+export function axisKey(variantId: string): string {
+  return variantId.replace(/[/.]/g, '_');
+}
+
+/** Trägt dieses Konto zu dieser Variante zum ersten Mal bei? */
+export function neuesKontoFuer(beigetragen: Record<string, unknown> | undefined, key: string): boolean {
+  return !(beigetragen && Object.prototype.hasOwnProperty.call(beigetragen, key));
+}
+
 /**
  * Das kollektive Vorwissen laden — EINMAL je Lauf, von Scan UND Tuner.
  *
@@ -186,6 +222,7 @@ export async function tuneAll(now = new Date()): Promise<TuneRunResult> {
   // Evidenz des eigenen Kontos.
   const priors = await ladeTunePriors();
   const globalDelta: GlobalAxisStats = {};
+  const markerSchreiben: Array<{ ref: FirebaseFirestore.DocumentReference; beigetragen: Record<string, string> }> = [];
 
   let promoted = 0;
   let judged = 0;
@@ -203,6 +240,11 @@ export async function tuneAll(now = new Date()): Promise<TuneRunResult> {
 
       const fleetDoc = await userDoc.ref.collection('tuning').doc('fleet').get();
       const fleet = ((fleetDoc.get('variants') as FleetState | undefined) ?? {}) as FleetState;
+      // M3: Was dieses Konto dem Kollektiv schon beigetragen hat — außerhalb
+      // von `tuning`, weil der Reset diese Sammlung löscht (B3).
+      const kollektivRef = userDoc.ref.collection(KOLLEKTIV_SAMMLUNG).doc('beitrag');
+      const beigetragen =
+        ((await kollektivRef.get()).get('beigetragen') as Record<string, unknown> | undefined) ?? {};
 
       // Vergleichsgruppe: die abgeschlossenen Trades des ECHTEN Kontos. Der
       // Vergleich läuft also gegen das, was tatsächlich passiert ist — nicht
@@ -268,15 +310,22 @@ export async function tuneAll(now = new Date()): Promise<TuneRunResult> {
       // Beitrag zum Kollektiv: NUR Zählwerte je Achsenwert, keine
       // Einzeltrades, keine Beträge, keine Kennung. Aus „42-mal geprüft,
       // 7-mal befördert" lässt sich kein Konto rekonstruieren.
-      // `neuesKonto` ist hier immer true, weil jedes Konto je Lauf genau
-      // einmal beiträgt — ohne das zählte ein Konto, das dieselbe Variante
-      // täglich prüft, als viele und täuschte Breite vor.
+      // `neuesKonto` nur beim ERSTEN Beitrag dieses Kontos zu dieser Variante
+      // (M3, Begründung oben) — der Merker wird erst geschrieben, wenn das
+      // Kollektiv den Beitrag wirklich gezählt hat.
+      const neueMarker: Record<string, string> = {};
       for (const e of entries) {
+        const key = axisKey(e.variantId);
+        const neu = neuesKontoFuer(beigetragen, key);
+        if (neu) neueMarker[key] = now.toISOString();
         globalDelta[e.variantId] = mergeAxisStat(
           globalDelta[e.variantId],
           { promoted: e.promoted, edge: e.edge },
-          true,
+          neu,
         );
+      }
+      if (Object.keys(neueMarker).length > 0) {
+        markerSchreiben.push({ ref: kollektivRef, beigetragen: neueMarker });
       }
 
       await schreibeJournal(userDoc.ref, entries);
@@ -290,18 +339,38 @@ export async function tuneAll(now = new Date()): Promise<TuneRunResult> {
   // Disziplin wie bei den Forecast-Kombis).
   if (Object.keys(globalDelta).length > 0) {
     const ref = db.doc('meta/tuneGlobal');
+    await ref.set({}, { merge: true });
+    // M3-Migration: Beim ersten Lauf dieser Fassung den aufgeblähten
+    // Konten-Zähler aller Achsen auf 0 setzen — einmalig, vor den Inkrementen.
+    const stand = await ref.get();
+    if (stand.get('kontenV') !== KONTEN_ZAEHLUNG_V) {
+      const axes = (stand.get('axes') as GlobalAxisStats | undefined) ?? {};
+      const nullen: Record<string, { accounts: number }> = {};
+      for (const key of Object.keys(axes)) nullen[key] = { accounts: 0 };
+      await ref.set({ kontenV: KONTEN_ZAEHLUNG_V, kontenNeuSeit: now.toISOString(), axes: nullen }, { merge: true });
+      logger.info(`autoTune: Konten-Zählung auf Fassung ${KONTEN_ZAEHLUNG_V} gesetzt (${Object.keys(axes).length} Achsen genullt)`);
+    }
     const args: unknown[] = [new FieldPath('updatedAt'), now.toISOString()];
     for (const [id, d] of Object.entries(globalDelta)) {
-      const key = id.replace(/[/.]/g, '_'); // Punkte würden Pfade verschachteln
+      const key = axisKey(id);
       args.push(new FieldPath('axes', key, 'judged'), FieldValue.increment(d.judged));
       args.push(new FieldPath('axes', key, 'promoted'), FieldValue.increment(d.promoted));
       args.push(new FieldPath('axes', key, 'edgeSum'), FieldValue.increment(d.edgeSum));
       args.push(new FieldPath('axes', key, 'accounts'), FieldValue.increment(d.accounts));
     }
-    await ref.set({}, { merge: true });
-    await (ref.update as (...a: unknown[]) => Promise<unknown>)(...args).catch((err: unknown) =>
-      logger.warn('meta/tuneGlobal nicht fortschreibbar', err),
-    );
+    const gezaehlt = await (ref.update as (...a: unknown[]) => Promise<unknown>)(...args)
+      .then(() => true)
+      .catch((err: unknown) => {
+        logger.warn('meta/tuneGlobal nicht fortschreibbar', err);
+        return false;
+      });
+    // Merker erst NACH dem gezählten Beitrag — sonst gäbe es Konten, die als
+    // „schon gezählt" gelten, ohne je gezählt worden zu sein.
+    if (gezaehlt) {
+      await Promise.allSettled(
+        markerSchreiben.map(({ ref: r, beigetragen }) => r.set({ beigetragen }, { merge: true })),
+      );
+    }
   }
 
   await db
@@ -317,6 +386,9 @@ export async function tuneAll(now = new Date()): Promise<TuneRunResult> {
           // Sichtbar machen, wie breit das Kollektiv gerade ist — sonst
           // bliebe unklar, ob der Prior überhaupt spricht.
           priors: priors.length,
+          // M3: Fassung der Konten-Zählung — nach der Nullung schweigt der
+          // Prior, bis echte Breite da ist (bewusster Schnitt, Red-Team B7).
+          kontenV: KONTEN_ZAEHLUNG_V,
         },
       },
       { merge: true },

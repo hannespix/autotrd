@@ -1,6 +1,20 @@
 {
   "indexes": [
     {
+      "collectionGroup": "forecasts",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "evaluated",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "baseDate",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "forecastsIntraday",
       "queryScope": "COLLECTION_GROUP",
       "fields": [

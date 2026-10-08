@@ -48,10 +48,25 @@ const ref = (pfad: string) => {
   };
 };
 
+const orderByAufrufe: string[] = [];
+
 class FieldPathDouble {
+  readonly teile: string[];
   constructor(...teile: string[]) {
-    void teile;
+    this.teile = teile;
   }
+}
+
+/** Variadisches update(FieldPath, Wert, …) → verschachteltes Objekt für `mischen`. */
+function variadischZuDaten(args: unknown[]): Daten {
+  const out: Daten = {};
+  for (let i = 0; i + 1 < args.length; i += 2) {
+    const fp = args[i] as FieldPathDouble;
+    let ziel = out;
+    for (const t of fp.teile.slice(0, -1)) ziel = (ziel[t] ??= {}) as Daten;
+    ziel[fp.teile[fp.teile.length - 1]!] = args[i + 1];
+  }
+  return out;
 }
 
 vi.mock('firebase-admin/firestore', () => ({
@@ -59,8 +74,14 @@ vi.mock('firebase-admin/firestore', () => ({
   FieldValue: { increment: inc, delete: () => undefined },
   getFirestore: () => ({
     doc: ref,
-    collectionGroup: () => ({
-      where: () => ({
+    collectionGroup: () => {
+      // `orderBy` gehört dazu (Messkorrektur H1): Ohne das Double liefe der
+      // Lauf hier still auf dem unsortierten Rückfallpfad (Red-Team B8).
+      const abfrageObjekt = {
+        orderBy: (feld: string) => {
+          orderByAufrufe.push(feld);
+          return abfrageObjekt;
+        },
         limit: () => ({
           get: async () => ({
             docs: [...store.entries()]
@@ -68,16 +89,17 @@ vi.mock('firebase-admin/firestore', () => ({
               .map(([p, d]) => ({ ref: ref(p), data: () => d })),
           }),
         }),
-      }),
-    }),
+      };
+      return { where: () => abfrageObjekt };
+    },
     batch: () => {
       const ops: Array<() => void> = [];
       return {
-        update: (r: { path: string }, erstes: unknown) => {
-          // Variadische Form (FieldPath, Wert, …) geht nur an das Aggregat —
-          // für diesen Test unerheblich.
-          if (erstes instanceof FieldPathDouble) return;
-          ops.push(() => store.set(r.path, mischen(store.get(r.path), erstes as Daten)));
+        update: (r: { path: string }, erstes: unknown, ...rest: unknown[]) => {
+          // Variadische Form (FieldPath, Wert, …): das Kombi-Aggregat — seit
+          // der Messkorrektur (H2) nötig, weil `scored` daraus FÄLLE zählt.
+          const daten = erstes instanceof FieldPathDouble ? variadischZuDaten([erstes, ...rest]) : (erstes as Daten);
+          ops.push(() => store.set(r.path, mischen(store.get(r.path), daten)));
         },
         commit: async () => ops.forEach((o) => o()),
       };
@@ -145,8 +167,13 @@ describe('evaluateDue zählt jeden Fall einmal', () => {
 
   it('drei Geschwister in einem Lauf: n = 1, Treffer nur am Vertreter', async () => {
     geschwister('AAPL', 1);
+    orderByAufrufe.length = 0;
     const r = await evaluateDue();
-    expect(r.scored).toBe(3); // die Prognose-Statistik bleibt hier unberührt
+    expect(r.scored).toBe(3); // Lauf-Zähler: bewertete DOKUMENTE
+    // Messkorrektur: die Schlange ist sortiert (H1), die Statistik zählt FÄLLE (H2)
+    expect(orderByAufrufe).toEqual(['baseDate']);
+    expect(store.get('meta/forecastStats')?.['scored']).toBe(1);
+    expect(r.expired).toBe(0);
     expect(einmalig()['daily']).toEqual({ pos: { n: 1, hits: 1 }, neg: { n: 0, hits: 0 } });
     expect(store.get('market/AAPL/forecasts/2026-09-01_10')?.['sentHit']).toBe(true);
     expect(store.get('market/AAPL/forecasts/2026-09-01_20')).not.toHaveProperty('sentHit');
