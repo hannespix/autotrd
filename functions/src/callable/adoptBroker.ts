@@ -45,6 +45,7 @@ import { logger } from 'firebase-functions/v2';
 import {
   DEFAULT_STRATEGY,
   classify,
+  quelleAusLauf,
   currencyForSymbol,
   feePartsForClass,
   istNoOpUebernahme,
@@ -309,10 +310,17 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
    *  (Audit 06.08.: vorher zählten nur Käufe, Shorts bekamen `now`). */
   const fruehesterKauf = new Map<string, string>();
   const fruehesterVerkauf = new Map<string, string>();
+  /** Einstiegsweg aus der Lauf-Kennung der frühesten eröffnenden Order (Task 18). */
+  const quelleJeSymbol = new Map<string, string>();
   for (const o of eigeneOrders) {
     const ziel = o.side === 'buy' ? fruehesterKauf : fruehesterVerkauf;
     const bisher = ziel.get(o.symbol);
-    if (!bisher || o.filledAt < bisher) ziel.set(o.symbol, o.filledAt);
+    if (!bisher || o.filledAt < bisher) {
+      ziel.set(o.symbol, o.filledAt);
+      const q = quelleAusLauf(o.clientOrderId);
+      if (q) quelleJeSymbol.set(`${o.side}|${o.symbol}`, q);
+      else quelleJeSymbol.delete(`${o.side}|${o.symbol}`);
+    }
   }
 
   const now = new Date().toISOString();
@@ -367,12 +375,16 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     const avg = p.einstand;
     const schutz = schutzJeSymbol.get(p.symbol);
     const alt = bisherige.get(p.symbol);
+    const quelle = alt?.quelle ?? quelleJeSymbol.get(`${short ? 'sell' : 'buy'}|${p.symbol}`);
     const position: Position = {
       symbol: p.symbol,
       qty: p.qty,
       avgEntry: avg,
       // Lern-Identität, nicht Bestand — s. Kommentar oben.
       ...(alt?.bucket ? { bucket: alt.bucket } : {}),
+      // Einstiegsweg überlebt die Übernahme; eine NEUE Position bekommt ihn
+      // aus der Lauf-Kennung ihrer frühesten eröffnenden Order (Task 18).
+      ...(quelle ? { quelle } : {}),
       ...(typeof alt?.teilPnl === 'number' && Number.isFinite(alt.teilPnl)
         ? { teilPnl: alt.teilPnl }
         : {}),

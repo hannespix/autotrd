@@ -42,7 +42,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
-import { classify, isStrategy, resetLaeuft, type Strategy } from '../../../shared/src/index.js';
+import { classify, isStrategy, quelleAusLauf, resetLaeuft, type Strategy } from '../../../shared/src/index.js';
 import {
   alpacaOrderAbfragen,
   holeFillAktivitaeten,
@@ -273,6 +273,9 @@ export async function fillSyncKonto(
         source: 'engine',
         assetClass: classify(o.symbol),
         ausgefuehrtAt: o.zuletzt,
+        // Einstiegsweg aus der Lauf-Kennung der ERÖFFNENDEN Order (Task 18):
+        // mom-/core-/man- sind eindeutig, ein Scan-Zeitstempel nicht.
+        ...(!schliesst && quelleAusLauf(order.clientOrderId) ? { quelle: quelleAusLauf(order.clientOrderId)! } : {}),
         ...(schliesst
           ? { restStorniert: endzustand, riskExit: 'fill_sync' }
           : { aufstockung: true, ...(o.side === 'sell' ? { openShort: true } : {}) }),
