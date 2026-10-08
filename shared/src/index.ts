@@ -54,6 +54,7 @@ export * from './kiBericht.js';
 export * from './kiStimme.js';
 export * from './kiNachrichten.js';
 export * from './kiAktion.js';
+export * from './tradeQuelle.js';
 export * from './kiBewertung.js';
 export * from './tagRueckblick.js';
 export * from './sizingSchatten.js';

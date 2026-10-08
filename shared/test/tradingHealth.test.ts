@@ -218,6 +218,39 @@ describe('aggregateTradingHealth: Konten je Klasse', () => {
     expect(h.klassen.crypto?.n).toBe(20);
   });
 
+  it('Quellen je Klasse (Task 17): Summen über Konten, Konten je Quelle, NUR Verhältnisse', () => {
+    const mitQuellen = (
+      byClassQuelle: Record<string, Record<string, { n: number; pnl: number; fees: number; notional: number }>>,
+    ): AccountContribution => ({
+      stats: { n: 10, wins: 0, avgWin: 10, avgLoss: -10 },
+      byClass: { crypto: { n: 10, pnl: -5, notional: 1000 } },
+      byClassQuelle,
+    });
+    const h = aggregateTradingHealth([
+      mitQuellen({ crypto: { momentum: { n: 6, pnl: -30, fees: 12, notional: 1000 }, konfluenz: { n: 4, pnl: 10, fees: 4, notional: 500 } } }),
+      mitQuellen({ crypto: { momentum: { n: 10, pnl: -20, fees: 8, notional: 1000 }, hand: { n: 0, pnl: 0, fees: 0, notional: 0 } } }),
+      mitQuellen({ crypto: { momentum: { n: 4, pnl: 0, fees: 0, notional: 0 }, konfluenz: { n: 1, pnl: 2, fees: 0, notional: 0 }, sync: { n: 5, pnl: -9, fees: 1, notional: 400 } } }),
+    ]);
+    const q = h.klassen.crypto?.quellen;
+    // 3 Konten in der Quelle → Verhältnisse öffentlich
+    expect(q?.momentum).toEqual({ n: 20, konten: 3, kantePct: -2.5, gebuehrPct: 1 });
+    // nur 2 Konten → n und Konten ja, Verhältnisse NICHT (Red-Team H3: pnlSum ÷ kantePct = Volumen eines Kontos)
+    expect(q?.konfluenz).toEqual({ n: 5, konten: 2, kantePct: null, gebuehrPct: null });
+    expect(q?.sync).toEqual({ n: 5, konten: 1, kantePct: null, gebuehrPct: null });
+    // leerer Eintrag zählt nicht als Konto
+    expect(q?.hand).toEqual({ n: 0, konten: 0, kantePct: null, gebuehrPct: null });
+    // Deckung: 25 bekannte von 30 Buchungen (sync ist eine Lücke)
+    expect(h.klassen.crypto?.deckungPct).toBeCloseTo(83.3333, 3);
+    // kein Geldbetrag je Quelle — auch nicht oberhalb der Konten-Schwelle (3 Konten in der Klasse)
+    expect(h.klassen.crypto?.konten).toBe(3);
+    expect(h.klassen.crypto?.pnl).not.toBeNull();
+    for (const w of Object.values(q ?? {})) expect(Object.keys(w).sort()).toEqual(['gebuehrPct', 'kantePct', 'konten', 'n']);
+    // ohne Quellen-Beitrag fehlt das Feld (Altbestand im Aggregat bleibt lesbar)
+    const ohne = aggregateTradingHealth([mitKlasse(10, { crypto: { n: 10, pnl: -5, notional: 1000 } })]);
+    expect(ohne.klassen.crypto).not.toHaveProperty('quellen');
+    expect(ohne.klassen.crypto).not.toHaveProperty('deckungPct');
+  });
+
   it('ein leerer Klassen-Eintrag ist kein Beitrag', () => {
     // Ein Eintrag mit n = 0 entsteht schon durch das bloße Anlegen einer
     // Watchlist — er hat nichts gemessen und darf die Vertrauensschwelle
@@ -480,5 +513,20 @@ describe('Wächter: die Klassen-Beträge hängen an der klassenweisen Zahl', () 
 
   it('die Kante bleibt öffentlich — sie ist ein Verhältnis', () => {
     expect(quelle).toContain('kantePct: k.notional > 0 ? r4((k.pnl / k.notional) * 100) : null,');
+  });
+
+  it('je Quelle werden NUR Verhältnisse gebaut — kein pnl/fees-Feld im Quellen-Block (Task 17)', () => {
+    const block = quelle.slice(
+      quelle.indexOf('const quellen: Record<string, QuellenBefund> = {};'),
+      quelle.indexOf('    klassen[name] = {'),
+    );
+    expect(block.length).toBeGreaterThan(100);
+    // Verhältnisse je Quelle hängen an der Konten-Schwelle JE QUELLE — der Hebel
+    // zur Rekonstruktion ist die Quote, nicht der Betrag (Red-Team H3)
+    expect(block).toContain('const quoteOeffentlich = s.konten >= minAccountsPublic && s.notional > 0;');
+    expect(block).toContain('kantePct: quoteOeffentlich ? r4((s.pnl / s.notional) * 100) : null,');
+    expect(block).toContain('gebuehrPct: quoteOeffentlich ? r4((s.fees / s.notional) * 100) : null,');
+    expect(block).not.toMatch(/\bpnl:/);
+    expect(block).not.toMatch(/\bfees:/);
   });
 });

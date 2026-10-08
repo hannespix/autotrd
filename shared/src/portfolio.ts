@@ -114,6 +114,12 @@ export interface ClosedTrade {
    * war.
    */
   at?: string | null;
+  /**
+   * Einstiegsweg (Task 17): konfluenz · regelbaum · momentum · sockel ·
+   * ki_probe · hand · sync · unbekannt — aus `tradeQuelle()`. Fehlend
+   * zählt als `unbekannt`.
+   */
+  quelle?: string | null;
 }
 
 /**
@@ -231,15 +237,17 @@ export interface AttributionSlice {
 export function attribution(closed: ClosedTrade[]): {
   bySymbol: Record<string, AttributionSlice>;
   byClass: Record<string, AttributionSlice>;
+  /**
+   * Dieselbe Rechnung je Klasse UND Einstiegsweg (Task 17): Welcher Pfad
+   * trägt die Verluste einer Klasse? Schlüssel außen die Klasse, innen die
+   * Quelle (`tradeQuelle`). Trades ohne `quelle` laufen unter `unbekannt`.
+   */
+  byClassQuelle: Record<string, Record<string, AttributionSlice>>;
 } {
   const bySymbol: Record<string, AttributionSlice> = {};
   const byClass: Record<string, AttributionSlice> = {};
-  for (const t of closed) {
-    if (typeof t.pnl !== 'number' || !Number.isFinite(t.pnl)) continue;
-    const sym = safeKey(t.symbol);
-    const cls = safeKey(t.assetClass ?? 'unbekannt');
-    bySymbol[sym] = { pnl: r2((bySymbol[sym]?.pnl ?? 0) + t.pnl), n: (bySymbol[sym]?.n ?? 0) + 1 };
-    const c = byClass[cls] ?? { pnl: 0, n: 0, fees: 0, notional: 0 };
+  const byClassQuelle: Record<string, Record<string, AttributionSlice>> = {};
+  const addiere = (c: AttributionSlice, t: ClosedTrade): void => {
     c.pnl = r2(c.pnl + t.pnl);
     c.n += 1;
     // Gebühren und Volumen nur bei vollständigen Angaben — ein Trade ohne
@@ -251,16 +259,32 @@ export function attribution(closed: ClosedTrade[]): {
       c.fees = r2((c.fees ?? 0) + geb);
       c.notional = r2((c.notional ?? 0) + t.notional);
     }
+  };
+  for (const t of closed) {
+    if (typeof t.pnl !== 'number' || !Number.isFinite(t.pnl)) continue;
+    const sym = safeKey(t.symbol);
+    const cls = safeKey(t.assetClass ?? 'unbekannt');
+    bySymbol[sym] = { pnl: r2((bySymbol[sym]?.pnl ?? 0) + t.pnl), n: (bySymbol[sym]?.n ?? 0) + 1 };
+    const c = byClass[cls] ?? { pnl: 0, n: 0, fees: 0, notional: 0 };
+    addiere(c, t);
     byClass[cls] = c;
+    const quelle = safeKey(typeof t.quelle === 'string' && t.quelle.length > 0 ? t.quelle : 'unbekannt');
+    const je = byClassQuelle[cls] ?? {};
+    const q = je[quelle] ?? { pnl: 0, n: 0, fees: 0, notional: 0 };
+    addiere(q, t);
+    je[quelle] = q;
+    byClassQuelle[cls] = je;
   }
-  for (const c of Object.values(byClass)) {
-    // Kante = (Ergebnis nach Gebühren) ÷ Volumen. Bewusst NETTO: Die Frage
-    // ist nicht, ob die Klasse sich bewegt, sondern ob nach der Reibung
-    // etwas übrig bleibt.
+  // Kante = (Ergebnis nach Gebühren) ÷ Volumen. Bewusst NETTO: Die Frage
+  // ist nicht, ob die Klasse sich bewegt, sondern ob nach der Reibung
+  // etwas übrig bleibt.
+  const kante = (c: AttributionSlice): void => {
     c.kantePct =
       (c.notional ?? 0) > 0 ? Math.round((c.pnl / (c.notional as number)) * 1_000_000) / 10_000 : null;
-  }
-  return { bySymbol, byClass };
+  };
+  for (const c of Object.values(byClass)) kante(c);
+  for (const je of Object.values(byClassQuelle)) for (const q of Object.values(je)) kante(q);
+  return { bySymbol, byClass, byClassQuelle };
 }
 
 export interface PositionLike {

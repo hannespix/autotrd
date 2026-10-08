@@ -886,6 +886,8 @@ export interface PortfolioStatsDoc {
   avgLoss: number | null;
   bySymbol: Record<string, { pnl: number; n: number }>;
   byClass: Record<string, { pnl: number; n: number }>;
+  /** Je Klasse und Einstiegsweg (Task 17), ungekürzt — nur das eigene Konto. */
+  byClassQuelle?: Record<string, Record<string, { pnl: number; n: number; fees?: number; notional?: number; kantePct?: number | null }>>;
   /**
    * Ausstiegsgründe (MT1): stop_loss · take_profit · trailing_stop · signal.
    * Steht fast alles unter `signal`, sind Stop und Take reine Dekoration —

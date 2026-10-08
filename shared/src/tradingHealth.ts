@@ -29,6 +29,7 @@
  * Nutzer registriert — und dann ist es zu spät, die Schwelle nachzurüsten.
  */
 
+import { quelleBekannt } from './tradeQuelle.js';
 import type {
   AttributionSlice,
   CostProfile,
@@ -67,6 +68,8 @@ export interface AccountContribution {
   costs?: Pick<CostProfile, 'n' | 'fees' | 'grossPnl'> | undefined;
   /** Ergebnis je Anlageklasse — Grundlage der Klassen-Kante (04.08.). */
   byClass?: Record<string, AttributionSlice> | undefined;
+  /** Dasselbe je Klasse UND Einstiegsweg (Task 17, `attribution().byClassQuelle`). */
+  byClassQuelle?: Record<string, Record<string, AttributionSlice>> | undefined;
   /**
    * Gemessene Ausführungs-Reibung je Klasse (19.08., `reibungsProfil`) —
    * Basispunkte, also Verhältnisse: Sie verraten keine Kontogröße und sind
@@ -107,6 +110,35 @@ export interface KlassenBefund {
    * dieselbe Klasse handeln, nicht welche oder mit welchen Beträgen.
    */
   konten: number;
+  /**
+   * Dieselbe Klasse nach EINSTIEGSWEG (Task 17): konfluenz · regelbaum ·
+   * momentum · sockel · ki_probe · hand · sync · unbekannt. Nur Anzahl,
+   * Konten und VERHÄLTNISSE (Netto-Kante, Gebührenquote je gehandeltem
+   * Dollar) — keine Beträge. Und die Verhältnisse erst ab
+   * MIN_ACCOUNTS_PUBLIC Konten IN DIESER QUELLE (Red-Team 08.10., H3):
+   * `meta/tradeFilter.buckets.*.pnlSum` ist ein öffentlicher Geldbetrag je
+   * Steckbrief, und die Quellen sind Steckbrief-Signaturklassen — bei einem
+   * Konto ergäbe pnlSum ÷ kantePct dessen gehandeltes Volumen. Das
+   * ungekürzte Bild steht privat im Konto (`stats/main.byClassQuelle`).
+   */
+  quellen?: Record<string, QuellenBefund>;
+  /**
+   * Anteil der Buchungen dieser Klasse mit BEKANNTEM Einstiegsweg (0…100).
+   * `sync` und `unbekannt` sind Lücken der Messung, keine Pfade — eine
+   * Quellen-Tabelle mit 40 % Deckung beantwortet „welcher Pfad verliert"
+   * nicht, und das muss vor der Zahl stehen, nicht dahinter.
+   */
+  deckungPct?: number | null;
+}
+
+/** Eine Einstiegs-Quelle innerhalb einer Klasse — nur Verhältnisse, und die erst ab der Konten-Schwelle. */
+export interface QuellenBefund {
+  n: number;
+  konten: number;
+  /** Nettorendite je gehandeltem Dollar in Prozent; null ohne Volumen oder unter MIN_ACCOUNTS_PUBLIC Konten. */
+  kantePct: number | null;
+  /** Roundtrip-Gebühr je gehandeltem Dollar in Prozent; null ohne Volumen oder unter MIN_ACCOUNTS_PUBLIC Konten. */
+  gebuehrPct: number | null;
 }
 
 export interface ExitShare {
@@ -227,6 +259,10 @@ export function aggregateTradingHealth(
     string,
     { n: number; pnl: number; fees: number; notional: number; konten: number }
   > = {};
+  const quellenRoh: Record<
+    string,
+    Record<string, { n: number; pnl: number; fees: number; notional: number; konten: number }>
+  > = {};
 
   for (const c of beitragend) {
     const n = c.stats.n;
@@ -282,6 +318,20 @@ export function aggregateTradingHealth(
       // einer Watchlist und wäre kein Beitrag zur Erfahrung.
       if (slice.n > 0) kl.konten += 1;
       klassenRoh[name] = kl;
+    }
+    // Je Klasse und Einstiegsweg (Task 17) — dieselbe Summenlogik.
+    for (const [name, je] of Object.entries(c.byClassQuelle ?? {})) {
+      const q = quellenRoh[name] ?? {};
+      for (const [quelle, slice] of Object.entries(je)) {
+        const s = q[quelle] ?? { n: 0, pnl: 0, fees: 0, notional: 0, konten: 0 };
+        s.n += slice.n;
+        s.pnl += slice.pnl;
+        s.fees += slice.fees ?? 0;
+        s.notional += slice.notional ?? 0;
+        if (slice.n > 0) s.konten += 1;
+        q[quelle] = s;
+      }
+      quellenRoh[name] = q;
     }
   }
 
@@ -341,12 +391,32 @@ export function aggregateTradingHealth(
      * `k.konten <= accounts` gilt immer, die Prüfung ist also strikt
      * schärfer als die alte — nie lockerer. */
     const geldOeffentlich = k.konten >= minAccountsPublic;
+    const quellenJe = quellenRoh[name];
+    const quellen: Record<string, QuellenBefund> = {};
+    let buchungen = 0;
+    let bekannt = 0;
+    for (const [quelle, s] of Object.entries(quellenJe ?? {})) {
+      buchungen += s.n;
+      if (quelleBekannt(quelle)) bekannt += s.n;
+      // Nur Verhältnisse — bewusst KEIN pnl/fees — und die erst ab der
+      // Konten-Schwelle JE QUELLE (s. KlassenBefund.quellen).
+      const quoteOeffentlich = s.konten >= minAccountsPublic && s.notional > 0;
+      quellen[quelle] = {
+        n: s.n,
+        konten: s.konten,
+        kantePct: quoteOeffentlich ? r4((s.pnl / s.notional) * 100) : null,
+        gebuehrPct: quoteOeffentlich ? r4((s.fees / s.notional) * 100) : null,
+      };
+    }
     klassen[name] = {
       n: k.n,
       pnl: geldOeffentlich ? Math.round(k.pnl * 100) / 100 : null,
       fees: geldOeffentlich ? Math.round(k.fees * 100) / 100 : null,
       kantePct: k.notional > 0 ? r4((k.pnl / k.notional) * 100) : null,
       konten: k.konten,
+      ...(Object.keys(quellen).length > 0
+        ? { quellen, deckungPct: buchungen > 0 ? r4((bekannt / buchungen) * 100) : null }
+        : {}),
     };
   }
 

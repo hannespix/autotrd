@@ -141,6 +141,25 @@ describe('attribution', () => {
     expect(a.byClass['unbekannt']).toMatchObject({ pnl: 5, n: 1 });
   });
 
+  it('rechnet dieselbe Kante je Klasse UND Einstiegsweg (Task 17); ohne quelle → unbekannt', () => {
+    const a = attribution([
+      { symbol: 'BTC-USD', pnl: -30, assetClass: 'crypto', quelle: 'momentum', notional: 1000, fee: 2, entryNotional: 1000, feeRate: 0.002 },
+      { symbol: 'ETH-USD', pnl: -10, assetClass: 'crypto', quelle: 'momentum', notional: 1000, fee: 2, entryNotional: 1000, feeRate: 0.002 },
+      { symbol: 'SOL-USD', pnl: 15, assetClass: 'crypto', quelle: 'konfluenz', notional: 1000, fee: 2, entryNotional: 1000, feeRate: 0.002 },
+      { symbol: 'BTC-USD', pnl: 1, assetClass: 'crypto' },
+      { symbol: 'AAPL', pnl: 4, assetClass: 'stocks_us', quelle: 'hand' },
+    ]);
+    // Klasse unverändert: die Summe aller Wege
+    expect(a.byClass['crypto']).toMatchObject({ pnl: -24, n: 4, notional: 3000 });
+    expect(a.byClassQuelle['crypto']?.['momentum']).toEqual({ pnl: -40, n: 2, fees: 8, notional: 2000, kantePct: -2 });
+    expect(a.byClassQuelle['crypto']?.['konfluenz']).toEqual({ pnl: 15, n: 1, fees: 4, notional: 1000, kantePct: 1.5 });
+    expect(a.byClassQuelle['crypto']?.['unbekannt']).toEqual({ pnl: 1, n: 1, fees: 0, notional: 0, kantePct: null });
+    expect(a.byClassQuelle['stocks_us']?.['hand']).toMatchObject({ pnl: 4, n: 1, kantePct: null });
+    // Die Quellen-Summe je Klasse ist die Klassen-Summe — nichts fällt durch
+    const summe = Object.values(a.byClassQuelle['crypto'] ?? {}).reduce((s, q) => s + q.n, 0);
+    expect(summe).toBe(a.byClass['crypto']?.n);
+  });
+
   it('rechnet die Netto-Kante je Klasse aus Volumen und Ergebnis', () => {
     // Zwei Trades über je 1.000 $ Volumen, zusammen +3 $ nach Gebühren
     // ⇒ 3 / 2.000 = 0,15 % je gehandeltem Dollar.

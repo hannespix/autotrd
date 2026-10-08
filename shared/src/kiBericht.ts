@@ -106,6 +106,9 @@ export function entscheideLauf(
 }
 
 /** Was der Bericht an Zahlen sieht — bewusst schmal und eigen. */
+/** Höchstens so viele Quellen-Zeilen je Verlust-Klasse — der Prompt bleibt bezahlbar. */
+export const QUELLEN_JE_KLASSE = 5;
+
 export interface KiFakten {
   trading?: {
     trades?: number;
@@ -113,7 +116,17 @@ export interface KiFakten {
     profitFactor?: number | null;
     feeShare?: number | null;
     verdict?: string;
-    klassen?: Record<string, { n?: number; kantePct?: number | null }>;
+    klassen?: Record<
+      string,
+      {
+        n?: number;
+        kantePct?: number | null;
+        /** Je Einstiegsweg (Task 17) — nur Verhältnisse, erst ab der Konten-Schwelle. */
+        quellen?: Record<string, { n?: number; konten?: number; kantePct?: number | null; gebuehrPct?: number | null }>;
+        /** Anteil der Buchungen mit bekanntem Einstiegsweg (0…100). */
+        deckungPct?: number | null;
+      }
+    >;
     exits?: Record<string, { share?: number; winRate?: number; n?: number }>;
   };
   signalSchatten?: Record<string, { n?: number; trefferquote?: number | null; kantePct?: number | null }>;
@@ -177,8 +190,40 @@ export function baueEingabe(chronik: ErkenntnisChronik, fakten: KiFakten): strin
     const klassen = Object.entries(t.klassen ?? {}).sort(
       (a, b) => (a[1].kantePct ?? 0) - (b[1].kantePct ?? 0),
     );
+    let quellenErklaert = false;
     for (const [k, v] of klassen) {
       zeilen.push(`- Klasse ${k}: n=${v.n ?? 0}, Kante ${v.kantePct ?? '--'} %`);
+      // Je Einstiegsweg (Task 17), nur bei VERLUST-Klassen und höchstens
+      // QUELLEN_JE_KLASSE Zeilen, schlechteste Kante zuerst, ungemessene
+      // Kanten ans Ende: Die Frage ist nicht, OB die Klasse verliert,
+      // sondern WELCHER Pfad — ein Kostenhebel am falschen Pfad griffe ins
+      // Leere (#544). Vor den Zeilen steht die Deckung: Eine Tabelle, die
+      // nur 40 % der Buchungen einem Pfad zuordnet, beantwortet die Frage
+      // nicht — und das muss die KI zuerst lesen.
+      if (typeof v.kantePct !== 'number' || v.kantePct >= 0) continue;
+      const quellen = Object.entries(v.quellen ?? {})
+        .filter(([, q]) => (q.n ?? 0) > 0)
+        .sort((a, b) => {
+          const ka = typeof a[1].kantePct === 'number' ? a[1].kantePct : Number.POSITIVE_INFINITY;
+          const kb = typeof b[1].kantePct === 'number' ? b[1].kantePct : Number.POSITIVE_INFINITY;
+          return ka - kb;
+        })
+        .slice(0, QUELLEN_JE_KLASSE);
+      if (quellen.length === 0) continue;
+      if (!quellenErklaert) {
+        zeilen.push(
+          '  (Quelle = Einstiegsweg aus dem Steckbrief; ki_probe = nur KI-allein-Einstiege; sync/unbekannt = ohne Steckbrief, ' +
+            'nicht zuordenbar. Buchungen = Tranchen der letzten 500 Buchungen je Konto, nur realisiert. ' +
+            'Kante/Gebühr je Quelle erst ab der Konten-Schwelle, sonst --.)',
+        );
+        quellenErklaert = true;
+      }
+      zeilen.push(`  Deckung bekannter Einstiegswege: ${typeof v.deckungPct === 'number' ? pz(v.deckungPct) : '--'} %`);
+      for (const [q, w] of quellen) {
+        zeilen.push(
+          `  · Quelle ${q}: Buchungen ${w.n ?? 0}, Konten ${w.konten ?? 0}, Kante ${w.kantePct ?? '--'} %, Gebühr ${w.gebuehrPct ?? '--'} %`,
+        );
+      }
     }
   }
 
