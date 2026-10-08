@@ -100,10 +100,14 @@ describe('Bewertungslauf — Verdrahtung', () => {
 });
 
 describe('Scan — Anwendung des Gewichts', () => {
-  it('liest meta/kiStats einmal je Scan, nur `faelle.wirksam`; nicht lesbar ⇒ 1', () => {
+  it('liest meta/kiStats einmal je Scan — DENSELBEN Bucket, aus dem der Lauf rechnet; nicht lesbar ⇒ 1', () => {
     expect(scan).toContain("db.doc('meta/kiStats').get(),");
-    expect(scan).toContain("kiGewichtFaktor = kiGewicht(kiStats.get('faelle.wirksam')");
+    // Naht-Befund 08.10.: Scan las `faelle.wirksam`, geschrieben wird `wirksam_long`.
+    expect(scan).toContain('kiStats.get(`faelle.${KI_GEWICHT_BUCKET}`)');
+    expect(scan).not.toContain("'faelle.wirksam'");
     expect(scan).toContain('let kiGewichtFaktor = 1;');
+    // Beide Seiten hängen an derselben Konstante.
+    expect(lauf).toContain('const gewicht = kiGewicht(faelle[KI_GEWICHT_BUCKET]);');
   });
   it('das Gewicht erreicht genau zwei Stellen: Stimme und Probegröße — keinen Stop, kein Veto', () => {
     expect(scan).toMatch(/kiGenutzt\[symbol\] as KiGenutzt \| undefined,\s*kiGewichtFaktor,\s*\);/);
@@ -111,7 +115,7 @@ describe('Scan — Anwendung des Gewichts', () => {
     // Jede Verwendung außerhalb dieser zwei Stellen (und Deklaration/Zuweisung/
     // Herzschlag) wäre ein neuer Pfad — hier aufgelistet, damit er auffällt.
     const zeilen = scan.split('\n').filter((z) => z.includes('kiGewichtFaktor'));
-    const erlaubt = [/let kiGewichtFaktor = 1;/, /kiGewichtFaktor = kiGewicht\(/, /gewicht: kiGewichtFaktor,/, /^\s*kiGewichtFaktor,$/, /kiGroessenFaktor\(ohneKi, direction, kiGewichtFaktor\)/];
+    const erlaubt = [/let kiGewichtFaktor = 1;/, /kiGewichtFaktor = kiGewicht\($/, /gewicht: kiGewichtFaktor,/, /^\s*kiGewichtFaktor,$/, /kiGroessenFaktor\(ohneKi, direction, kiGewichtFaktor\)/];
     for (const z of zeilen) expect(erlaubt.some((re) => re.test(z))).toBe(true);
     // kiPositionsAktion (Stops/Ausstiege) und kiVeto kennen das Gewicht nicht —
     // geprüft über den Aufruf bis zum schließenden `);`.
