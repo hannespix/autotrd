@@ -195,6 +195,8 @@ describe('Golden-Wächter — die deutschen Tips sind byte-gleich zum Bestand', 
     expect(INFO_DE['flattenOnBreach']?.t).toBe('Bei Notbremse glattstellen');
     expect(INFO_DE['regimeGate']?.t).toBe('Markt-Ampel');
     expect(INFO_DE['newsVeto']?.t).toBe('News-Veto');
+    expect(INFO_DE['kiNachrichten']?.t).toBe('KI-Nachrichten');
+    expect(INFO_EN['kiNachrichten']?.t).toBe('AI news');
     expect(INFO_DE['allowShort']?.t).toBe('Shorten (Leerverkäufe)');
     expect(INFO_DE['minEdgeMultiple']?.d).toContain('Wurzel aus der Haltedauer');
     expect(INFO_DE['dailyLossLimit']?.d).toContain('Sie sperrt EINSTIEGE');

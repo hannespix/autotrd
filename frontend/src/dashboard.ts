@@ -105,6 +105,7 @@ import {
   adminListUsers,
   type AdminUserRow,
   adminLiveStatus,
+  type KiBudgetStatus,
   adminSetAccess,
   adminAbgleich,
   adminAntworten,
@@ -754,6 +755,9 @@ function layout(email: string): string {
           <span id="admKillState" class="mono hint">Zustand: …</span>
           <button class="btn btn-r" id="admKillBtn" style="margin-left:auto" hidden></button>
         </div>
+        <div class="wl-sec adm-trenner">${t('adm.kiBudgetTitel')}</div>
+        <div class="hint">${t('adm.kiBudgetHinweis')}</div>
+        <div id="admKiBudget" class="mono hint" style="margin-top:6px">…</div>
       </div></div>
 
       <div class="card" data-panel="history"><div class="sect">${t('panel.historie')}
@@ -1426,6 +1430,9 @@ function layout(email: string): string {
         <label class="opt-check">
           <input type="checkbox" id="owNewsVeto" />
           <span>${t('opt.newsVeto')} ${iBtn('newsVeto')}</span></label>
+        <label class="opt-check">
+          <input type="checkbox" id="owKiNachrichten" />
+          <span>${t('opt.kiNachrichten')} ${iBtn('kiNachrichten')}</span></label>
         <div class="opt-sub">${t('opt.experimente')}</div>
         <label class="opt-check">
           <input type="checkbox" id="owShort" />
@@ -2861,6 +2868,9 @@ function optionsFormStrategy(): Strategy {
       allowShort: ($('owShort') as HTMLInputElement).checked,
       newsVeto: ($('owNewsVeto') as HTMLInputElement).checked,
       regimeGate: ($('owRegimeGate') as HTMLInputElement).checked,
+      // KI-Nachrichten (Stufe 2b-2): `false` ist das ausdrückliche Opt-out —
+      // der Scan wertet `!== false`, fehlend heißt an.
+      kiNachrichten: ($('owKiNachrichten') as HTMLInputElement).checked,
     },
   };
 }
@@ -3484,6 +3494,7 @@ function openOptions(): void {
   ($('owShort') as HTMLInputElement).checked = st.strategy.signals.allowShort === true;
   ($('owNewsVeto') as HTMLInputElement).checked = st.strategy.signals.newsVeto !== false; // fehlend = an
   ($('owRegimeGate') as HTMLInputElement).checked = st.strategy.signals.regimeGate !== false; // fehlend = an
+  ($('owKiNachrichten') as HTMLInputElement).checked = st.strategy.signals.kiNachrichten !== false; // fehlend = an
   // Klassen-Profile transparent machen: Sie überschreiben die Werte oben je
   // Asset-Klasse — der User soll wissen, was für sein Symbol tatsächlich gilt.
   const byCls = st.strategy.engine.byClass ?? {};
@@ -6911,6 +6922,28 @@ function renderEngineWhy(): void {
     chip.title = t('ew.nachbuchungTitel');
     ampel.append(chip);
   }
+  /* KI-Kaskade (Stufe 2b-2): was die KI-Urteile im letzten Lauf bewirkt
+   * haben. Ein Chip nur, wenn etwas geschah — eine Null wäre eine dauerhafte
+   * Beruhigung. Der Budget-Chip ist gelb: nichts ist kaputt, die Stimme
+   * kommt nur aus dem Lexikon statt vom Modell. */
+  const ki = h.ki;
+  if (ki) {
+    const kiTeile: string[] = [];
+    if ((ki.lage ?? 0) > 0) kiTeile.push(`${ki.lage} ${t('ew.kiLage')}`);
+    if ((ki.einstiege ?? 0) > 0) kiTeile.push(`${ki.einstiege} ${t('ew.kiEinstiege')}`);
+    if ((ki.stops ?? 0) > 0) kiTeile.push(`${ki.stops} ${t('ew.kiStops')}`);
+    if ((ki.verkauft ?? 0) > 0) kiTeile.push(`${ki.verkauft} ${t('ew.kiVerkauft')}`);
+    if (kiTeile.length > 0) {
+      const chip = whyChip(`KI: ${kiTeile.join(' · ')}`, 'var(--t3)');
+      chip.title = t('ew.kiTitel');
+      ampel.append(chip);
+    }
+    if (ki.budgetErschoepft === true) {
+      const chip = whyChip(t('ew.kiBudgetErschoepft'), 'var(--yl,#d9a441)');
+      chip.title = t('ew.kiBudgetTitel');
+      ampel.append(chip);
+    }
+  }
   /* Signal-Kanten-Chip (MI → 07.08.): Die Regime-Variante ist nach der
    * vorregistrierten Regel EINGESTELLT (n=5187, Kante −0,29 %, roh −0,004 %
    * gegen live −0,247 %/+0,021 % — sie schlug die gehandelte Logik nicht).
@@ -7673,10 +7706,33 @@ async function ladeKillSwitch(): Promise<void> {
     btn.className = s.killSwitch ? 'btn btn-g' : 'btn btn-r';
     btn.dataset['an'] = s.killSwitch ? '0' : '1';
     btn.hidden = false;
+    renderKiBudget(s.kiBudget ?? null);
   } catch (e) {
     state.textContent = `${t('adm.zustand')}: ${t('adm.nichtLesbar')} (${serverText(e)})`;
     btn.hidden = true;
+    $('admKiBudget').textContent = `${t('adm.kiBudgetTitel')}: ${t('adm.nichtLesbar')}`;
   }
+}
+
+/** KI-Tagesbudget in der Admin-Karte (Stufe 2b-2): verbraucht / Limit,
+ *  Konten im Topf, Aufrufe — und rot, wenn der Topf heute leer ist (dann
+ *  läuft der Lexikon-Rückfall). Nur Summen, keine Konto-Kennungen. */
+function renderKiBudget(b: KiBudgetStatus | null): void {
+  const el = $('admKiBudget') as HTMLElement;
+  if (!b) {
+    el.textContent = `${t('adm.kiBudgetTitel')}: ${t('adm.kiBudgetKeins')}`;
+    el.style.color = 'var(--t3)';
+    return;
+  }
+  const usd = (v: number): string => `${fmtNum(v)} $`;
+  const teile = [
+    `${usd(b.verbrauchtUsd)} / ${usd(b.limitUsd)}`,
+    `${b.konten} ${t('adm.kiKonten')}`,
+    `${b.aufrufe} ${t('adm.kiAufrufe')}`,
+  ];
+  if (b.reserviertUsd > 0) teile.push(`${usd(b.reserviertUsd)} ${t('adm.kiReserviert')}`);
+  el.textContent = `${b.tag}: ${teile.join(' · ')}${b.erschoepft ? ` — ${t('adm.kiBudgetErschoepft')}` : ''}`;
+  el.style.color = b.erschoepft ? 'var(--rd)' : 'var(--t3)';
 }
 
 /**

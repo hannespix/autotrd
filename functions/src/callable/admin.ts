@@ -29,6 +29,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
+  budgetTag,
   leseNachricht,
   leseRisikoVermerk,
   positionValue,
@@ -127,6 +128,34 @@ export interface AdminUserRow {
     /** Wann der Vermerk entstand (ISO) — ein alter Vermerk sperrt nicht. */
     at: string | null;
   } | null;
+}
+
+/** KI-Tagesbudget für die Admin-Karte (Stufe 2b-2): nur Summen aus
+ *  `admin/kiBudget-{tag}` plus das Erschöpfungs-Flag aus `meta/kiNachrichten`.
+ *  Keine Konto-Kennungen — der Topf ist gemeinsam, die Zeile auch. */
+async function kiBudgetHeute(): Promise<Record<string, unknown> | null> {
+  const db = getFirestore();
+  const tag = budgetTag(new Date());
+  const [topf, stand] = await Promise.all([
+    db.doc(`admin/kiBudget-${tag}`).get(),
+    db.doc('meta/kiNachrichten').get(),
+  ]);
+  const erschoepft = stand.get('budgetErreichtTag') === tag;
+  if (!topf.exists) return erschoepft ? { tag, limitUsd: 0, konten: 0, verbrauchtUsd: 0, reserviertUsd: 0, aufrufe: 0, at: null, erschoepft } : null;
+  const zahl = (k: string): number => {
+    const v = topf.get(k) as unknown;
+    return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+  };
+  return {
+    tag,
+    limitUsd: zahl('limitUsd'),
+    konten: zahl('konten'),
+    verbrauchtUsd: zahl('verbrauchtUsd'),
+    reserviertUsd: zahl('reserviertUsd'),
+    aufrufe: zahl('aufrufe'),
+    at: (topf.get('at') as string | undefined) ?? null,
+    erschoepft,
+  };
 }
 
 export const adminUsers = onCall(
@@ -538,6 +567,7 @@ export const adminUsers = onCall(
       killSwitch: doc.get('killSwitch') === true,
       at: (doc.get('killSwitchAt') as string | undefined) ?? null,
       von: (doc.get('killSwitchVon') as string | undefined) ?? null,
+      kiBudget: await kiBudgetHeute(),
     };
   }
 

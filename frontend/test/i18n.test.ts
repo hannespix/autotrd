@@ -145,6 +145,7 @@ describe('Golden-Wächter — im DE-Modus exakt die bisherigen Texte', () => {
     expect(DE['opt.flatten']).toBe('Bei Notbremse zusätzlich alle Positionen schließen');
     expect(DE['opt.regimeGate']).toBe('Markt-Ampel (keine Shorts im Aufwärtstrend, Pause bei Stress)');
     expect(DE['opt.newsVeto']).toBe('News-Veto (Einstiege bei harten Events aussetzen)');
+    expect(DE['opt.kiNachrichten']).toBe('KI-Nachrichten (Urteile stimmen mit, setzen Stops; 2 $/Tag)');
     expect(DE['opt.experimente']).toBe('Experimente');
     expect(DE['opt.shorten']).toBe('Shorten erlauben (Leerverkäufe)');
     expect(DE['opt.klassenKapital']).toBe('Kapital je Anlageklasse');
