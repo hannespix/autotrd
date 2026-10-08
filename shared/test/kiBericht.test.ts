@@ -153,3 +153,18 @@ describe('KI_SYSTEM', () => {
     expect(KI_MAX_TOKENS).toBeLessThanOrEqual(8000);
   });
 });
+
+describe('Stufe 4a — KI-Abschnitt im Lagebericht', () => {
+  it('erscheint nur mit kiBewertung, nennt Quote, Über-Markt und Holdout', () => {
+    const chronik = { date: '2026-10-08', eintraege: {} } as unknown as Parameters<typeof baueEingabe>[0];
+    expect(baueEingabe(chronik, {})).not.toContain('KI-NACHRICHTEN');
+    const text = baueEingabe(chronik, {
+      kiBewertung: { faelleWirksam: 42, faelleGesamt: 90, quotePct: 55.5, nettoAvgPct: 0.3, ueberMarktQuotePct: 48, holdoutN: 20, holdoutQuotePct: 45, faelleWirksamLong: 62, gewicht: 1 },
+    });
+    expect(text).toContain('KI-NACHRICHTEN (Urteile nach Horizont gegen den Kurs bewertet, netto nach Kosten; Fallanteile, keine Renditen):');
+    // Zahlen mit Komma wie der Rest des Prompts (pz), Anteile als Anteile benannt
+    expect(text).toContain('- Arm A (steuert das Gewicht): n=42, Trefferquote 55,50 %, Ø netto 0,30 %, Anteil der Fälle über der Symbol-Drift 48,00 %');
+    expect(text).toContain('- Holdout B (steuert nicht): n=20, Trefferquote 45,00 %; wirksame Long-Urteile gesamt n=62; alle Urteile n=90; Gewicht der KI-Stimme ×1,00');
+    expect(text).not.toContain('55.5');
+  });
+});

@@ -20,10 +20,12 @@ import {
   bewerteKiWirkung,
   bewerteUrteil,
   bucketsFuer,
+  fallKennzahlen,
   fallSchluessel,
   isoWocheEt,
   KI_BEWERTUNG_V,
   KI_GEWICHT_BUCKET,
+  KI_HOLDOUT_BUCKET,
   kiGewicht,
   kostenRateFuer,
   naechsterAktivitaetsZustand,
@@ -58,7 +60,7 @@ export function zaehlerVerwerfen(kiV: unknown): boolean {
   return typeof kiV === 'number' && kiV !== KI_BEWERTUNG_V;
 }
 
-const leer = (): KiFallStat => ({ n: 0, treffer: 0, nettoSum: 0, bruttoSum: 0 });
+const leer = (): KiFallStat => ({ n: 0, treffer: 0, nettoSum: 0, bruttoSum: 0, nMarkt: 0, trefferMarkt: 0, ueberMarktSum: 0 });
 
 export async function runKiBewertung(now = new Date()): Promise<KiBewertungResult> {
   const db = getFirestore();
@@ -166,6 +168,12 @@ export async function runKiBewertung(now = new Date()): Promise<KiBewertungResul
           d.treffer += r.treffer ? 1 : 0;
           d.nettoSum += r.nettoPct;
           d.bruttoSum += r.bruttoPct;
+          if (r.ueberMarktPct !== null) {
+            // Benchmark (Stufe 4a): netto über der Markt-Drift in Urteilsrichtung.
+            d.nMarkt = (d.nMarkt ?? 0) + 1;
+            d.trefferMarkt = (d.trefferMarkt ?? 0) + (r.ueberMarktPct > 0 ? 1 : 0);
+            d.ueberMarktSum = (d.ueberMarktSum ?? 0) + r.ueberMarktPct;
+          }
           delta.set(b, d);
         }
       }
@@ -178,6 +186,9 @@ export async function runKiBewertung(now = new Date()): Promise<KiBewertungResul
         args.push(new FieldPath('faelle', b, 'treffer'), FieldValue.increment(d.treffer));
         args.push(new FieldPath('faelle', b, 'nettoSum'), FieldValue.increment(Math.round(d.nettoSum * 1e4) / 1e4));
         args.push(new FieldPath('faelle', b, 'bruttoSum'), FieldValue.increment(Math.round(d.bruttoSum * 1e4) / 1e4));
+        args.push(new FieldPath('faelle', b, 'nMarkt'), FieldValue.increment(d.nMarkt ?? 0));
+        args.push(new FieldPath('faelle', b, 'trefferMarkt'), FieldValue.increment(d.trefferMarkt ?? 0));
+        args.push(new FieldPath('faelle', b, 'ueberMarktSum'), FieldValue.increment(Math.round((d.ueberMarktSum ?? 0) * 1e4) / 1e4));
       }
       (batch.update as (...a: unknown[]) => unknown)(statsRef, ...args);
     }
@@ -215,7 +226,7 @@ export async function runKiBewertung(now = new Date()): Promise<KiBewertungResul
   const wochentagEt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(now);
   let wocheGemeldet = false;
   if (wochentagEt === 'Fri' && stand.get('wocheGemeldet') !== woche) {
-    const text = wochenNachricht(woche, faelle[KI_GEWICHT_BUCKET], faelle['gesamt'], gewicht);
+    const text = wochenNachricht(woche, faelle[KI_GEWICHT_BUCKET], faelle['gesamt'], gewicht, faelle[KI_HOLDOUT_BUCKET]);
     const admins = await db.collection('users').where('admin', '==', true).get();
     for (const a of admins.docs) {
       await a.ref.collection('nachrichten').add({ von: 'admin', text, at: now.toISOString() }).catch(() => undefined);
@@ -246,6 +257,13 @@ export async function runKiBewertung(now = new Date()): Promise<KiBewertungResul
           gewicht,
           faelleWirksam: faelle[KI_GEWICHT_BUCKET]?.n ?? 0,
           faelleGesamt: faelle['gesamt']?.n ?? 0,
+          // Stufe 4a: Güte des Gewichts-Buckets und der Holdout-Kontrolle (nur Summen).
+          quotePct: fallKennzahlen(faelle[KI_GEWICHT_BUCKET]).quotePct,
+          nettoAvgPct: fallKennzahlen(faelle[KI_GEWICHT_BUCKET]).nettoAvgPct,
+          ueberMarktQuotePct: fallKennzahlen(faelle[KI_GEWICHT_BUCKET]).ueberMarktQuotePct,
+          holdoutN: faelle[KI_HOLDOUT_BUCKET]?.n ?? 0,
+          holdoutQuotePct: fallKennzahlen(faelle[KI_HOLDOUT_BUCKET]).quotePct,
+          faelleWirksamLong: faelle['wirksam_long']?.n ?? 0,
         },
         kiWirkung: zustand,
       },

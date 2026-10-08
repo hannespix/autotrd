@@ -109,6 +109,8 @@ export async function schreibeBericht(now = new Date()): Promise<KiBerichtResult
     ...nimm('signalSchatten'),
     ...nimm('konten'),
     ...nimm('regime'),
+    // Stufe 4a: die gemessene Güte der KI-Urteile (nur Summen).
+    ...nimm('kiBewertung'),
   };
 
   try {
