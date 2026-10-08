@@ -113,7 +113,15 @@ export interface KiFakten {
     profitFactor?: number | null;
     feeShare?: number | null;
     verdict?: string;
-    klassen?: Record<string, { n?: number; kantePct?: number | null }>;
+    klassen?: Record<
+      string,
+      {
+        n?: number;
+        kantePct?: number | null;
+        /** Je Einstiegsweg (Task 17) — nur Verhältnisse. */
+        quellen?: Record<string, { n?: number; konten?: number; kantePct?: number | null; gebuehrPct?: number | null }>;
+      }
+    >;
     exits?: Record<string, { share?: number; winRate?: number; n?: number }>;
   };
   signalSchatten?: Record<string, { n?: number; trefferquote?: number | null; kantePct?: number | null }>;
@@ -179,6 +187,17 @@ export function baueEingabe(chronik: ErkenntnisChronik, fakten: KiFakten): strin
     );
     for (const [k, v] of klassen) {
       zeilen.push(`- Klasse ${k}: n=${v.n ?? 0}, Kante ${v.kantePct ?? '--'} %`);
+      // Je Einstiegsweg (Task 17), schlechteste Kante zuerst: Die Frage ist
+      // nicht, OB die Klasse verliert, sondern WELCHER Pfad — ein Kostenhebel
+      // am falschen Pfad griffe ins Leere (#544).
+      const quellen = Object.entries(v.quellen ?? {})
+        .filter(([, q]) => (q.n ?? 0) > 0)
+        .sort((a, b) => (a[1].kantePct ?? 0) - (b[1].kantePct ?? 0));
+      for (const [q, w] of quellen) {
+        zeilen.push(
+          `  · Quelle ${q}: n=${w.n ?? 0}, Konten ${w.konten ?? 0}, Kante ${w.kantePct ?? '--'} %, Gebühr ${w.gebuehrPct ?? '--'} %`,
+        );
+      }
     }
   }
 

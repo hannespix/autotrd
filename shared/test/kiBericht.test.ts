@@ -170,6 +170,35 @@ describe('Stufe 4a — KI-Abschnitt im Lagebericht', () => {
   });
 });
 
+describe('Task 17 — Quellen je Klasse im Lagebericht', () => {
+  it('listet je Klasse die Einstiegswege, schlechteste Kante zuerst, leere Quellen nicht', () => {
+    const chronik = { date: '2026-10-08', eintraege: {} } as unknown as Parameters<typeof baueEingabe>[0];
+    const text = baueEingabe(chronik, {
+      trading: {
+        klassen: {
+          crypto: {
+            n: 146,
+            kantePct: -0.42,
+            quellen: {
+              konfluenz: { n: 40, konten: 2, kantePct: 0.3, gebuehrPct: 0.5 },
+              momentum: { n: 100, konten: 3, kantePct: -0.9, gebuehrPct: 0.48 },
+              hand: { n: 0, konten: 0, kantePct: null, gebuehrPct: null },
+              unbekannt: { n: 6, konten: 1, kantePct: null, gebuehrPct: null },
+            },
+          },
+        },
+      },
+    });
+    const zeilen = text.split('\n');
+    const i = zeilen.findIndex((z) => z.startsWith('- Klasse crypto: n=146'));
+    expect(i).toBeGreaterThan(-1);
+    expect(zeilen[i + 1]).toBe('  · Quelle momentum: n=100, Konten 3, Kante -0.9 %, Gebühr 0.48 %');
+    expect(zeilen[i + 2]).toBe('  · Quelle unbekannt: n=6, Konten 1, Kante -- %, Gebühr -- %');
+    expect(zeilen[i + 3]).toBe('  · Quelle konfluenz: n=40, Konten 2, Kante 0.3 %, Gebühr 0.5 %');
+    expect(text).not.toContain('Quelle hand');
+  });
+});
+
 describe('Hebel 2, Messung — Kante je Regime im Lagebericht', () => {
   it('erscheint nur mit Daten, mit Kommazahlen', () => {
     const chronik = { date: '2026-10-08', eintraege: {} } as unknown as Parameters<typeof baueEingabe>[0];

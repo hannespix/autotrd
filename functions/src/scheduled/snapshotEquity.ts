@@ -43,6 +43,7 @@ import {
   reibungsProfil,
   schreibeChronik,
   sharpe,
+  tradeQuelle,
   tradeStats,
   tradingVerdict,
   werteSchattenAus,
@@ -429,6 +430,15 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
             pnl,
             assetClass: classify(symbol),
             ...(riskExit ? { riskExit } : {}),
+            // Einstiegsweg (Task 17): aus Feldern, die das Dokument ohnehin
+            // trägt — kein zusätzlicher Read. `bucket` steht am Schluss-Trade
+            // (von der Position übernommen), `sync` markiert adoptBroker.
+            quelle: tradeQuelle({
+              source: t.get('source'),
+              bucket: t.get('bucket'),
+              riskExit,
+              sync: t.get('sync'),
+            }),
             // Schlusszeitpunkt mitgeben — ohne ihn gibt es keine
             // zeitgefensterte Exit-Sicht (Task 115).
             ...(typeof at === 'string' ? { at } : {}),
@@ -613,6 +623,8 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         // Klassen-Aufschlüsselung mit ins Aggregat: Ohne sie sagt das
         // Gesamtbild nur, DASS zu teuer gehandelt wird — nicht wo.
         byClass: attr.byClass,
+        // … und je Einstiegsweg (Task 17): Welcher Pfad verbrennt Krypto?
+        byClassQuelle: attr.byClassQuelle,
         reibung,
       });
 
