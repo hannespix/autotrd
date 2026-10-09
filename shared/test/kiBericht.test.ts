@@ -150,6 +150,14 @@ describe('KI_SYSTEM', () => {
     expect(KI_SYSTEM).toContain('Deutsch');
   });
 
+  it('schreibt für Laien (Owner 09.10.): kein Jargon, Klassen beim deutschen Namen, lesbar gerundet', () => {
+    expect(KI_SYSTEM).toContain('KEIN Trader');
+    expect(KI_SYSTEM).toContain('Kein Fachjargon');
+    expect(KI_SYSTEM).toContain('stocks_us = US-Aktien');
+    expect(KI_SYSTEM).toContain('crypto = Krypto');
+    expect(KI_SYSTEM).toContain('„rund 48 %" statt „48,93 %"');
+  });
+
   it('der Token-Deckel ist gesetzt und moderat', () => {
     expect(KI_MAX_TOKENS).toBeGreaterThan(1000);
     expect(KI_MAX_TOKENS).toBeLessThanOrEqual(8000);

@@ -11,6 +11,7 @@ import {
   schreibeChronik,
   type ErkenntnisChronik,
   type ErkenntnisFakten,
+  ERKENNTNIS_TEXT_V,
 } from '../src/erkenntnisse.js';
 
 /** Fakten, die dem Live-Stand vom 08.08. nachempfunden sind. */
@@ -51,8 +52,23 @@ describe('schreibeChronik', () => {
     expect(s('struktursuche_latte')).toBe('gilt'); // 5 geprüft, 0 befördert
     // Die Sätze tragen die Zahlen — nicht nur Behauptungen.
     expect(c.eintraege.exit_am_signal!.these).toContain('87 %');
-    expect(c.eintraege.klasse_verlustquelle!.these).toContain('etf_thematic');
-    expect(c.eintraege.tages_kante!.these).toContain(`n=${MIN_N_TAGESKANTE}`);
+    // Klartext (09.10.): Klasse beim Namen, Mindestzahl ohne „n=", Vorzeichen sichtbar.
+    expect(c.eintraege.klasse_verlustquelle!.these).toContain('Themen-ETFs');
+    expect(c.eintraege.klasse_verlustquelle!.these).not.toContain('etf_thematic');
+    expect(c.eintraege.tages_kante!.these).toContain(`verlässlich ab ${MIN_N_TAGESKANTE}`);
+    // Ton übersetzt den Status in die Bedeutung für den Betreiber.
+    const ton = (k: string) => c.eintraege[k]!.ton;
+    expect(ton('kosten_dominieren')).toBe('problem'); // Gebühren dominieren: gilt = schlecht
+    expect(ton('klasse_traegt')).toBe('problem'); // keine Klasse trägt: gilt_nicht = schlecht
+    expect(ton('klasse_verlustquelle')).toBe('problem');
+    expect(ton('tages_kante')).toBe('offen');
+    expect(ton('struktursuche_latte')).toBe('hinweis');
+    expect(ton('exit_am_signal')).toBe('hinweis');
+    for (const e of Object.values(c.eintraege)) {
+      expect(e.v).toBe(ERKENNTNIS_TEXT_V);
+      // Kein Fachjargon im Satz, den der Betreiber liest.
+      expect(e.these).not.toMatch(/\bn=|Kante|Bauplan|Latte|Reibung|Richtungsgüte|Exit|Brutto/);
+    }
   });
 
   it('unter Mindest-n wird NICHTS behauptet', () => {
@@ -139,8 +155,8 @@ describe('schreibeChronik', () => {
   it('Halte-Kante wartet, solange die Reihe zu kurz ist — und nennt das Fenster', () => {
     const c = schreibeChronik(undefined, fakten(), T1);
     expect(c.eintraege.halte_kante!.status).toBe('wartet_auf_daten');
-    expect(c.eintraege.halte_kante!.these).toContain('n=0');
-    expect(c.eintraege.halte_kante!.these).toContain('Fenster noch nicht gemessen');
+    expect(c.eintraege.halte_kante!.these).toContain('erst 0 Messungen');
+    expect(c.eintraege.halte_kante!.these).toContain('Haltedauer noch nicht gemessen');
   });
 
   it('Halte-Kante ab Mindest-n: positiv ⇒ gilt, mit Horizont im Text', () => {
@@ -157,7 +173,8 @@ describe('schreibeChronik', () => {
     expect(c.eintraege.halte_kante!.these).toContain('+0,70');
     // 48 h — der Krypto-Boden. Der Horizont MUSS im Klartext stehen: Genau
     // seine Abwesenheit hat den Fünf-Minuten-Fehler zwölf Tage überleben lassen.
-    expect(c.eintraege.halte_kante!.these).toContain('48,0 h Fenster');
+    expect(c.eintraege.halte_kante!.these).toContain('im Schnitt 48,0 Stunden gehalten');
+    expect(c.eintraege.halte_kante!.ton).toBe('gut');
   });
 
   it('Halte-Kante negativ ⇒ gilt_nicht — der Rückweg bleibt zu', () => {
@@ -171,6 +188,29 @@ describe('schreibeChronik', () => {
       T1,
     );
     expect(c.eintraege.halte_kante!.status).toBe('gilt_nicht');
-    expect(c.eintraege.halte_kante!.these).toContain('48,0 h Fenster');
+    expect(c.eintraege.halte_kante!.these).toContain('im Schnitt 48,0 Stunden gehalten');
+    expect(c.eintraege.halte_kante!.these).toContain('−0,30 % je Signal');
+    expect(c.eintraege.halte_kante!.ton).toBe('problem');
+  });
+
+  it('Richtung: Münzwurf-Niveau ist ein Problem, Gewinn nach Gebühren ist gut', () => {
+    const muenze = schreibeChronik(undefined, fakten({ signalSchatten: { live: { n: 600, treffer: 280, trefferquote: 0.467, kantePct: -0.38 } } }), T1);
+    expect(muenze.eintraege.richtung_vs_kante!).toMatchObject({ status: 'gilt_nicht', ton: 'problem' });
+    expect(muenze.eintraege.richtung_vs_kante!.these).toContain('Münzwurf');
+    const traegt = schreibeChronik(undefined, fakten({ signalSchatten: { live: { n: 600, treffer: 280, trefferquote: 0.467, kantePct: 0.05 } } }), T1);
+    expect(traegt.eintraege.richtung_vs_kante!).toMatchObject({ status: 'gilt_nicht', ton: 'gut' });
+    expect(traegt.eintraege.richtung_vs_kante!.these).toContain('+0,05 % je Signal');
+  });
+
+  it('Historie: Klartext-Sätze werden als „klar" markiert, Alt-Sätze aus der Fachsprache-Zeit nicht', () => {
+    const alt = schreibeChronik(undefined, fakten(), T1);
+    // Ein Alt-Eintrag ohne Fassung (vor 09.10.) wechselt den Status.
+    const altEintrag = { ...alt.eintraege.kosten_dominieren!, v: undefined, ton: undefined };
+    const vorher = { ...alt, eintraege: { ...alt.eintraege, kosten_dominieren: altEintrag } };
+    const neu = schreibeChronik(vorher, fakten({ trading: { trades: 600, feeShare: 0.3, exits: { signal: { share: 0.87 } }, klassen: {} } }), '2026-08-09T21:15:00.000Z');
+    expect(neu.eintraege.kosten_dominieren!.historie!.at(-1)!.klar).toBeUndefined();
+    // Danach ist der Wortlaut Klartext — der nächste Wechsel trägt klar: true.
+    const wieder = schreibeChronik(neu, fakten(), '2026-08-10T21:15:00.000Z');
+    expect(wieder.eintraege.kosten_dominieren!.historie!.at(-1)!.klar).toBe(true);
   });
 });

@@ -35,6 +35,7 @@
  * ohne Firestore testbar — der Aufrufer macht das IO.
  */
 
+import { CLASS_LABELS } from './universe.js';
 import type { ErkenntnisChronik } from './erkenntnisse.js';
 
 /** Höchstens so viele Läufe je Kalendermonat — der harte Kostendeckel. */
@@ -319,22 +320,35 @@ export function baueEingabe(chronik: ErkenntnisChronik, fakten: KiFakten): strin
  * Die Längenvorgabe steht explizit drin, weil sie sich sonst nicht einstellt.
  */
 export const KI_SYSTEM = [
-  'Du bist der Betriebs-Analyst eines automatischen Paper-Trading-Systems und schreibst',
-  'den täglichen Lagebericht für den Betreiber. Du bekommst ausschließlich eigene',
-  'Messwerte des Systems: eine Chronik geprüfter Thesen mit Status und Belegen sowie die',
-  'aggregierten Handelszahlen.',
+  'Du schreibst den täglichen Lagebericht eines automatischen Paper-Trading-Systems für',
+  'den Betreiber. Der Betreiber ist KEIN Trader: Schreib so, dass ein kluger Laie ohne',
+  'Börsenwissen jeden Satz beim ersten Lesen versteht. Du bekommst ausschließlich eigene',
+  'Messwerte des Systems: eine Chronik geprüfter Aussagen mit Status und Zahlen sowie die',
+  'zusammengefassten Handelszahlen.',
   '',
   'Deine Aufgabe ist das, was die Zahlen selbst nicht sagen: Welche Befunde hängen',
   'zusammen, was ist die wahrscheinlichste gemeinsame Ursache, und was wäre der nächste',
-  'sinnvolle Schritt? Nenne dabei immer die Zahl, auf die du dich stützt.',
+  'sinnvolle Schritt? Stütze jede Aussage auf eine Zahl, aber runde sie lesbar',
+  '(„rund 48 %" statt „48,93 %", „über 60.000 Messungen" statt „n=60293").',
   '',
   'Regeln:',
   '- Antworte auf Deutsch, in höchstens 200 Wörtern, als Fließtext ohne Überschriften.',
-  '- Beginne mit dem wichtigsten Befund des Tages in einem Satz.',
-  '- Unterscheide klar zwischen belegt (Thesen mit Status „gilt") und noch offen',
-  '  (Status „wartet_auf_daten"). Erfinde nichts hinzu und rechne nichts hoch.',
+  '  Kurze Sätze, Alltagswörter, aktive Verben.',
+  '- Beginne mit einem Satz, den jeder versteht: Läuft es gerade gut, schlecht, oder ist',
+  '  es noch zu früh für ein Urteil — und woran liegt das hauptsächlich?',
+  '- Kein Fachjargon. Schreib „Gewinn oder Verlust je Trade nach Gebühren" statt „Kante",',
+  '  „Anteil der Trades, die richtig lagen" statt „Trefferquote", „bei 280 Trades" statt',
+  '  „n=280". Wörter wie Profit-Faktor, Regime, Exit, Stop-Loss, Take-Profit, Signal,',
+  '  Konfluenz, Schatten, Holdout oder Long/Short nur, wenn du sie im selben Satz in',
+  '  Alltagssprache erklärst (z. B. „die Verlustbremse (Stop-Loss)").',
+  '- Nenne Anlageklassen beim deutschen Namen: ' +
+    Object.entries(CLASS_LABELS).map(([k, v]) => `${k} = ${v}`).join(', ') + '.',
+  '- Unterscheide klar, was belegt ist (Status „gilt" oder „gilt_nicht") und was noch',
+  '  offen ist, weil zu wenige Daten da sind (Status „wartet_auf_daten"). Erfinde nichts',
+  '  hinzu und rechne nichts hoch.',
   '- Wenn die Datenlage für eine Aussage zu dünn ist, sage genau das.',
   '- Sprich über das System, nicht über einzelne Wertpapiere. Gib keine Anlage-',
   '  empfehlung und nenne keine Kauf- oder Verkaufsziele.',
-  '- Schließe mit genau einem konkreten nächsten Schritt für den Betreiber.',
+  '- Schließe mit genau einem konkreten nächsten Schritt für den Betreiber, in einfachen',
+  '  Worten.',
 ].join('\n');

@@ -33,7 +33,21 @@
  */
 
 /** Zustand einer These. */
+import { CLASS_LABELS } from './universe.js';
+
 export type ErkenntnisStatus = 'gilt' | 'gilt_nicht' | 'wartet_auf_daten';
+
+/**
+ * Was der Befund für den Betreiber BEDEUTET (09.10., Owner: „als Laie absolut
+ * nicht verständlich"). `status` sagt nur, ob die These zutrifft — ob das gut
+ * oder schlecht ist, hängt von der These ab („Gebühren dominieren: gilt" ist
+ * schlecht, „Klasse trägt sich: gilt" ist gut). Der Ton nimmt dem Leser diese
+ * Übersetzung ab. Er ändert nichts an Status, Chronik oder Logik.
+ */
+export type ErkenntnisTon = 'gut' | 'problem' | 'hinweis' | 'offen';
+
+/** Fassung der Klartext-Sätze; Einträge ohne sie stammen aus der Fachsprache-Zeit. */
+export const ERKENNTNIS_TEXT_V = 2;
 
 /** Ein protokollierter Zustandswechsel — die eigentliche „Chronik". */
 export interface ErkenntnisWechsel {
@@ -42,6 +56,8 @@ export interface ErkenntnisWechsel {
   nach: ErkenntnisStatus;
   /** Der Wortlaut, der bis zu diesem Wechsel galt. */
   these: string;
+  /** true = dieser Wortlaut ist schon Klartext (ab ERKENNTNIS_TEXT_V 2). */
+  klar?: boolean;
 }
 
 export interface ErkenntnisEintrag {
@@ -55,6 +71,10 @@ export interface ErkenntnisEintrag {
   /** Die Zahlen hinter dem Satz — nachrechenbar, keine Behauptung. */
   beleg: Record<string, number | string | null>;
   historie?: ErkenntnisWechsel[];
+  /** Bedeutung für den Betreiber (ab ERKENNTNIS_TEXT_V 2). */
+  ton?: ErkenntnisTon;
+  /** Fassung des Wortlauts (ERKENNTNIS_TEXT_V). */
+  v?: number;
 }
 
 export interface ErkenntnisChronik {
@@ -106,11 +126,18 @@ export interface ErkenntnisFakten {
 
 /** Prozentzahl deutsch formatieren (Komma statt Punkt). */
 const pz = (x: number, stellen = 1): string => x.toFixed(stellen).replace('.', ',');
+/** Mit Vorzeichen: „+0,38" / „−0,32" — ein Laie liest das Minus sonst leicht über. */
+const pzv = (x: number, stellen = 2): string => `${x > 0 ? '+' : x < 0 ? '−' : ''}${pz(Math.abs(x), stellen)}`;
+/** Ganze Zahl mit Tausenderpunkt (60293 → „60.293"). */
+const tz = (n: number): string => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+/** Anlageklasse beim Namen statt beim Schlüssel („crypto" → „Krypto"). */
+const klasseName = (k: string): string => CLASS_LABELS[k] ?? k;
 
 interface Befund {
   status: ErkenntnisStatus;
   these: string;
   beleg: Record<string, number | string | null>;
+  ton: ErkenntnisTon;
 }
 
 /* ── Der Thesen-Katalog ────────────────────────────────────────────────────
@@ -124,8 +151,9 @@ function exitAmSignal(f: ErkenntnisFakten): Befund {
   if (!t || t.trades < MIN_TRADES_EXITS || typeof sig?.share !== 'number') {
     return {
       status: 'wartet_auf_daten',
-      these: `Exit-Verhalten: erst ${t?.trades ?? 0} geschlossene Trades — ein Urteil über Stop und Ziel gibt es ab n=${MIN_TRADES_EXITS}.`,
+      these: `Wie Trades enden: Bisher sind erst ${tz(t?.trades ?? 0)} Trades abgeschlossen. Eine Aussage gibt es ab ${MIN_TRADES_EXITS} Trades.`,
       beleg: { nTrades: t?.trades ?? 0, minN: MIN_TRADES_EXITS },
+      ton: 'offen',
     };
   }
   const anteil = sig.share;
@@ -137,14 +165,16 @@ function exitAmSignal(f: ErkenntnisFakten): Befund {
   if (anteil >= SIGNAL_EXIT_DOMINANZ) {
     return {
       status: 'gilt',
-      these: `${pz(anteil * 100, 0)} % der Trades enden am Signal — Stop und Ziel greifen kaum; die Exit-Entscheidung liegt fast allein beim Einstiegssignal.`,
+      these: `${pz(anteil * 100, 0)} % der Trades werden verkauft, weil das Kaufsignal kippt. Verlustbremse (Stop-Loss) und Kursziel lösen kaum aus — die Absicherung spielt also fast keine Rolle.`,
       beleg,
+      ton: 'hinweis',
     };
   }
   return {
     status: 'gilt_nicht',
-    these: `Nur noch ${pz(anteil * 100, 0)} % der Trades enden am Signal — Stop und Ziel tragen inzwischen einen relevanten Teil der Exits.`,
+    these: `Nur ${pz(anteil * 100, 0)} % der Trades werden verkauft, weil das Kaufsignal kippt. Die übrigen beenden Verlustbremse (Stop-Loss) und Kursziel — die Absicherung arbeitet wie vorgesehen.`,
     beleg,
+    ton: 'gut',
   };
 }
 
@@ -153,8 +183,9 @@ function kostenDominieren(f: ErkenntnisFakten): Befund {
   if (!t || t.trades < MIN_TRADES_KOSTEN || t.feeShare === null || t.feeShare === undefined) {
     return {
       status: 'wartet_auf_daten',
-      these: `Kostenlast: noch keine belastbare Basis (n=${t?.trades ?? 0}, Urteil ab ${MIN_TRADES_KOSTEN} Trades mit Kostenprofil).`,
+      these: `Gebühren: Für eine Aussage braucht es ${MIN_TRADES_KOSTEN} abgeschlossene Trades mit bekannten Kosten, bisher sind es ${tz(t?.trades ?? 0)}.`,
       beleg: { nTrades: t?.trades ?? 0, minN: MIN_TRADES_KOSTEN },
+      ton: 'offen',
     };
   }
   const beleg = {
@@ -165,14 +196,16 @@ function kostenDominieren(f: ErkenntnisFakten): Befund {
   if (t.feeShare >= KOSTEN_DOMINANZ) {
     return {
       status: 'gilt',
-      these: `Die Reibung dominiert: Gebühren entsprechen ${pz(t.feeShare * 100, 0)} % des Bruttoergebnisses — unter dieser Last kann netto kein Gewinn entstehen.`,
+      these: `Die Gebühren sind zu hoch: Sie verschlingen ${pz(t.feeShare * 100, 0)} % dessen, was die Trades vor Kosten einbringen (Grenze: ${pz(KOSTEN_DOMINANZ * 100, 0)} %). Unterm Strich bleibt so wenig oder nichts übrig.`,
       beleg,
+      ton: 'problem',
     };
   }
   return {
     status: 'gilt_nicht',
-    these: `Die Kostenlast ist unter Kontrolle: Gebühren entsprechen ${pz(t.feeShare * 100, 0)} % des Bruttoergebnisses.`,
+    these: `Die Gebühren sind im Rahmen: Sie kosten ${pz(t.feeShare * 100, 0)} % dessen, was die Trades vor Kosten einbringen (Grenze: ${pz(KOSTEN_DOMINANZ * 100, 0)} %).`,
     beleg,
+    ton: 'gut',
   };
 }
 
@@ -182,8 +215,9 @@ function richtungVsKante(f: ErkenntnisFakten): Befund {
   if (!live || n < MIN_N_RICHTUNG || typeof live.trefferquote !== 'number') {
     return {
       status: 'wartet_auf_daten',
-      these: `Richtungsgüte der Live-Signale: erst n=${n} — belastbar ab n=${MIN_N_RICHTUNG}.`,
+      these: `Treffen die Signale die Kursrichtung? Bisher erst ${tz(n)} Messungen, verlässlich ab ${tz(MIN_N_RICHTUNG)}.`,
       beleg: { n, minN: MIN_N_RICHTUNG },
+      ton: 'offen',
     };
   }
   const tq = live.trefferquote;
@@ -192,17 +226,19 @@ function richtungVsKante(f: ErkenntnisFakten): Befund {
   if (tq > 0.5 && kante !== null && kante < 0) {
     return {
       status: 'gilt',
-      these: `Die Signale treffen die Richtung öfter als der Zufall (${pz(tq * 100, 1)} % bei n=${n}), verlieren aber nach Kosten (${pz(kante, 2)} % je Signal) — das Problem sind Kosten und Signal-Auswahl, nicht die Richtungslogik.`,
+      these: `Die Signale liegen bei der Kursrichtung öfter richtig als falsch (${pz(tq * 100, 1)} % von ${tz(n)} Messungen), verlieren nach Gebühren aber trotzdem (${pzv(kante)} % je Signal). Das Problem sind die Kosten und die Auswahl der Signale, nicht die Richtung.`,
       beleg,
+      ton: 'problem',
     };
   }
   return {
     status: 'gilt_nicht',
     these:
       kante !== null && kante >= 0
-        ? `Die Live-Signale tragen ihre Kosten inzwischen selbst (Kante ${pz(kante, 2)} % bei n=${n}, Trefferquote ${pz(tq * 100, 1)} %).`
-        : `Die Richtungsgüte ist auf Zufallsniveau gefallen (${pz(tq * 100, 1)} % bei n=${n}).`,
+        ? `Die Signale verdienen inzwischen mehr, als sie an Gebühren kosten (${pzv(kante)} % je Signal, ${pz(tq * 100, 1)} % lagen richtig, ${tz(n)} Messungen).`
+        : `Die Signale treffen die Kursrichtung nicht besser als ein Münzwurf: ${pz(tq * 100, 1)} % lagen richtig (${tz(n)} Messungen).`,
     beleg,
+    ton: kante !== null && kante >= 0 ? 'gut' : 'problem',
   };
 }
 
@@ -212,12 +248,13 @@ function tagesKante(f: ErkenntnisFakten): Befund {
   if (!lt || n < MIN_N_TAGESKANTE) {
     const zwischen =
       n > 0 && typeof lt?.kantePct === 'number'
-        ? ` — Zwischenstand: ${lt.treffer ?? 0}/${n} Richtungstreffer, Kante ${pz(lt.kantePct, 2)} %`
+        ? ` Zwischenstand: ${lt.treffer ?? 0} von ${n} lagen richtig, ${pzv(lt.kantePct)} % je Signal nach Gebühren.`
         : '';
     return {
       status: 'wartet_auf_daten',
-      these: `Tages-Kante der Live-Signale: erst n=${n}, belastbar ab n=${MIN_N_TAGESKANTE}${zwischen}. Das ist DIE Messreihe für Task „System profitabel machen".`,
+      these: `Verdienen die Signale über einen ganzen Tag gehalten Geld? Bisher erst ${tz(n)} Messungen, verlässlich ab ${MIN_N_TAGESKANTE}.${zwischen} Diese Messung zeigt am klarsten, ob das System Geld verdienen kann.`,
       beleg: { n, minN: MIN_N_TAGESKANTE, kantePct: lt?.kantePct ?? null },
+      ton: 'offen',
     };
   }
   const kante = typeof lt.kantePct === 'number' ? lt.kantePct : null;
@@ -225,14 +262,16 @@ function tagesKante(f: ErkenntnisFakten): Befund {
   if (kante !== null && kante > 0) {
     return {
       status: 'gilt',
-      these: `Auf Tagesbasis tragen die Signale ihre Kosten (Kante +${pz(kante, 2)} % bei n=${n}) — der Tages-Horizont ist der richtige Betriebspunkt.`,
+      these: `Über einen ganzen Tag gehalten, verdienen die Signale mehr als ihre Gebühren (${pzv(kante)} % je Signal, ${tz(n)} Messungen). Ein Tag ist also ein guter Zeitraum zum Halten.`,
       beleg,
+      ton: 'gut',
     };
   }
   return {
     status: 'gilt_nicht',
-    these: `Auch auf Tagesbasis bleibt nach Kosten nichts übrig (Kante ${pz(kante ?? 0, 2)} % bei n=${n}).`,
+    these: `Auch über einen ganzen Tag gehalten, bleibt nach Gebühren nichts übrig (${pzv(kante ?? 0)} % je Signal, ${tz(n)} Messungen).`,
     beleg,
+    ton: 'problem',
   };
 }
 
@@ -257,16 +296,16 @@ function halteKante(f: ErkenntnisFakten): Befund {
   const n = lh?.n ?? 0;
   const fenster =
     typeof lh?.alterMin === 'number' && lh.alterMin > 0
-      ? `${pz(lh.alterMin / 60, 1)} h Fenster`
-      : 'Fenster noch nicht gemessen';
+      ? `im Schnitt ${pz(lh.alterMin / 60, 1)} Stunden gehalten`
+      : 'Haltedauer noch nicht gemessen';
   if (!lh || n < MIN_N_TAGESKANTE) {
     return {
       status: 'wartet_auf_daten',
       these:
-        `Haltedauer-gerechte Kante: erst n=${n}, belastbar ab n=${MIN_N_TAGESKANTE} (${fenster}). `
-        + 'Diese Reihe — und nicht die Fünf-Minuten-Messung — entscheidet, ob eine '
-        + 'abgeschaltete Anlageklasse zurück in den Handel darf.',
+        `Verdienen die Signale über ihre echte Haltedauer Geld? Bisher erst ${tz(n)} Messungen, verlässlich ab ${MIN_N_TAGESKANTE} (${fenster}). `
+        + 'Nur diese Messung entscheidet, ob eine abgeschaltete Anlageklasse wieder handeln darf.',
       beleg: { n, minN: MIN_N_TAGESKANTE, kantePct: lh?.kantePct ?? null, alterMin: lh?.alterMin ?? null },
+      ton: 'offen',
     };
   }
   const kante = typeof lh.kantePct === 'number' ? lh.kantePct : null;
@@ -275,17 +314,19 @@ function halteKante(f: ErkenntnisFakten): Befund {
     return {
       status: 'gilt',
       these:
-        `Über die echte Haltedauer tragen die Signale ihre Kosten (Kante +${pz(kante, 2)} % `
-        + `bei n=${n}, ${fenster}) — der Rückweg für abgeschaltete Klassen ist offen.`,
+        `Über ihre echte Haltedauer verdienen die Signale mehr als ihre Gebühren (${pzv(kante)} % je Signal, `
+        + `${tz(n)} Messungen, ${fenster}). Abgeschaltete Anlageklassen können damit wieder in den Handel zurückkehren.`,
       beleg,
+      ton: 'gut',
     };
   }
   return {
     status: 'gilt_nicht',
     these:
-      `Auch über die echte Haltedauer bleibt nach Kosten nichts übrig (Kante `
-      + `${pz(kante ?? 0, 2)} % bei n=${n}, ${fenster}).`,
+      `Auch über ihre echte Haltedauer bleibt nach Gebühren nichts übrig (`
+      + `${pzv(kante ?? 0)} % je Signal, ${tz(n)} Messungen, ${fenster}).`,
     beleg,
+    ton: 'problem',
   };
 }
 
@@ -297,8 +338,9 @@ function klasseVerlustquelle(f: ErkenntnisFakten): Befund {
   if (klassen.length === 0) {
     return {
       status: 'wartet_auf_daten',
-      these: `Klassen-Bilanz: noch keine Anlageklasse mit n≥${MIN_N_KLASSE} Trades.`,
+      these: `Welche Anlageklasse verliert Geld? Noch hat keine Klasse die nötigen ${MIN_N_KLASSE} Trades für eine Aussage.`,
       beleg: { minN: MIN_N_KLASSE },
+      ton: 'offen',
     };
   }
   const [name, k] = klassen.reduce((a, b) => (b[1].kantePct < a[1].kantePct ? b : a));
@@ -306,14 +348,16 @@ function klasseVerlustquelle(f: ErkenntnisFakten): Befund {
   if (k.kantePct < 0) {
     return {
       status: 'gilt',
-      these: `Größte Verlustquelle ist die Klasse ${name} (Kante ${pz(k.kantePct, 2)} % über ${k.n} Trades) — eine Klasse mit negativer Kante gehört gedrosselt, nicht feinjustiert.`,
+      these: `Am meisten Geld verliert die Anlageklasse ${klasseName(name)}: im Schnitt ${pzv(k.kantePct)} % je Trade nach Gebühren (${tz(k.n)} Trades). Eine solche Klasse sollte weniger handeln, statt an Feinheiten zu drehen.`,
       beleg,
+      ton: 'problem',
     };
   }
   return {
     status: 'gilt_nicht',
-    these: `Keine Anlageklasse mit n≥${MIN_N_KLASSE} handelt aktuell negativ (schwächste: ${name}, ${pz(k.kantePct, 2)} %).`,
+    these: `Keine Anlageklasse mit genug Trades verliert derzeit Geld (schwächste: ${klasseName(name)}, ${pzv(k.kantePct)} % je Trade).`,
     beleg,
+    ton: 'gut',
   };
 }
 
@@ -325,8 +369,9 @@ function klasseTraegt(f: ErkenntnisFakten): Befund {
   if (klassen.length === 0) {
     return {
       status: 'wartet_auf_daten',
-      these: `Positiv-Nachweis je Klasse: noch keine Anlageklasse mit n≥${MIN_N_KLASSE} Trades.`,
+      these: `Welche Anlageklasse verdient Geld? Noch hat keine Klasse die nötigen ${MIN_N_KLASSE} Trades für eine Aussage.`,
       beleg: { minN: MIN_N_KLASSE },
+      ton: 'offen',
     };
   }
   const [name, k] = klassen.reduce((a, b) => (b[1].kantePct > a[1].kantePct ? b : a));
@@ -334,14 +379,16 @@ function klasseTraegt(f: ErkenntnisFakten): Befund {
   if (k.kantePct > 0) {
     return {
       status: 'gilt',
-      these: `Mindestens eine Anlageklasse trägt sich nach Kosten: ${name} (Kante +${pz(k.kantePct, 2)} % bei n=${k.n}).`,
+      these: `Mindestens eine Anlageklasse verdient nach Gebühren Geld: ${klasseName(name)} mit im Schnitt ${pzv(k.kantePct)} % je Trade (${tz(k.n)} Trades).`,
       beleg,
+      ton: 'gut',
     };
   }
   return {
     status: 'gilt_nicht',
-    these: `Noch trägt sich keine Anlageklasse nach Kosten (beste: ${name}, ${pz(k.kantePct, 2)} % bei n=${k.n}).`,
+    these: `Noch verdient keine Anlageklasse nach Gebühren Geld (beste: ${klasseName(name)}, ${pzv(k.kantePct)} % je Trade bei ${tz(k.n)} Trades).`,
     beleg,
+    ton: 'problem',
   };
 }
 
@@ -350,22 +397,25 @@ function struktursucheLatte(f: ErkenntnisFakten): Befund {
   if (!s || typeof s.geprueft !== 'number' || s.geprueft <= 0) {
     return {
       status: 'wartet_auf_daten',
-      these: 'Die Struktursuche hat noch keinen Prüf-Lauf absolviert.',
+      these: 'Die Struktursuche (das System probiert täglich neue Regel-Varianten aus) hat noch keinen Durchlauf gemacht.',
       beleg: {},
+      ton: 'offen',
     };
   }
   const beleg = { geprueft: s.geprueft, befoerdert: s.befoerdert ?? 0, datum: s.date ?? null };
   if ((s.befoerdert ?? 0) === 0) {
     return {
       status: 'gilt',
-      these: `Die Struktursuche hat den amtierenden Bauplan zuletzt nicht schlagen können (${s.geprueft} geprüft, 0 befördert) — die Anti-Zufalls-Latte hält.`,
+      these: `Die Struktursuche hat zuletzt ${s.geprueft} neue Regel-Varianten getestet; keine war verlässlich besser als die bisherigen Regeln. Die bleiben deshalb — Glückstreffer werden bewusst nicht übernommen.`,
       beleg,
+      ton: 'hinweis',
     };
   }
   return {
     status: 'gilt_nicht',
-    these: `Die Struktursuche hat einen besseren Bauplan gefunden (${s.befoerdert ?? 0} Beförderung(en) am ${s.date ?? '?'}) — der Amtierende wurde abgelöst.`,
+    these: `Die Struktursuche hat bessere Regeln gefunden (${s.befoerdert ?? 0} Variante(n) am ${s.date ?? '?'}). Sie lösen die bisherigen im Testkonto der Struktursuche ab; echtes Geld handeln sie erst, wenn du sie im Studio übernimmst.`,
     beleg,
+    ton: 'gut',
   };
 }
 
@@ -405,13 +455,15 @@ export function schreibeChronik(
         seitAt: alt.seitAt,
         zuletztAt: at,
         beleg: befund.beleg,
+        ton: befund.ton,
+        v: ERKENNTNIS_TEXT_V,
         ...(alt.historie && alt.historie.length > 0 ? { historie: alt.historie } : {}),
       };
       continue;
     }
     const historie = [
       ...(alt?.historie ?? []),
-      ...(alt ? [{ at, von: alt.status, nach: befund.status, these: alt.these }] : []),
+      ...(alt ? [{ at, von: alt.status, nach: befund.status, these: alt.these, ...(alt.v === ERKENNTNIS_TEXT_V ? { klar: true } : {}) }] : []),
     ].slice(-ERKENNTNIS_HISTORIE_MAX);
     eintraege[key] = {
       these: befund.these,
@@ -419,6 +471,8 @@ export function schreibeChronik(
       seitAt: at,
       zuletztAt: at,
       beleg: befund.beleg,
+      ton: befund.ton,
+      v: ERKENNTNIS_TEXT_V,
       ...(historie.length > 0 ? { historie } : {}),
     };
   }
