@@ -107,7 +107,6 @@ export const OPTIONEN_STANDARD: Record<string, OptionStandard> = {
  * der Satz dieselbe Wahrheit sagt wie der Code. */
 const ZINS = Math.round(DEFAULT_MARGIN_RATE * 100);
 const EIGENANTEIL = Math.round(DEFAULT_MAINTENANCE_MARGIN * 100);
-const POS_VOLL = Math.round(100 / E.maxPositionPct);
 
 export const STANDARD_TEXT_DE: Record<string, OptionText> = {
   startkapital: {
@@ -116,19 +115,19 @@ export const STANDARD_TEXT_DE: Record<string, OptionText> = {
   },
   maxPos: {
     kurz: 'So viel Prozent deines Geldes darf in einem einzigen Wert stecken.',
-    wirkung: `Plus 1 heißt: Jede neue Position wird um 1 % deines Geldes größer — Gewinn und Verlust je Wert wachsen mit. Bei ${E.maxPositionPct} % ist das Depot mit ${POS_VOLL} Positionen voll.`,
+    wirkung: 'Gerechnet vom gerade freien Geld. Plus 1 heißt: Jede neue Position wird um 1 % davon größer — Gewinn und Verlust je Wert wachsen mit. Mehr als 25 lässt der Server nicht zu; mit „Risiko je Trade" ist das nur noch die Obergrenze.',
   },
   riskPerTrade: {
     kurz: 'Wie viel Prozent deines Geldes ein einzelner Trade höchstens verlieren darf, wenn sein Stop greift.',
-    wirkung: `Bei 1 kostet jeder gestoppte Trade etwa 1 % deines Geldes, egal welcher Wert; ruhige Werte bekommen dafür mehr Stücke, wilde weniger. Plus 1 heißt: Jeder Stop kostet 1 % mehr. 0 = aus, dann gilt nur „Investment je Trade". Höchstens ${MAX_RISK_PER_TRADE_PCT}.`,
+    wirkung: `Bei 1 kostet ein gestoppter Trade höchstens etwa 1 % deines freien Geldes, egal welcher Wert — ruhige Werte bekommen mehr Stücke, wilde weniger. Plus 1 heißt: Jeder Stop darf 1 % mehr kosten. „Investment je Trade" bleibt die Obergrenze. 0 = aus. Höchstens ${MAX_RISK_PER_TRADE_PCT}.`,
   },
   maxOpenPositions: {
     kurz: 'So viele Werte darf das Depot gleichzeitig halten.',
-    wirkung: `Plus 1 heißt: Ein Wert mehr darf gleichzeitig offen sein — bei ${E.maxPositionPct} % je Position also ${E.maxPositionPct} % mehr von deinem Geld im Markt. Mehr Werte verteilen das Risiko, jeder einzelne zählt dann weniger. Höchstens ${MAX_OPEN_POSITIONS_CAP}.`,
+    wirkung: `Plus 1 heißt: Ein Wert mehr darf gleichzeitig offen sein. Mehr Werte verteilen das Risiko, jeder einzelne zählt dann weniger. Der ruhige Sockel zählt nicht mit. Höchstens ${MAX_OPEN_POSITIONS_CAP}.`,
   },
   corePct: {
     kurz: 'So viel Prozent deines Geldes liegt ruhig in den stärksten Werten, statt aktiv gehandelt zu werden.',
-    wirkung: `Plus 10 heißt: 10 % mehr von deinem Geld ruht im Sockel (selten umgeschichtet, kaum Gebühren), 10 % weniger steht der aktiven Engine zur Verfügung. 0 = kein Sockel, alles aktiv. Höchstens ${CORE_PCT_CAP}.`,
+    wirkung: `Plus 10 heißt: 10 % mehr von deinem Geld ruht im Sockel (selten umgeschichtet, kaum Gebühren), 10 % weniger steht der aktiven Engine zur Verfügung. 0 = kein Sockel: Die vorhandenen Sockel-Positionen werden dann am Abend verkauft, mit Gebühren. Höchstens ${CORE_PCT_CAP}.`,
   },
   leverage: {
     kurz: 'Ob das Depot mit geliehenem Geld handeln darf.',
@@ -136,15 +135,15 @@ export const STANDARD_TEXT_DE: Record<string, OptionText> = {
   },
   stopLoss: {
     kurz: 'Fällt ein Wert um so viel Prozent unter den Kaufkurs, wird er zum Schutz verkauft.',
-    wirkung: 'Plus 1 heißt: Der Schutzverkauf kommt 1 % später — du wirst seltener von normalem Zittern rausgeworfen, aber jeder Schutzverkauf kostet 1 % mehr. Krypto, Rohstoffe, Devisen und Indizes haben eigene Werte (Hinweis unter den Feldern).',
+    wirkung: 'Plus 1 heißt: Der Schutzverkauf kommt 1 % später — seltener von normalem Zittern rausgeworfen, aber jeder Schutzverkauf kostet 1 % mehr. Gilt für neue Käufe; offene Positionen behalten ihre Marke. 0 ist nicht „aus": dann bleibt eine weite Notbremse bei 25 %. Krypto, Rohstoffe, Devisen, Indizes haben eigene Werte.',
   },
   takeProfit: {
     kurz: 'Steigt ein Wert um so viel Prozent über den Kaufkurs, wird der Gewinn mitgenommen.',
-    wirkung: 'Plus 1 heißt: Das Ziel liegt 1 % höher — es wird seltener erreicht, bringt dann aber mehr. Faustregel: etwa doppelt so groß wie der Stop-Loss, damit ein Treffer zwei Fehlschläge bezahlt.',
+    wirkung: 'Plus 1 heißt: Das Ziel liegt 1 % höher — seltener erreicht, bringt dann aber mehr. Faustregel: etwa doppelt so groß wie der Stop-Loss, damit ein Treffer zwei Fehlschläge bezahlt. Gilt für neue Käufe; offene Positionen behalten ihr Ziel.',
   },
   trailingStop: {
     kurz: 'Ein Schutzverkauf, der mit dem Kurs nach oben wandert und so Gewinne sichert.',
-    wirkung: 'Plus 1 heißt: Der Stop läuft 1 % weiter hinter dem Höchstkurs her — er hält Schwankungen besser aus, gibt vom erreichten Gewinn aber 1 % mehr wieder her. 0 = aus; dann schließt eine Position nur am Ziel oder am Stop-Loss.',
+    wirkung: 'Plus 1 heißt: Der Stop läuft 1 % weiter hinter dem Höchstkurs her — er hält Schwankungen besser aus, gibt vom erreichten Gewinn aber 1 % mehr wieder her. 0 = aus; dann schließt eine Position am Ziel, am Stop-Loss oder per Verkaufssignal.',
   },
   maxHold: {
     kurz: 'Nach so vielen Tagen wird ein Wert verkauft, egal wie der Kurs steht.',
@@ -152,23 +151,23 @@ export const STANDARD_TEXT_DE: Record<string, OptionText> = {
   },
   atrStop: {
     kurz: 'Der Schutzverkauf wird in „normalen Tagesschwankungen" des Werts gemessen statt in festen Prozent.',
-    wirkung: 'Bei 2 liegt der Stop zwei normale Tagesschwankungen unter dem Kaufkurs — bei ruhigen Werten eng, bei wilden weit. Plus 0,5 heißt: eine halbe Tagesschwankung mehr Luft. 0 = aus, dann gilt der Stop-Loss in Prozent.',
+    wirkung: 'Bei 2 rechnet die Engine mit zwei Tagesschwankungen Abstand — das bestimmt zurzeit nur, wie viele Stücke sie kauft (mit „Risiko je Trade"). Verkauft wird weiter am Stop-Loss in Prozent. Plus 0,5 heißt: eine halbe Schwankung mehr Abstand, also etwas kleinere Positionen. 0 = aus.',
   },
   atrTake: {
     kurz: 'Das Gewinnziel in „normalen Tagesschwankungen" des Werts statt in festen Prozent.',
-    wirkung: 'Bei 4 liegt das Ziel vier Tagesschwankungen über dem Kaufkurs. Plus 0,5 heißt: eine halbe Schwankung weiter weg — seltener erreicht, mehr Gewinn. Sinnvoll etwa doppelt so groß wie der ATR-Stop. 0 = aus.',
+    wirkung: 'Bei 4 liegt das Ziel vier Tagesschwankungen über dem Kaufkurs — aber nur, wenn „Take-Profit %" auf 0 steht; sonst gilt das Prozent-Ziel. Plus 0,5 heißt: eine halbe Schwankung weiter weg — seltener erreicht, mehr Gewinn. 0 = aus.',
   },
   signalTimeframe: {
     kurz: 'Ob die Engine auf Tages- oder auf 5-Minuten-Kerzen schaut.',
     wirkung: 'Tageskerzen: wenige Trades, wenig Gebühren, Signale ändern sich nur alle paar Tage. 5-Minuten: viele Trades am Tag — in der Messung fraßen die Gebühren dabei ein Mehrfaches des Gewinns.',
   },
   cooldownMin: {
-    kurz: 'So viele Minuten wartet die Engine nach einem Verkauf, bevor sie denselben Wert wieder kauft.',
-    wirkung: 'Plus 60 heißt: eine Stunde länger warten — weniger Hin-und-Her und weniger Gebühren, dafür wird mal eine Chance verpasst. Mindestens 5 Minuten, höchstens 1440 (ein Tag).',
+    kurz: 'So viele Minuten wartet die Engine nach einem Schutzverkauf (Stop, Ziel, Frist), bevor sie denselben Wert wieder kauft.',
+    wirkung: 'Plus 60 heißt: eine Stunde länger warten — weniger Hin-und-Her, weniger Gebühren, dafür mal eine verpasste Chance. Im Seitwärtsmarkt wartet sie von selbst doppelt so lang. Mindestens 5 Minuten, höchstens 1440 (ein Tag).',
   },
   minConfluence: {
     kurz: 'So viele Anzeichen müssen gleichzeitig „kaufen" sagen, bevor gekauft wird.',
-    wirkung: `Plus 1 heißt: ein Anzeichen mehr muss zusammenkommen — deutlich weniger Käufe (bei ${S.minConfluence + 1} statt ${S.minConfluence} fielen in einer Messung fast alle weg), dafür verlässlichere. Bei 1 kauft jedes einzelne Anzeichen sofort.`,
+    wirkung: 'Plus 1 heißt: Ein Anzeichen mehr muss zusammenkommen — deutlich weniger Käufe, dafür verlässlichere (schon bei 2 kam im ruhigen Markt kaum ein Kauf zustande). Bei 1 reicht ein einzelnes Anzeichen, solange keins dagegen spricht. Im Aufwärtstrend reicht für Käufe ohnehin die Trendstimme allein.',
   },
   exitConfluence: {
     kurz: 'So viele Anzeichen müssen „verkaufen" sagen, bevor eine Position per Signal verkauft wird.',
@@ -184,7 +183,7 @@ export const STANDARD_TEXT_DE: Record<string, OptionText> = {
   },
   flattenOnBreach: {
     kurz: 'Ob bei der Tages-Notbremse zusätzlich alles verkauft wird.',
-    wirkung: 'An: Bei der Notbremse werden alle Positionen sofort verkauft, auch mit Verlust. Aus: Nur neue Käufe stoppen; Stop-Loss und Ziel laufen für jede Position weiter.',
+    wirkung: 'An: Bei der Notbremse werden alle aktiven Positionen sofort verkauft, auch mit Verlust; der ruhige Sockel bleibt. Aus: Nur neue Käufe stoppen; Stop-Loss und Ziel laufen für jede Position weiter.',
   },
   regimeGate: {
     kurz: 'Ob die Engine Käufe gegen die Richtung des Gesamtmarkts und in Stress-Phasen sperrt.',
@@ -196,7 +195,7 @@ export const STANDARD_TEXT_DE: Record<string, OptionText> = {
   },
   kiNachrichten: {
     kurz: 'Ob eine KI frische Nachrichten zu deinen Werten mitbewertet.',
-    wirkung: 'Aus: Gute Nachrichten lösen keine Probe-Käufe mehr aus, schlechte sperren keine Käufe und ziehen keine Stops enger. Alle anderen Prüfungen bleiben gleich.',
+    wirkung: 'Aus: Gute Nachrichten lösen keine Probe-Käufe mehr aus; schlechte sperren keine Käufe, ziehen keine Stops enger und verkaufen nichts. Alle anderen Prüfungen bleiben gleich.',
   },
   allowShort: {
     kurz: 'Ob die Engine auch auf fallende Kurse setzen darf.',
@@ -204,7 +203,7 @@ export const STANDARD_TEXT_DE: Record<string, OptionText> = {
   },
   classAutoTune: {
     kurz: 'Ob die Gewichte je Anlageklasse täglich automatisch nachgestellt werden.',
-    wirkung: 'Aus: Die Gewichte bleiben, wie du sie stellst; Vorschläge werden nur angezeigt. An: Schritte von 0,25 pro Tag in Richtung des gemessenen Vorschlags.',
+    wirkung: 'Aus: Die Gewichte bleiben, wie du sie stellst; Vorschläge werden nur angezeigt. An: Schritte von 0,25 pro Tag in Richtung des gemessenen Vorschlags; eine Klasse, die nachweislich Geld verbrennt, wird sofort auf 0 gesetzt.',
   },
   classWeights: {
     kurz: 'Wie groß Positionen je Anlageklasse ausfallen — 1 ist normal.',
@@ -219,19 +218,19 @@ export const STANDARD_TEXT_EN: Record<string, Partial<OptionText>> = {
   },
   maxPos: {
     kurz: 'The share of your money that may sit in one single symbol.',
-    wirkung: `Plus 1 means every new position is 1% of your money larger — profit and loss per symbol grow with it. At ${E.maxPositionPct}% the wallet is full with ${POS_VOLL} positions.`,
+    wirkung: 'Computed from the money currently free. Plus 1 means every new position is 1% of that larger — profit and loss per symbol grow with it. The server allows at most 25; with "risk per trade" it is only the upper limit.',
   },
   riskPerTrade: {
     kurz: 'How much of your money a single trade may lose at most when its stop fires.',
-    wirkung: `At 1, every stopped trade costs about 1% of your money, whatever the symbol; calm symbols get more shares, wild ones fewer. Plus 1 means each stop costs 1% more. 0 = off, then only "investment per trade" applies. At most ${MAX_RISK_PER_TRADE_PCT}.`,
+    wirkung: `At 1, a stopped trade costs at most about 1% of your free money, whatever the symbol — calm symbols get more shares, wild ones fewer. Plus 1 means each stop may cost 1% more. "Investment per trade" stays the upper limit. 0 = off. At most ${MAX_RISK_PER_TRADE_PCT}.`,
   },
   maxOpenPositions: {
     kurz: 'How many symbols the wallet may hold at the same time.',
-    wirkung: `Plus 1 means one more symbol may be open at once — at ${E.maxPositionPct}% each, that is ${E.maxPositionPct}% more of your money in the market. More symbols spread the risk; each one matters less. At most ${MAX_OPEN_POSITIONS_CAP}.`,
+    wirkung: `Plus 1 means one more symbol may be open at once. More symbols spread the risk; each one matters less. The calm core does not count. At most ${MAX_OPEN_POSITIONS_CAP}.`,
   },
   corePct: {
     kurz: 'The share of your money that rests in the strongest symbols instead of being traded actively.',
-    wirkung: `Plus 10 means 10% more of your money rests in the core (rarely reshuffled, hardly any fees) and 10% less is available to the active engine. 0 = no core, everything active. At most ${CORE_PCT_CAP}.`,
+    wirkung: `Plus 10 means 10% more of your money rests in the core (rarely reshuffled, hardly any fees) and 10% less is available to the active engine. 0 = no core: the existing core positions are then sold in the evening, with fees. At most ${CORE_PCT_CAP}.`,
   },
   leverage: {
     kurz: 'Whether the wallet may trade with borrowed money.',
@@ -239,15 +238,15 @@ export const STANDARD_TEXT_EN: Record<string, Partial<OptionText>> = {
   },
   stopLoss: {
     kurz: 'If a symbol falls this many percent below the buy price, it is sold for protection.',
-    wirkung: 'Plus 1 means the protective sale comes 1% later — normal wobble throws you out less often, but each protective sale costs 1% more. Crypto, commodities, forex and indices have their own values (note below the fields).',
+    wirkung: 'Plus 1 means the protective sale comes 1% later — thrown out by normal wobble less often, but each protective sale costs 1% more. Applies to new buys; open positions keep their mark. 0 is not "off": a wide emergency stop at 25% remains. Crypto, commodities, forex and indices have their own values.',
   },
   takeProfit: {
     kurz: 'If a symbol rises this many percent above the buy price, the profit is taken.',
-    wirkung: 'Plus 1 means the target sits 1% higher — reached less often, but worth more when it is. Rule of thumb: about twice the stop-loss, so one hit pays for two misses.',
+    wirkung: 'Plus 1 means the target sits 1% higher — reached less often, but worth more when it is. Rule of thumb: about twice the stop-loss, so one hit pays for two misses. Applies to new buys; open positions keep their target.',
   },
   trailingStop: {
     kurz: 'A protective sale that moves up with the price and locks in gains.',
-    wirkung: 'Plus 1 means the stop follows 1% further behind the peak — it survives more wobble but gives back 1% more of the gain. 0 = off; a position then closes only at the target or the stop-loss.',
+    wirkung: 'Plus 1 means the stop follows 1% further behind the peak — it survives more wobble but gives back 1% more of the gain. 0 = off; a position then closes at the target, the stop-loss or on a sell signal.',
   },
   maxHold: {
     kurz: 'After this many days a symbol is sold, whatever the price.',
@@ -255,23 +254,23 @@ export const STANDARD_TEXT_EN: Record<string, Partial<OptionText>> = {
   },
   atrStop: {
     kurz: 'The protective sale measured in the symbol\'s "normal daily swings" instead of fixed percent.',
-    wirkung: 'At 2 the stop sits two normal daily swings below the buy price — tight for calm symbols, wide for wild ones. Plus 0.5 means half a swing more room. 0 = off, then the percent stop-loss applies.',
+    wirkung: 'At 2 the engine assumes two daily swings of distance — for now that only sets how many shares it buys (with "risk per trade"). Selling still happens at the percent stop-loss. Plus 0.5 means half a swing more distance, so slightly smaller positions. 0 = off.',
   },
   atrTake: {
     kurz: 'The profit target in the symbol\'s "normal daily swings" instead of fixed percent.',
-    wirkung: 'At 4 the target sits four daily swings above the buy price. Plus 0.5 means half a swing further away — reached less often, more profit. Sensibly about twice the ATR stop. 0 = off.',
+    wirkung: 'At 4 the target sits four daily swings above the buy price — but only if "Take-profit %" is 0; otherwise the percent target applies. Plus 0.5 means half a swing further away — reached less often, more profit. 0 = off.',
   },
   signalTimeframe: {
     kurz: 'Whether the engine looks at daily or at 5-minute candles.',
     wirkung: 'Daily: few trades, low fees, signals change only every few days. 5-minute: many trades a day — in our measurement fees ate several times the profit.',
   },
   cooldownMin: {
-    kurz: 'How many minutes the engine waits after a sale before buying the same symbol again.',
-    wirkung: 'Plus 60 means one hour longer — less back-and-forth and fewer fees, but the odd missed chance. At least 5 minutes, at most 1440 (one day).',
+    kurz: 'How many minutes the engine waits after a protective sale (stop, target, time limit) before buying the same symbol again.',
+    wirkung: 'Plus 60 means one hour longer — less back-and-forth, fewer fees, but the odd missed chance. In a sideways market it waits twice as long by itself. At least 5 minutes, at most 1440 (one day).',
   },
   minConfluence: {
     kurz: 'How many signs must say "buy" at the same time before a buy happens.',
-    wirkung: `Plus 1 means one more sign has to line up — far fewer buys (at ${S.minConfluence + 1} instead of ${S.minConfluence} almost all vanished in one measurement), but more reliable ones. At 1 every single sign buys immediately.`,
+    wirkung: 'Plus 1 means one more sign has to line up — far fewer buys, but more reliable ones (even at 2 hardly any buy happened in a calm market). At 1 a single sign is enough as long as none speaks against it. In an uptrend the trend vote alone is enough for buys anyway.',
   },
   exitConfluence: {
     kurz: 'How many signs must say "sell" before a position is sold on signal.',
@@ -287,7 +286,7 @@ export const STANDARD_TEXT_EN: Record<string, Partial<OptionText>> = {
   },
   flattenOnBreach: {
     kurz: 'Whether the daily brake also sells everything.',
-    wirkung: 'On: when the brake fires, all positions are sold at once, even at a loss. Off: only new buys stop; stop-loss and target keep running for each position.',
+    wirkung: 'On: when the brake fires, all active positions are sold at once, even at a loss; the calm core stays. Off: only new buys stop; stop-loss and target keep running for each position.',
   },
   regimeGate: {
     kurz: 'Whether the engine blocks buys against the overall market direction and during stress.',
@@ -299,7 +298,7 @@ export const STANDARD_TEXT_EN: Record<string, Partial<OptionText>> = {
   },
   kiNachrichten: {
     kurz: 'Whether an AI rates fresh news on your symbols.',
-    wirkung: 'Off: good news no longer triggers trial buys, bad news no longer blocks buys or tightens stops. All other checks stay the same.',
+    wirkung: 'Off: good news no longer triggers trial buys; bad news no longer blocks buys, tightens stops or sells anything. All other checks stay the same.',
   },
   allowShort: {
     kurz: 'Whether the engine may also bet on falling prices.',
@@ -307,7 +306,7 @@ export const STANDARD_TEXT_EN: Record<string, Partial<OptionText>> = {
   },
   classAutoTune: {
     kurz: 'Whether the weights per asset class are adjusted automatically every day.',
-    wirkung: 'Off: the weights stay as you set them; suggestions are only shown. On: steps of 0.25 per day towards the measured suggestion.',
+    wirkung: 'Off: the weights stay as you set them; suggestions are only shown. On: steps of 0.25 per day towards the measured suggestion; a class that demonstrably burns money is set to 0 at once.',
   },
   classWeights: {
     kurz: 'How large positions are per asset class — 1 is normal.',
