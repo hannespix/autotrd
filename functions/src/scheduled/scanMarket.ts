@@ -2088,6 +2088,11 @@ async function executeUserTrades(
               // Teilausführung: Rest lebt beim Broker weiter, Position bleibt
               // im lokalen Lauf-Buch (s. Kommentar beim Risk-Exit oben).
               if (r.trade?.teilSchluss !== true) positions.delete(symbol);
+              // Kauf-Pause auch nach dem Signal-Ausstieg (Red-Team 09.10., Task 26):
+              // Vorher stempelten nur Risiko-Exits — nach einem Signal-Verkauf
+              // durfte dasselbe Symbol im nächsten Scan sofort wieder gekauft werden.
+              engineCooldowns[symbol] = now.toISOString();
+              cooldownUpdates.push(new FieldPath('engineCooldowns', symbol), now.toISOString());
               await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
               logger.info(`Strategie-Cover ${uid} ${symbol} („${doc.name}") @ ${data.price}`);
             }
@@ -2168,6 +2173,11 @@ async function executeUserTrades(
               // Teilausführung: Rest lebt beim Broker weiter, Position bleibt
               // im lokalen Lauf-Buch (s. Kommentar beim Risk-Exit oben).
               if (r.trade?.teilSchluss !== true) positions.delete(symbol);
+              // Kauf-Pause auch nach dem Signal-Ausstieg (Red-Team 09.10., Task 26):
+              // Vorher stempelten nur Risiko-Exits — nach einem Signal-Verkauf
+              // durfte dasselbe Symbol im nächsten Scan sofort wieder gekauft werden.
+              engineCooldowns[symbol] = now.toISOString();
+              cooldownUpdates.push(new FieldPath('engineCooldowns', symbol), now.toISOString());
               await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
               logger.info(`Strategie-Sell ${uid} ${symbol} („${doc.name}") @ ${data.price}`);
             }
@@ -2442,6 +2452,11 @@ async function executeUserTrades(
             // Teilausführung: Rest lebt beim Broker weiter, Position bleibt
             // im lokalen Lauf-Buch (s. Kommentar beim Risk-Exit oben).
             if (r.trade?.teilSchluss !== true) positions.delete(symbol);
+            // Kauf-Pause auch nach dem Signal-Ausstieg (Red-Team 09.10., Task 26):
+            // Vorher stempelten nur Risiko-Exits — nach einem Signal-Verkauf
+            // durfte dasselbe Symbol im nächsten Scan sofort wieder gekauft werden.
+            engineCooldowns[symbol] = now.toISOString();
+            cooldownUpdates.push(new FieldPath('engineCooldowns', symbol), now.toISOString());
             logger.info(`Engine-Cover ${uid} ${symbol} @ ${data.price}`);
           }
         } else if (direction === 'buy' && !pos) {
@@ -2575,6 +2590,11 @@ async function executeUserTrades(
             // Teilausführung: Rest lebt beim Broker weiter, Position bleibt
             // im lokalen Lauf-Buch (s. Kommentar beim Risk-Exit oben).
             if (r.trade?.teilSchluss !== true) positions.delete(symbol);
+            // Kauf-Pause auch nach dem Signal-Ausstieg (Red-Team 09.10., Task 26):
+            // Vorher stempelten nur Risiko-Exits — nach einem Signal-Verkauf
+            // durfte dasselbe Symbol im nächsten Scan sofort wieder gekauft werden.
+            engineCooldowns[symbol] = now.toISOString();
+            cooldownUpdates.push(new FieldPath('engineCooldowns', symbol), now.toISOString());
             logger.info(`Engine-Sell ${uid} ${symbol} @ ${data.price}`);
           }
         } else if (direction === 'sell' && !pos && allowShort) {
