@@ -10,7 +10,7 @@
  *       → Kaufstimme mit vollem Konfluenz-Gewicht (reicht allein), aber in
  *         PROBEGRÖSSE: Ein Einstieg, der nur wegen der KI zustande kommt,
  *         handelt halb so groß und nie mit Hebel. Je Urteil, Konto und
- *         Symbol genau EINE Handlung. Stufe 3 skaliert später 0,25×–2× nach
+ *         Symbol genau EINE Handlung. Stufe 3 skaliert 0,25×–1× (nur dämpfend, KI_GEWICHT_MAX) nach
  *         gemessener Wirkung — bis dahin ist die Hälfte die ehrliche Wette.
  *   Negativ, eindeutig, gegengeprüft
  *       → sperrt neue Long-Einstiege (richtungsbewusstes Veto);

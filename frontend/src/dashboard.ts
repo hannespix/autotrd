@@ -85,6 +85,7 @@ import {
   benchmarkKurve,
   benchmarkSatz,
   volDurchschnittFrisch,
+  KI_MIN_FAELLE,
   einstiegsGruende,
   ausstiegsGruende,
   type TradeGruende,
@@ -7070,6 +7071,17 @@ function renderEngineWhy(): void {
       t('ew.kiGewichtTitel') + (typeof faelle === 'number' ? ` (${faelle} ${t('ew.kiFaelle')})` : '');
     ampel.append(chip);
   }
+  /* Trefferbilanz der KI (Task 22): wie oft lag eine gegengeprüfte
+   * Einschätzung, die wirklich mitgestimmt hat, nach Kosten richtig? Unter
+   * KI_MIN_FAELLE steht ausdrücklich dabei, dass das noch kein Urteil ist —
+   * eine Quote aus zehn Fällen sieht genauso aus wie eine aus tausend. */
+  const kb = h.kiBewertung;
+  if (kb && typeof kb.quotePct === 'number' && (kb.faelleWirksam ?? 0) > 0) {
+    const bilanz = kiBilanz(kb.quotePct, kb.faelleWirksam ?? 0, kb.nettoAvgPct);
+    const chip = whyChip(bilanz.text, bilanz.farbe);
+    chip.title = bilanz.titel;
+    ampel.append(chip);
+  }
   /* Stufe 3, Untätigkeits-Alarm: Urteile lagen vor, aber über zwei
    * Handelstage kam keine KI-Aktion zustande. GELB, nicht rot — nichts ist
    * kaputt, es wird nur nicht gehandelt; der Übergang ist zu prüfen. */
@@ -8933,6 +8945,22 @@ function renderJournal(): void {
     tr.querySelectorAll('td')[1]!.textContent = t.symbol + (t.source === 'engine' ? ' · Auto' : '');
     jb.appendChild(tr);
   });
+}
+
+/** Text, Farbe und Erklärung des KI-Trefferbilanz-Chips (Task 22). Unter
+ *  KI_MIN_FAELLE grau und mit dem ausdrücklichen Hinweis „noch kein Urteil". */
+function kiBilanz(quotePct: number, n: number, nettoAvgPct: number | null | undefined): { text: string; farbe: string; titel: string } {
+  const reif = n >= KI_MIN_FAELLE;
+  const quote = quotePct.toLocaleString('de-DE', { maximumFractionDigits: 1 });
+  const zusatz = reif ? '' : ` · ${t('ew.kiBilanzWenig').replace('{0}', String(KI_MIN_FAELLE))}`;
+  const netto = typeof nettoAvgPct === 'number'
+    ? ` ${t('ew.kiBilanzNetto').replace('{0}', nettoAvgPct.toLocaleString('de-DE', { maximumFractionDigits: 2 }))}`
+    : '';
+  return {
+    text: `${t('ew.kiBilanz')} ${quote} % (${n})${zusatz}`,
+    farbe: reif ? (quotePct > 50 ? 'var(--gn)' : 'var(--yl,#d9a441)') : 'var(--t3)',
+    titel: t('ew.kiBilanzTitel') + netto,
+  };
 }
 
 /** Die zuletzt gezeichneten Historie-Zeilen — Index = `data-ji`. */

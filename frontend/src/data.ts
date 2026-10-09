@@ -1171,7 +1171,7 @@ export interface HealthDoc {
     vetoAufgehoben?: number;
     verkauft?: number;
     stops?: number;
-    /** Stufe 3: gemessenes Gewicht der KI-Stimme (1 = unverändert, 0,25–2). */
+    /** Stufe 3: gemessenes Gewicht der KI-Stimme (1 = unverändert, 0,25–1: die Messung dämpft nur, KI_GEWICHT_MAX). */
     gewicht?: number;
   } | null;
   /** KI-Kaskade Stufe 3: Stand der Urteils-Bewertung (Zähler, Gewicht,
@@ -1184,6 +1184,10 @@ export interface HealthDoc {
     gewicht?: number;
     faelleWirksam?: number;
     faelleGesamt?: number;
+    /** Stufe 4a: Güte der wirksamen Fälle (Holdout-Arm A), nur Summen. */
+    quotePct?: number | null;
+    nettoAvgPct?: number | null;
+    ueberMarktQuotePct?: number | null;
   } | null;
   /** KI-Kaskade Stufe 3: Untätigkeits-Alarm — Urteile liegen vor, aber über
    *  zwei Handelstage kam keine KI-Aktion zustande (GELB, nichts ist kaputt). */
