@@ -783,6 +783,8 @@ export function watchPositions(uid: string, cb: (positions: Position[]) => void)
 }
 
 export interface TradeRow {
+  /** Doc-ID — zugleich die ID des Journal-Docs (broker.ts: „Doc-ID = Trade-ID"). */
+  id?: string;
   symbol: string;
   side: 'buy' | 'sell';
   qty: number;
@@ -800,6 +802,19 @@ export interface TradeRow {
    */
   short?: boolean;
   cover?: boolean;
+  /* Fakten, die der Broker beim Buchen mitschreibt — fürs Detail-Blatt
+   * „Warum gekauft / verkauft" (Task 21). Alle optional: Altbestand und
+   * nachgebuchte Trades tragen sie nicht. */
+  bucket?: string;
+  quelle?: string;
+  entryPrice?: number;
+  acquiredAt?: string;
+  holdingDays?: number;
+  peakPrice?: number;
+  fee?: number;
+  nachkauf?: boolean;
+  teilSchluss?: boolean;
+  sync?: boolean;
 }
 
 /** Seitengröße der Historie (Owner-Wunsch 28.07.: „über Pagination nachladen
@@ -832,7 +847,7 @@ export function watchTrades(
     limit(pageSize),
   );
   return onSnapshot(q, (snap) => {
-    cb(snap.docs.map((d) => d.data() as TradeRow), snap.docs[snap.docs.length - 1] ?? null);
+    cb(snap.docs.map((d) => ({ ...(d.data() as TradeRow), id: d.id })), snap.docs[snap.docs.length - 1] ?? null);
   });
 }
 
@@ -881,7 +896,7 @@ export async function loadMoreTrades(
   );
   const snap = await getDocs(q);
   return {
-    rows: snap.docs.map((d) => d.data() as TradeRow),
+    rows: snap.docs.map((d) => ({ ...(d.data() as TradeRow), id: d.id })),
     cursor: snap.docs[snap.docs.length - 1] ?? null,
     done: snap.docs.length < pageSize,
   };
@@ -1343,6 +1358,12 @@ export async function ladeJournalZuZeit(uid: string, at: string): Promise<Journa
   const snap = await getDocs(q);
   const d = snap.docs[0];
   return d ? ({ id: d.id, ...(d.data() as Omit<JournalRow, 'id'>) } as JournalRow) : null;
+}
+
+/** Das Journal-Doc eines Trades über seine ID (Doc-ID = Trade-ID). */
+export async function ladeJournal(uid: string, id: string): Promise<JournalRow | null> {
+  const snap = await getDoc(doc(db(), 'users', uid, 'journal', id));
+  return snap.exists() ? ({ id: snap.id, ...(snap.data() as Omit<JournalRow, 'id'>) } as JournalRow) : null;
 }
 
 /**

@@ -49,6 +49,31 @@ export function findeTradePaare(trades: readonly HistoryTrade[]): TradePaar[] {
   return paare;
 }
 
+/**
+ * Das Gegenstück eines Trades in der GELADENEN Historie (Task 21: Klick in
+ * der Historie zeigt Kauf- und Verkaufsgrund zusammen). Zum Ausstieg die
+ * Eröffnung — dieselbe Regel wie in `findeTradePaare`. Zur Eröffnung der
+ * Schluss: der FRÜHESTE Gegenseiten-Trade desselben Symbols danach, der ein
+ * Ergebnis trägt. null, wenn die Position noch offen ist oder das
+ * Gegenstück außerhalb der geladenen Seiten liegt — erfunden wird nichts.
+ */
+export function gegenstueck<T extends HistoryTrade>(trade: T, trades: readonly T[]): T | null {
+  const hatErgebnis = (x: HistoryTrade): boolean => typeof x.pnl === 'number' && Number.isFinite(x.pnl);
+  const ausstieg = hatErgebnis(trade);
+  let treffer: T | null = null;
+  for (const k of trades) {
+    if (k === trade || k.symbol !== trade.symbol || k.side === trade.side) continue;
+    if (ausstieg) {
+      if (hatErgebnis(k) || k.executedAt >= trade.executedAt) continue;
+      if (!treffer || k.executedAt > treffer.executedAt) treffer = k;
+    } else {
+      if (!hatErgebnis(k) || k.executedAt <= trade.executedAt) continue;
+      if (!treffer || k.executedAt < treffer.executedAt) treffer = k;
+    }
+  }
+  return treffer;
+}
+
 /** Ergebnis des Trades in Prozent des Einsatzes (Einstiegspreis × Menge). */
 export function tradeProzent(paar: TradePaar): number {
   const einsatz = paar.einstieg.price * paar.exit.qty;

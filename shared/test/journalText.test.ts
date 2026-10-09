@@ -26,6 +26,13 @@ describe('journalThese', () => {
     );
   });
 
+  it('Prognose-Pfeil wird als buy/sell gespeichert (predictionVote) — buy heißt aufwärts', () => {
+    const these = (dir: string): string =>
+      journalThese({ art: 'entry', side: 'buy', source: 'engine', signalContext: { typ: 'konfluenz', konfluenz: 2, minKonfluenz: 2, forecast: { dir } } });
+    expect(these('buy')).toContain('die Prognose aufwärts zeigte');
+    expect(these('sell')).toContain('die Prognose abwärts zeigte');
+  });
+
   it('Regelbaum-Short-Einstieg', () => {
     expect(
       journalThese({

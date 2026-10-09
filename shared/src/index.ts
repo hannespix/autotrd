@@ -50,6 +50,7 @@ export * from './chartTime.js';
 export * from './erkenntnisse.js';
 export * from './wachhund.js';
 export * from './journalText.js';
+export * from './tradeGruende.js';
 export * from './kiBericht.js';
 export * from './kiStimme.js';
 export * from './kiNachrichten.js';
