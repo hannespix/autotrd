@@ -755,6 +755,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
       trading: {
         trades: health.trades,
         feeShare: health.feeShare,
+        bruttoVorzeichen: health.bruttoVorzeichen,
         exits: health.exits,
         klassen: health.klassen,
       },

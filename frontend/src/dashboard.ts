@@ -10770,14 +10770,15 @@ export function erBelegText(eintrag: string, beleg: Record<string, number | stri
     switch (k) {
       case 'nTrades': if (n !== null) teile.push(t('er.bTrades').replace('{0}', de(n, 0))); break;
       case 'n': if (n !== null) teile.push(t(eintrag.startsWith('klasse_') ? 'er.bTrades' : 'er.bMessungen').replace('{0}', de(n, 0))); break;
-      case 'kantePct': if (n !== null) teile.push(t('er.bNachKosten').replace('{0}', vz(n))); break;
+      // je Trade (Klassen) vs. je Signal (Messreihen) — Laien-Leser 09.10.: allein „nach Gebühren" fehlte der Bezug.
+      case 'kantePct': if (n !== null) teile.push(t(eintrag.startsWith('klasse_') ? 'er.bJeTrade' : 'er.bJeSignal').replace('{0}', vz(n))); break;
       case 'trefferquotePct': if (n !== null) teile.push(t('er.bTreffer').replace('{0}', de(n, 1))); break;
       case 'trefferquote': if (n !== null) teile.push(t('er.bTreffer').replace('{0}', de(n * 100, 1))); break;
       case 'feeSharePct': if (n !== null) teile.push(t('er.bGebuehren').replace('{0}', de(n, 0))); break;
       case 'anteilSignalPct': if (n !== null) teile.push(t('er.bSignalVerkauf').replace('{0}', de(n, 0))); break;
       case 'alterMin': if (n !== null) teile.push(t('er.bHaltedauer').replace('{0}', de(n / 60, 1))); break;
       case 'geprueft': if (n !== null) teile.push(t('er.bGetestet').replace('{0}', de(n, 0))); break;
-      case 'befoerdert': if (n !== null) teile.push(t('er.bUebernommen').replace('{0}', de(n, 0))); break;
+      case 'befoerdert': if (n !== null) teile.push(t('er.bBesser').replace('{0}', de(n, 0))); break;
       case 'klasse': teile.push(CLASS_LABELS[String(v)] ?? String(v)); break;
       case 'datum': if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) teile.push(`${v.slice(8, 10)}.${v.slice(5, 7)}.`); break;
       default: break;

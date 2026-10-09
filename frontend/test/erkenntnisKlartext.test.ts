@@ -30,7 +30,7 @@ describe('Erkenntnisse in Klartext', () => {
   });
 
   it('alle neuen Texte in DE und EN', () => {
-    for (const k of ['er.zuvorAnders', 'er.tonGut', 'er.tonProblem', 'er.tonHinweis', 'er.tonOffen', 'er.bTrades', 'er.bMessungen', 'er.bNachKosten', 'er.bTreffer', 'er.bGebuehren', 'er.bSignalVerkauf', 'er.bHaltedauer', 'er.bGetestet', 'er.bUebernommen'] as const) {
+    for (const k of ['er.zuvorAnders', 'er.tonGut', 'er.tonProblem', 'er.tonHinweis', 'er.tonOffen', 'er.bTrades', 'er.bMessungen', 'er.bJeTrade', 'er.bJeSignal', 'er.bTreffer', 'er.bGebuehren', 'er.bSignalVerkauf', 'er.bHaltedauer', 'er.bGetestet', 'er.bBesser'] as const) {
       expect(DE[k], `${k} ohne DE`).toBeTruthy();
       expect(EN[k], `${k} ohne EN`).toBeTruthy();
     }

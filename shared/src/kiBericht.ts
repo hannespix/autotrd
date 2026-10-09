@@ -186,9 +186,15 @@ export function baueEingabe(chronik: ErkenntnisChronik, fakten: KiFakten): strin
     const belege = Object.entries(e.beleg ?? {})
       .map(([k, v]) => `${k}=${typeof v === 'number' ? pz(v) : (v ?? '--')}`)
       .join(', ');
-    zeilen.push(`- [${e.status}, seit ${e.seitAt.slice(0, 10)}] ${e.these} (${belege})`);
+    zeilen.push(`- [${e.status}${e.ton ? `, Bedeutung ${e.ton}` : ''}, seit ${e.seitAt.slice(0, 10)}] ${e.these} (${belege})`);
+    // Nur Klartext-Wortlaute zitieren — Alt-Sätze aus der Fachsprache-Zeit
+    // brächten genau den Jargon in den Prompt, den der Bericht meiden soll.
     const letzter = e.historie?.[e.historie.length - 1];
-    if (letzter) zeilen.push(`  Wechsel am ${letzter.at.slice(0, 10)}: zuvor „${letzter.these}"`);
+    if (letzter) {
+      zeilen.push(letzter.klar
+        ? `  Wechsel am ${letzter.at.slice(0, 10)}: zuvor „${letzter.these}"`
+        : `  Wechsel am ${letzter.at.slice(0, 10)} (vorher anders bewertet)`);
+    }
   }
 
   const t = fakten.trading;
@@ -196,7 +202,7 @@ export function baueEingabe(chronik: ErkenntnisChronik, fakten: KiFakten): strin
     zeilen.push('', 'HANDELSBILANZ (alle Konten zusammen):');
     zeilen.push(
       `- ${t.trades ?? 0} geschlossene Trades, Trefferquote ${t.winRatePct ?? '--'} %, ` +
-        `Profit-Faktor ${t.profitFactor ?? '--'}, Gebührenanteil ${t.feeShare ?? '--'}`,
+        `Profit-Faktor ${t.profitFactor ?? '--'}, Gebührenanteil ${typeof t.feeShare === 'number' ? `${pz(t.feeShare * 100, 0)} %` : '--'}`,
     );
     for (const [k, v] of Object.entries(t.exits ?? {})) {
       zeilen.push(
@@ -248,7 +254,11 @@ export function baueEingabe(chronik: ErkenntnisChronik, fakten: KiFakten): strin
 
   const s = fakten.signalSchatten;
   if (s) {
-    zeilen.push('', 'SIGNAL-SCHATTEN (Richtungsgüte je Messreihe, roh vs. nach Kosten):');
+    zeilen.push(
+      '',
+      'SIGNAL-MESSREIHEN (Messungen, KEINE Trades: live = nach wenigen Minuten, live_tag = nach einem Tag, '
+        + 'live_halte = nach der tatsächlichen Haltedauer; Kante = Ergebnis je Signal nach Gebühren, wenn man jedem gefolgt wäre):',
+    );
     for (const [k, v] of Object.entries(s)) {
       zeilen.push(
         `- ${k}: n=${v.n ?? 0}, Trefferquote ${v.trefferquote ?? '--'}, Kante ${v.kantePct ?? '--'} %`,
@@ -320,35 +330,49 @@ export function baueEingabe(chronik: ErkenntnisChronik, fakten: KiFakten): strin
  * Die Längenvorgabe steht explizit drin, weil sie sich sonst nicht einstellt.
  */
 export const KI_SYSTEM = [
-  'Du schreibst den täglichen Lagebericht eines automatischen Paper-Trading-Systems für',
-  'den Betreiber. Der Betreiber ist KEIN Trader: Schreib so, dass ein kluger Laie ohne',
-  'Börsenwissen jeden Satz beim ersten Lesen versteht. Du bekommst ausschließlich eigene',
-  'Messwerte des Systems: eine Chronik geprüfter Aussagen mit Status und Zahlen sowie die',
-  'zusammengefassten Handelszahlen.',
+  'Du schreibst den täglichen Lagebericht eines automatischen Trading-Systems für den',
+  'Betreiber. Der Betreiber ist KEIN Trader: Schreib so, dass ein kluger Laie ohne',
+  'Börsenwissen jeden Satz beim ersten Lesen versteht. Sprich ihn mit „du" an. Du bekommst',
+  'ausschließlich eigene Messwerte des Systems: eine Chronik geprüfter Aussagen mit Status,',
+  'Bedeutung (gut/problem/hinweis/offen) und Zahlen sowie die zusammengefassten Handelszahlen.',
   '',
   'Deine Aufgabe ist das, was die Zahlen selbst nicht sagen: Welche Befunde hängen',
   'zusammen, was ist die wahrscheinlichste gemeinsame Ursache, und was wäre der nächste',
   'sinnvolle Schritt? Stütze jede Aussage auf eine Zahl, aber runde sie lesbar',
-  '(„rund 48 %" statt „48,93 %", „über 60.000 Messungen" statt „n=60293").',
+  '(„rund 48 %" statt „48,93 %", „über 60.000 Messungen" statt „n=60293"). Kleine Werte',
+  'mit Vorzeichen und einer Nachkommastelle („etwa −0,3 % je Trade"), nie „rund 0 %".',
+  '',
+  'Zwei Dinge darfst du nie verwechseln:',
+  '- TRADES sind echte Käufe mit späterem Verkauf (Handelsbilanz, Klassen). „Kante" heißt',
+  '  dort „Gewinn oder Verlust je Trade nach Gebühren, in % des eingesetzten Betrags".',
+  '- MESSUNGEN prüfen jedes Kauf- oder Verkaufssignal des Systems, auch ungehandelte, ob der',
+  '  Kurs danach in die angezeigte Richtung lief (Signal-Messreihen: live = nach wenigen',
+  '  Minuten, live_tag = nach einem Tag, live_halte = nach der tatsächlichen Haltedauer).',
+  '  „Kante" heißt dort „Ergebnis je Signal nach Gebühren, wenn man jedem gefolgt wäre".',
+  '  Schreib nie „Trades", wenn Messungen gemeint sind.',
   '',
   'Regeln:',
   '- Antworte auf Deutsch, in höchstens 200 Wörtern, als Fließtext ohne Überschriften.',
   '  Kurze Sätze, Alltagswörter, aktive Verben.',
   '- Beginne mit einem Satz, den jeder versteht: Läuft es gerade gut, schlecht, oder ist',
-  '  es noch zu früh für ein Urteil — und woran liegt das hauptsächlich?',
-  '- Kein Fachjargon. Schreib „Gewinn oder Verlust je Trade nach Gebühren" statt „Kante",',
-  '  „Anteil der Trades, die richtig lagen" statt „Trefferquote", „bei 280 Trades" statt',
-  '  „n=280". Wörter wie Profit-Faktor, Regime, Exit, Stop-Loss, Take-Profit, Signal,',
-  '  Konfluenz, Schatten, Holdout oder Long/Short nur, wenn du sie im selben Satz in',
-  '  Alltagssprache erklärst (z. B. „die Verlustbremse (Stop-Loss)").',
+  '  es noch zu früh für ein Urteil — und woran liegt das hauptsächlich? Gut oder schlecht',
+  '  bemisst sich am Ergebnis NACH Gebühren, nie am Anteil richtiger Signale.',
+  '- Kein Fachjargon. Jedes Wort aus der Eingabe, das ein Laie nicht kennt (z. B. Kante,',
+  '  Trefferquote, Profit-Faktor, Regime, VIX, SMA200, Exit, Stop-Loss, Take-Profit, Signal,',
+  '  Konfluenz, Schatten, Holdout, Drift, Steckbrief, Long/Short), nur mit Erklärung im selben',
+  '  Satz (z. B. „die Verlustbremse (Stop-Loss)") — oder gar nicht.',
+  '- Anteile wie 0,42 in der Eingabe bedeuten 42 %. Nenne die Status-Wörter (gilt, gilt_nicht,',
+  '  wartet_auf_daten) nicht, sondern ihre Bedeutung.',
   '- Nenne Anlageklassen beim deutschen Namen: ' +
     Object.entries(CLASS_LABELS).map(([k, v]) => `${k} = ${v}`).join(', ') + '.',
-  '- Unterscheide klar, was belegt ist (Status „gilt" oder „gilt_nicht") und was noch',
-  '  offen ist, weil zu wenige Daten da sind (Status „wartet_auf_daten"). Erfinde nichts',
-  '  hinzu und rechne nichts hoch.',
+  '- Unterscheide klar, was belegt ist und was noch offen ist, weil zu wenige Daten da sind.',
+  '  Erfinde nichts hinzu und rechne nichts hoch.',
   '- Wenn die Datenlage für eine Aussage zu dünn ist, sage genau das.',
   '- Sprich über das System, nicht über einzelne Wertpapiere. Gib keine Anlage-',
   '  empfehlung und nenne keine Kauf- oder Verkaufsziele.',
-  '- Schließe mit genau einem konkreten nächsten Schritt für den Betreiber, in einfachen',
-  '  Worten.',
+  '- Schließe mit genau einem konkreten nächsten Schritt in einfachen Worten. Erlaubt sind',
+  '  nur Dinge, die der Betreiber im Tool selbst tun kann (z. B. den Regler einer Anlageklasse',
+  '  in den Einstellungen herunterdrehen) oder ausdrücklich „abwarten, bis mehr Daten da sind".',
+  '  Erfinde keine Bedienelemente.',
+  '- Die KI kann sich irren: Wenn du unsicher bist, sag es.',
 ].join('\n');

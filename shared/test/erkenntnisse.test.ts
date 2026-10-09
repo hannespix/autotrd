@@ -55,7 +55,7 @@ describe('schreibeChronik', () => {
     // Klartext (09.10.): Klasse beim Namen, Mindestzahl ohne „n=", Vorzeichen sichtbar.
     expect(c.eintraege.klasse_verlustquelle!.these).toContain('Themen-ETFs');
     expect(c.eintraege.klasse_verlustquelle!.these).not.toContain('etf_thematic');
-    expect(c.eintraege.tages_kante!.these).toContain(`verlässlich ab ${MIN_N_TAGESKANTE}`);
+    expect(c.eintraege.tages_kante!.these).toContain(`eine erste Aussage ab ${MIN_N_TAGESKANTE}`);
     // Ton übersetzt den Status in die Bedeutung für den Betreiber.
     const ton = (k: string) => c.eintraege[k]!.ton;
     expect(ton('kosten_dominieren')).toBe('problem'); // Gebühren dominieren: gilt = schlecht
@@ -155,8 +155,8 @@ describe('schreibeChronik', () => {
   it('Halte-Kante wartet, solange die Reihe zu kurz ist — und nennt das Fenster', () => {
     const c = schreibeChronik(undefined, fakten(), T1);
     expect(c.eintraege.halte_kante!.status).toBe('wartet_auf_daten');
-    expect(c.eintraege.halte_kante!.these).toContain('erst 0 Messungen');
-    expect(c.eintraege.halte_kante!.these).toContain('Haltedauer noch nicht gemessen');
+    expect(c.eintraege.halte_kante!.these).toContain('Bisher 0 Messungen');
+    expect(c.eintraege.halte_kante!.these).toContain('Dauer noch nicht gemessen');
   });
 
   it('Halte-Kante ab Mindest-n: positiv ⇒ gilt, mit Horizont im Text', () => {
@@ -173,7 +173,7 @@ describe('schreibeChronik', () => {
     expect(c.eintraege.halte_kante!.these).toContain('+0,70');
     // 48 h — der Krypto-Boden. Der Horizont MUSS im Klartext stehen: Genau
     // seine Abwesenheit hat den Fünf-Minuten-Fehler zwölf Tage überleben lassen.
-    expect(c.eintraege.halte_kante!.these).toContain('im Schnitt 48,0 Stunden gehalten');
+    expect(c.eintraege.halte_kante!.these).toContain('(im Schnitt 48,0 Stunden)');
     expect(c.eintraege.halte_kante!.ton).toBe('gut');
   });
 
@@ -188,9 +188,35 @@ describe('schreibeChronik', () => {
       T1,
     );
     expect(c.eintraege.halte_kante!.status).toBe('gilt_nicht');
-    expect(c.eintraege.halte_kante!.these).toContain('im Schnitt 48,0 Stunden gehalten');
+    expect(c.eintraege.halte_kante!.these).toContain('(im Schnitt 48,0 Stunden)');
     expect(c.eintraege.halte_kante!.these).toContain('−0,30 % je Signal');
     expect(c.eintraege.halte_kante!.ton).toBe('problem');
+  });
+
+  it('Gebühren (Laien-Leser 09.10.): Bruttoverlust nie „im Rahmen", über 100 % = Verlust, Brutto null = kein Widerspruch', () => {
+    const basis = { trades: 600, exits: { signal: { share: 0.4 } }, klassen: {} };
+    const verlust = schreibeChronik(undefined, fakten({ trading: { ...basis, feeShare: 0.3, bruttoVorzeichen: -1 } }), T1).eintraege.kosten_dominieren!;
+    expect(verlust).toMatchObject({ status: 'gilt_nicht', ton: 'problem' });
+    expect(verlust.these).toContain('verlieren schon vor den Gebühren');
+    const ueber = schreibeChronik(undefined, fakten({ trading: { ...basis, feeShare: 1.11, bruttoVorzeichen: 1 } }), T1).eintraege.kosten_dominieren!;
+    expect(ueber).toMatchObject({ status: 'gilt', ton: 'problem' });
+    expect(ueber.these).toContain('unterm Strich steht ein Verlust');
+    const rahmen = schreibeChronik(undefined, fakten({ trading: { ...basis, feeShare: 0.3, bruttoVorzeichen: 1 } }), T1).eintraege.kosten_dominieren!;
+    expect(rahmen).toMatchObject({ status: 'gilt_nicht', ton: 'gut' });
+    // Alt-Fakten ohne Vorzeichen: wie bisher (Gewinn unterstellt).
+    expect(schreibeChronik(undefined, fakten({ trading: { ...basis, feeShare: 0.3 } }), T1).eintraege.kosten_dominieren!.ton).toBe('gut');
+    const null_ = schreibeChronik(undefined, fakten({ trading: { ...basis, feeShare: null } }), T1).eintraege.kosten_dominieren!;
+    expect(null_.status).toBe('wartet_auf_daten');
+    expect(null_.these).toContain('genau auf null');
+    expect(null_.these).not.toMatch(/bisher sind es/);
+  });
+
+  it('Klassen: „am schlechtesten je Trade", nicht „am meisten Geld"; Struktursuche-Datum deutsch, kein „echtes Geld"', () => {
+    const c = schreibeChronik(undefined, fakten({ strukturSuche: { geprueft: 9, befoerdert: 1, date: '2026-10-08' } }), T1);
+    expect(c.eintraege.klasse_verlustquelle!.these).toContain('Am schlechtesten schneidet');
+    expect(c.eintraege.klasse_verlustquelle!.these).not.toContain('am meisten Geld');
+    expect(c.eintraege.struktursuche_latte!.these).toContain('1 Variante, am 08.10.2026');
+    expect(c.eintraege.struktursuche_latte!.these).not.toContain('echtes Geld');
   });
 
   it('Richtung: Münzwurf-Niveau ist ein Problem, Gewinn nach Gebühren ist gut', () => {
