@@ -7,7 +7,7 @@
  * Steckbrief zuerst, dann die Rückfälle ohne Steckbrief.
  */
 import { describe, expect, it } from 'vitest';
-import { TRADE_QUELLEN, einstiegsQuelle, istEinstiegsweg, quelleAusLauf, quelleBekannt, tradeQuelle } from '../src/tradeQuelle.js';
+import { TRADE_QUELLEN, einstiegsQuelle, istEinstiegsweg, LAUF_WEG_SUFFIX, laufMitWeg, quelleAusLauf, quelleBekannt, tradeQuelle } from '../src/tradeQuelle.js';
 
 describe('tradeQuelle — der Steckbrief entscheidet, nicht der Ausstieg', () => {
   it("Hand-KAUF trägt die Signatur 'manuell' (trade.ts) → hand, auch wenn die Engine ihn ausstoppt (H1)", () => {
@@ -98,6 +98,25 @@ describe('Task 18 — quelleAusLauf: Einstiegsweg aus der Lauf-Kennung', () => {
     expect(quelleAusLauf('man-2026-10-08T10:03Z')).toBe('hand'); // Rohform mit Doppelpunkt
     expect(quelleAusLauf('mom-2026-10-08')).toBe('momentum');
     expect(quelleAusLauf('core-2026-10-08')).toBe('sockel');
+  });
+
+  it('Scan-Wege stehen als Suffix in der Kennung (09.10.) — Konfluenz, Regelbaum, KI-Probe werden unterscheidbar', () => {
+    expect(laufMitWeg('2026-10-09T13:00Z', 'konfluenz')).toBe('2026-10-09T13:00Z-kfl');
+    expect(laufMitWeg('2026-10-09T13:00Z', 'regelbaum')).toBe('2026-10-09T13:00Z-rgb');
+    expect(laufMitWeg('2026-10-09T13:00Z', 'ki_probe')).toBe('2026-10-09T13:00Z-kip');
+    // Präfix-Wege und Lücken bleiben unverändert — ihre Regexe sind am Ende verankert.
+    expect(laufMitWeg('mom-2026-10-09', 'momentum')).toBe('mom-2026-10-09');
+    expect(laufMitWeg('core-2026-10-09', 'sockel')).toBe('core-2026-10-09');
+    expect(laufMitWeg('man-2026-10-09T10:03Z', 'hand')).toBe('man-2026-10-09T10:03Z');
+    expect(laufMitWeg('2026-10-09T13:00Z', null)).toBe('2026-10-09T13:00Z');
+    expect(laufMitWeg('2026-10-09T13:00Z', 'unbekannt')).toBe('2026-10-09T13:00Z');
+    // Rückweg über die volle clientOrderId (uid-symbol-side-qty-lauf), auch nach der Zeichen-Säuberung.
+    expect(quelleAusLauf('uid123-AAPL-buy-10-2026-10-09T13_00Z-kfl')).toBe('konfluenz');
+    expect(quelleAusLauf('uid123-AAPL-buy-10-2026-10-09T13:00Z-rgb')).toBe('regelbaum');
+    expect(quelleAusLauf('uid123-AAPL-buy-10-2026-10-09T13_00Z-kip')).toBe('ki_probe');
+    // Ein Symbol, das zufällig so endet, zählt nicht: Suffix braucht den Bindestrich davor.
+    expect(quelleAusLauf('uid-AAPL-buy-10-2026-10-09T13_00Zkfl')).toBeNull();
+    expect(Object.values(LAUF_WEG_SUFFIX).every((s) => /^[a-z]{3}$/.test(s))).toBe(true);
   });
 
   it('ein Scan-Zeitstempel ist mehrdeutig; Exits, Puls, Schutz und fill-sync sind keine Einstiege', () => {

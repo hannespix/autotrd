@@ -26,6 +26,7 @@ import {
   feePartsForClass,
   marginInterest,
   einstiegsQuelle,
+  laufMitWeg,
   quelleAusLauf,
   resolveRisk,
   riskBasedQty,
@@ -947,7 +948,13 @@ export async function executeTrade(
    * EINMAL abgeleitet und ab hier überall benutzt — Order, Fehlerspur und
    * Schutz-Stop. Zwei Ableitungen wären zwei Gelegenheiten, sie verschieden
    * zu machen; die Begründung steht bei `auftragsLauf`. */
-  const lauf = auftragsLauf(req, position, laufId, schliesst);
+  /* Eröffnende Scan-Aufträge tragen den Einstiegsweg als Suffix (-kfl/-rgb/
+   * -kip, 09.10.): Ein Scan-Zeitstempel allein ist mehrdeutig, und jede
+   * Nachbuchung (fillSync, bucheOffeneOrders, adoptBroker) legte solche
+   * Positionen ohne Herkunft an (Red-Team 09.10., H1). Exits behalten ihre
+   * positionsstabile Kennung — `auftragsLauf` ignoriert den Lauf dort. */
+  const einstiegFruh = schliesst ? null : einstiegsQuelle({ quelle: req.quelle, source: req.source, bucket: req.bucket });
+  const lauf = auftragsLauf(req, position, laufMitWeg(laufId, einstiegFruh), schliesst);
 
   /* Ein Verkauf, der weder schließt noch ein AUSDRÜCKLICHER Leerverkauf auf
    * leerem Bestand ist, darf NIE zum Broker (Short-Audit 07.08.). Vorher

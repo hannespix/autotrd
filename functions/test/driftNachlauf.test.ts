@@ -224,7 +224,7 @@ describe('Quelltext-Wächter: die Verdrahtung', () => {
   const anzahl = (text: string, nadel: string): number => text.split(nadel).length - 1;
 
   it('executeTrade: jeder Exit trägt die positionsstabile Kennung', () => {
-    expect(anzahl(broker, 'const lauf = auftragsLauf(req, position, laufId, schliesst);')).toBe(1);
+    expect(anzahl(broker, 'const lauf = auftragsLauf(req, position, laufMitWeg(laufId, einstiegFruh), schliesst);')).toBe(1);
   });
 
   it('kein Fill wird zweimal gebucht — Routing-Pfad UND Stop-Pfad fragen das Buch', () => {

@@ -67,10 +67,35 @@ export function istEinstiegsweg(q: unknown): q is TradeQuelle {
 export function quelleAusLauf(kennung: unknown): TradeQuelle | null {
   if (typeof kennung !== 'string' || kennung.length === 0) return null;
   const k = kennung.replace(/[^A-Za-z0-9-]/g, '_');
+  // Scan-Wege (09.10.): als Suffix der Kennung, weil der Zeitstempel allein
+  // Konfluenz, Regelbaum und KI-Probe nicht unterscheidet (Red-Team H1).
+  for (const [weg, suffix] of Object.entries(LAUF_WEG_SUFFIX)) {
+    if (k.endsWith(`-${suffix}`)) return weg as TradeQuelle;
+  }
   if (/(^|-)man-\d{4}-\d{2}-\d{2}T\d{2}_\d{2}Z$/.test(k)) return 'hand';
   if (/(^|-)mom-\d{4}-\d{2}-\d{2}$/.test(k)) return 'momentum';
   if (/(^|-)core-\d{4}-\d{2}-\d{2}$/.test(k)) return 'sockel';
   return null;
+}
+
+/**
+ * Suffix je Scan-Weg in der Order-Kennung (09.10.). Die Kennung ist der
+ * einzige Kanal, der Scan → Broker → fillSync/adoptBroker überlebt; ohne
+ * Suffix legte jede Nachbuchung einer Scan-Order die Position ohne Herkunft
+ * an (Red-Team 09.10., H1). Momentum/Sockel/Hand tragen ihren Weg schon
+ * als Präfix (`mom-`, `core-`, `man-`) und brauchen keins. Drei Zeichen,
+ * damit die 128-Zeichen-Grenze der clientOrderId weiter die uid kappt.
+ */
+export const LAUF_WEG_SUFFIX: Readonly<Record<'konfluenz' | 'regelbaum' | 'ki_probe', string>> = {
+  konfluenz: 'kfl',
+  regelbaum: 'rgb',
+  ki_probe: 'kip',
+};
+
+/** Lauf-Kennung eines ERÖFFNENDEN Auftrags mit Weg-Suffix; ohne Scan-Weg unverändert (deterministisch je Signal → Idempotenz bleibt). */
+export function laufMitWeg(laufId: string, weg: TradeQuelle | null): string {
+  const suffix = weg !== null && weg in LAUF_WEG_SUFFIX ? LAUF_WEG_SUFFIX[weg as keyof typeof LAUF_WEG_SUFFIX] : null;
+  return suffix ? `${laufId}-${suffix}` : laufId;
 }
 
 /**

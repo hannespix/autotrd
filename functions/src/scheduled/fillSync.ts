@@ -297,6 +297,8 @@ export async function fillSyncKonto(
           gebucht: schon + fehlt,
           soll: gesamt,
           lauf: 'fill-sync',
+          // Der Weg steckt in der Kennung — der Nachlauf soll ihn nicht raten müssen (Red-Team 09.10., M2).
+          quelle: quelleAusLauf(order.clientOrderId),
         });
       }
       continue;

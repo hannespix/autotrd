@@ -148,16 +148,17 @@ describe('Quelltext: executeTrade leitet die Kennung EINMAL ab', () => {
 
   it('die Ableitung steht vor dem Routing', () => {
     const text = readFileSync(pfad, 'utf8');
-    const ab = text.indexOf('const lauf = auftragsLauf(req, position, laufId, schliesst);');
+    const ab = text.indexOf('const lauf = auftragsLauf(req, position, laufMitWeg(laufId, einstiegFruh), schliesst);');
     expect(ab, 'Ableitung in executeTrade nicht gefunden').toBeGreaterThan(0);
     expect(text.indexOf('const routing = await routeOrder(', ab)).toBeGreaterThan(ab);
   });
 
   it('und ab da benutzt niemand mehr die rohe Lauf-Kennung', () => {
     const text = readFileSync(pfad, 'utf8');
-    const ab = text.indexOf('const lauf = auftragsLauf(req, position, laufId, schliesst);');
+    const ab = text.indexOf('const lauf = auftragsLauf(req, position, laufMitWeg(laufId, einstiegFruh), schliesst);');
     const bis = text.indexOf('export async function executePaperTrade', ab);
-    const block = text.slice(ab + 50, bis);
+    // Hinter der Ableitungszeile (seit 09.10. mit Weg-Suffix für eröffnende Scan-Aufträge).
+    const block = text.slice(ab + 'const lauf = auftragsLauf(req, position, laufMitWeg(laufId, einstiegFruh), schliesst);'.length, bis);
     // `laufId` darf hier nur noch als Wert von `laufId:` auftauchen, wenn
     // rechts `lauf` steht — ein nacktes `laufId,` wäre der alte Zustand.
     expect(block).not.toMatch(/(?<!: )\blaufId\b(?!:)/);
