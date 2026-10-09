@@ -95,7 +95,11 @@ export const LAUF_WEG_SUFFIX: Readonly<Record<'konfluenz' | 'regelbaum' | 'ki_pr
 /** Lauf-Kennung eines ERÖFFNENDEN Auftrags mit Weg-Suffix; ohne Scan-Weg unverändert (deterministisch je Signal → Idempotenz bleibt). */
 export function laufMitWeg(laufId: string, weg: TradeQuelle | null): string {
   const suffix = weg !== null && weg in LAUF_WEG_SUFFIX ? LAUF_WEG_SUFFIX[weg as keyof typeof LAUF_WEG_SUFFIX] : null;
-  return suffix ? `${laufId}-${suffix}` : laufId;
+  // Präfixierte Kennungen (Hand, Momentum, Sockel, Puls, Exit) tragen ihren
+  // Weg schon oder sind keine Scan-Einstiege — ein Suffix würde beim Lesen
+  // gewinnen und den Präfix überstimmen (Red-Team 09.10., N4).
+  if (!suffix || /^(man|mom|core|puls|exit)-/.test(laufId)) return laufId;
+  return `${laufId}-${suffix}`;
 }
 
 /**
