@@ -1888,6 +1888,22 @@ export async function saveWorkspace(uid: string, data: WorkspaceDocData): Promis
 }
 
 /** Quotes aller vorhandenen market/**-Docs (für die Markt-Übersicht). */
+/**
+ * KI-Einordnungen zu EIGENEN Symbolen (Task 22): `users/{uid}/kiAnzeige/{sym}`,
+ * je Konto geschrieben, damit niemand die Watchlist anderer ablesen kann.
+ * Roh zurückgegeben — der Aufrufer prüft jeden Eintrag gegen die Whitelist.
+ */
+export async function ladeKiAnzeige(uid: string, symbol: string): Promise<unknown> {
+  const snap = await getDoc(doc(db(), 'users', uid, 'kiAnzeige', symbol));
+  return snap.exists() ? snap.get('verlauf') : null;
+}
+
+/** Alle KI-Einordnungen des Kontos (fürs Abzeichen im Markt-Raster) — ein Symbol je Doc. */
+export async function ladeKiAnzeigeAlle(uid: string): Promise<Map<string, unknown>> {
+  const snap = await getDocs(collection(db(), 'users', uid, 'kiAnzeige'));
+  return new Map(snap.docs.map((d) => [d.id, d.get('verlauf') as unknown]));
+}
+
 export async function loadMarketQuotes(): Promise<Map<string, MarketDocData>> {
   const snap = await getDocs(collection(db(), 'market'));
   const map = new Map<string, MarketDocData>();

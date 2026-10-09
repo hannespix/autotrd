@@ -1814,3 +1814,10 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
 .td-gr li[data-art='info']::before { color: var(--t3); }
 .td-gr li[data-art='luecke'] { color: var(--t3); font-style: italic; }
 .td-fuss { margin-top: 14px; font-size: 11px; }
+
+/* KI-Einordnung (Task 22): Detailblatt-Zeilen und Abzeichen im Markt-Raster. */
+.dki { display: grid; gap: 6px; margin-top: 4px; }
+.dki-z { display: grid; grid-template-columns: 16px 1fr auto; gap: 6px; align-items: baseline; font-size: 12.5px; line-height: 1.4; color: var(--t1); }
+.dki-p { font-weight: 700; text-align: center; }
+.dki-quelle { margin-top: 6px; font-size: 11px; }
+.mkt-ki { margin-left: 4px; font-size: 9.5px; font-weight: 700; letter-spacing: .02em; }

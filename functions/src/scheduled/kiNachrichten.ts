@@ -98,6 +98,7 @@ import {
   type SymbolUrteil,
 } from '../../../shared/src/index.js';
 import { mayTrade } from '../core/access.js';
+import { kiAnzeigeAktualisieren } from '../core/kiAnzeige.js';
 import { envSchluessel, type FetchLike } from '../core/alpacaBroker.js';
 import { holeLetzteKurse } from '../core/alpacaNews.js';
 
@@ -177,26 +178,39 @@ export function anthropicAufruf(apiKey: string): KiAufruf {
 export interface Teilnehmer {
   uids: Set<string>;
   relevant: Set<string>;
+  /**
+   * Relevante Symbole JE Konto (Task 22): Die Anzeige-Kopie der Einordnungen
+   * geht nur an Konten, die das Symbol selbst beobachten oder halten — eine
+   * gemeinsame Kopie in `market/**` verriete jedem angemeldeten Nutzer, was
+   * die KI-Teilnehmer im Depot haben (Red-Team 09.10.).
+   */
+  jeKonto?: Map<string, Set<string>>;
 }
 
 async function teilnehmerLesen(): Promise<Teilnehmer> {
   const db = getFirestore();
   const uids = new Set<string>();
   const relevant = new Set<string>();
+  const jeKonto = new Map<string, Set<string>>();
   const users = await db.collection('users').where('settings.strategy.engine.running', '==', true).get();
   for (const u of users.docs) {
     const s = u.get('settings.strategy') as Strategy | undefined;
     if (!s || !isStrategy(s) || !mayTrade(u.data())) continue;
     if (s.signals.kiNachrichten === false) continue;
     uids.add(u.id);
+    jeKonto.set(u.id, new Set(s.watchlist));
     for (const sym of s.watchlist) relevant.add(sym);
   }
   for (const uid of uids) {
     // Bestand der Teilnehmer (Sockel ausgenommen — den führt der Momentum-Lauf).
     const pos = await db.collection(`users/${uid}/positions`).select('core').get();
-    for (const p of pos.docs) if (p.get('core') !== true) relevant.add(p.id);
+    for (const p of pos.docs) {
+      if (p.get('core') === true) continue;
+      relevant.add(p.id);
+      jeKonto.get(uid)?.add(p.id);
+    }
   }
-  return { uids, relevant };
+  return { uids, relevant, jeKonto };
 }
 
 /* ── Sperre ─────────────────────────────────────────────────────────────── */
@@ -363,6 +377,9 @@ interface Offen {
   urteil: SichtungsUrteil;
 }
 
+/** Rückblick der Anzeige-Kopie: Urteile so weit zurück werden (idempotent) erneut übernommen. */
+export const KI_ANZEIGE_RUECKBLICK_MS = 3_600_000;
+
 export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise<KiLaufErgebnis> {
   const db = getFirestore();
   const jetzt = abh.jetzt ?? (() => new Date());
@@ -377,6 +394,8 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
   const schluessel = (process.env.ANTHROPIC_API_KEY ?? '').trim();
   const aufruf = abh.aufruf ?? (schluessel ? anthropicAufruf(schluessel) : null);
 
+  /** Relevante Symbole je Konto — nur für die Anzeige-Kopie (Task 22). */
+  let kontenSymbole: Map<string, Set<string>> | null;
   if (!(await sperreNehmen(laufId, laufBeginn))) return { ...e, grund: 'laeuft_schon' };
   try {
     /* ── Schreiben, append-only ─────────────────────────────────────────── */
@@ -428,7 +447,8 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
       return { ...e, grund: 'kein_schluessel' };
     }
 
-    const { uids, relevant } = await (abh.teilnehmer ?? teilnehmerLesen)();
+    const { uids, relevant, jeKonto } = await (abh.teilnehmer ?? teilnehmerLesen)();
+    kontenSymbole = jeKonto ?? null;
     e.konten = uids.size;
     const limitUsd = budgetLimitUsd(uids.size);
     const worstPruefung = worstCaseUsd(2_500, PRUEFUNG_SYSTEM.length, PRUEFUNG_MAX_TOKENS);
@@ -778,6 +798,17 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
       },
       { merge: true },
     );
+    // Anzeige-Kopie für Detailblatt, Journal und Abzeichen (Task 22) — ganz
+    // am Ende und abgefangen: Sie darf kein Urteil und keinen Handel berühren.
+    // Eine Stunde Rückblick holt nach, was ein abgebrochener Lauf nicht kopierte.
+    await kiAnzeigeAktualisieren(db, {
+      seitIso: new Date(laufBeginn - KI_ANZEIGE_RUECKBLICK_MS).toISOString(),
+      jetztIso: iso(),
+      jeKonto: kontenSymbole,
+      // Rechtzeitig vor dem harten Funktions-Timeout aufhören — der Rest kommt im nächsten Lauf.
+      restMs: () => laufBeginn + LAUF_FRIST_MS + 60_000 - jetzt().getTime(),
+    })
+      .catch((err: unknown) => logger.warn('kiNachrichten: Anzeige-Kopie nicht geschrieben', err));
     return e;
   } catch (err) {
     const text = (err instanceof Error ? err.message : String(err)).slice(0, 160);

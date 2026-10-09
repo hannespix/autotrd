@@ -120,6 +120,13 @@ service cloud.firestore {
         allow read: if isOwner(uid);
         allow write: if false;
       }
+      // KI-Einordnungen (Task 22): je Konto und NUR zu den eigenen Symbolen —
+      // eine gemeinsame Kopie verriete Watchlist und Depot der KI-Teilnehmer.
+      // Schreibt ausschließlich der KI-Lauf (Whitelist, kein Fremdtext).
+      match /kiAnzeige/{sym} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
       match /stats/{doc} {
         allow read: if isOwner(uid);
         allow write: if false;

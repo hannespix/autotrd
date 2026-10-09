@@ -214,6 +214,13 @@ describe('users/{uid}', () => {
     await assertFails(bob().doc('users/alice/positions/AAPL').get());
   });
 
+  it('kiAnzeige (Task 22): nur der Owner liest seine KI-Einordnungen, schreiben darf nur der Server', async () => {
+    await assertSucceeds(alice().doc('users/alice/kiAnzeige/AAPL').get());
+    await assertFails(alice().doc('users/alice/kiAnzeige/AAPL').set({ verlauf: [] }));
+    await assertFails(bob().doc('users/alice/kiAnzeige/AAPL').get());
+    await assertFails(bob().collection('users/alice/kiAnzeige').get());
+  });
+
   it('alerts gehören dem User komplett', async () => {
     await assertSucceeds(alice().doc('users/alice/alerts/a1').set({ symbol: 'QQQ', above: 700 }));
     await assertFails(bob().doc('users/alice/alerts/a2').set({ symbol: 'QQQ' }));
