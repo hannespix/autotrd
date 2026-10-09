@@ -69,6 +69,15 @@ describe('Task 18 — Quelle beim Öffnen gestempelt, beim Schließen kopiert', 
     expect(sell).toContain('      ...(pos.bucket ? { bucket: pos.bucket } : {}),\n      ...(pos.quelle ? { quelle: pos.quelle } : {}),\n');
   });
 
+  it('eröffnende Scan-Aufträge tragen den Weg als Suffix der Kennung; fillSync reicht ihn an den Nachlauf durch (09.10.)', () => {
+    const brokerSrc = readFileSync(join(hier, '../src/core/broker.ts'), 'utf8');
+    expect(brokerSrc).toContain("const einstiegFruh = schliesst ? null : einstiegsQuelle({ quelle: req.quelle, source: req.source, bucket: req.bucket });");
+    expect(brokerSrc).toContain('const lauf = auftragsLauf(req, position, laufMitWeg(laufId, einstiegFruh), schliesst);');
+    const fill = readFileSync(join(hier, '../src/scheduled/fillSync.ts'), 'utf8');
+    expect(fill).toContain("lauf: 'fill-sync',\n          // Der Weg steckt in der Kennung");
+    expect(fill).toContain('quelle: quelleAusLauf(order.clientOrderId),');
+  });
+
   it('die Aufstockung stempelt eine UNGESTEMPELTE Position nach — Long UND Short', () => {
     expect(zaehl(broker, '...(!pos.quelle && einstieg ? { quelle: einstieg } : {}),')).toBe(2);
   });
