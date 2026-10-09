@@ -86,6 +86,9 @@ import {
   benchmarkSatz,
   volDurchschnittFrisch,
   KI_MIN_FAELLE,
+  kiAktuell,
+  kiAnzeigeGespeichert,
+  type KiAnzeigeEintrag,
   einstiegsGruende,
   ausstiegsGruende,
   type TradeGruende,
@@ -138,6 +141,8 @@ import {
   loadIntraday,
   ladeJournalZuZeit,
   ladeJournal,
+  ladeKiAnzeige,
+  ladeKiAnzeigeAlle,
   loadIntradayChunks,
   tagVorTagen,
   loadDailyChunk,
@@ -246,6 +251,7 @@ import {
   waehleTradeStory,
 } from './tradeStory.js';
 import { iBtn, initInfoTips } from './infotips.js';
+import { kiEintragZu, kiZeile } from './kiEinordnung.js';
 import { serverText, setzeSprache, sprachWahl, t, valText } from './i18n.js';
 import { reglerWarnung } from './reglerHinweis.js';
 import { mountLegalFooter } from './legal.js';
@@ -8248,6 +8254,8 @@ async function renderMarketGrid(): Promise<void> {
     console.warn('renderMarketGrid', e);
     return;
   }
+  // Eigene KI-Einordnungen fürs Abzeichen (Task 22) — fehlertolerant: ohne sie kein Abzeichen.
+  const kiAlle = st ? await ladeKiAnzeigeAlle(st.uid).catch(() => new Map<string, unknown>()) : new Map<string, unknown>();
   if (!st || st.marketClass !== klasse) return;
   body.innerHTML = '';
   for (const [group, entries] of Object.entries(cls.groups)) {
@@ -8267,6 +8275,15 @@ async function renderMarketGrid(): Promise<void> {
       const symZeile = cell.querySelector('.mkt-sym')!;
       symZeile.innerHTML = symbolAvatar(symbol, true);
       symZeile.appendChild(document.createTextNode(symbol));
+      // Frische, gegengeprüfte KI-Einordnung (Task 22) — Einzelheiten im Detailblatt.
+      const kiJetzt = kiAktuell(kiVerlaufAus(kiAlle.get(symbol)), symbol, Date.now());
+      if (kiJetzt) {
+        const abz = document.createElement('span');
+        abz.className = `mkt-ki ${kiJetzt.richtung === 'positiv' ? 'c-gn' : 'c-rd'}`;
+        abz.textContent = `KI${kiJetzt.richtung === 'positiv' ? '▲' : '▼'}`;
+        abz.title = t('kie.abzeichenTitel');
+        symZeile.appendChild(abz);
+      }
       cell.querySelector('.mkt-cnm')!.textContent = name;
       if (q) {
         cell.querySelector('.mkt-pr')!.textContent = fmtNum(q.price);
@@ -8338,6 +8355,28 @@ function profilRaster(pr: MarketDocData['profil']): string {
     </dl>`;
 }
 
+/** Gespeicherte KI-Einordnungen (users/{uid}/kiAnzeige) — jeder Eintrag erneut gegen die Whitelist geprüft. */
+function kiVerlaufAus(roh: unknown): KiAnzeigeEintrag[] {
+  return Array.isArray(roh) ? roh.map(kiAnzeigeGespeichert).filter((e): e is KiAnzeigeEintrag => e !== null) : [];
+}
+
+/** Abschnitt „KI-Einordnung" im Detailblatt nachladen (eigene Daten des Kontos). */
+async function fuelleKiDetail(symbol: string): Promise<void> {
+  if (!st) return;
+  const ziel = document.getElementById('dKi');
+  const verlauf = kiVerlaufAus(await ladeKiAnzeige(st.uid, symbol).catch(() => null)).slice(0, 3);
+  if (!ziel || !ziel.isConnected || ziel.dataset.sym !== symbol || verlauf.length === 0) return;
+  const esc = (x: string): string => x.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]!);
+  const jetzt = Date.now();
+  const zeilen = verlauf.map((e) => {
+    const z = kiZeile(e, jetzt);
+    return `<div class="dki-z"><span class="dki-p c-${z.farbe}">${z.pfeil}</span>
+      <span class="dki-t">${esc(z.text)}${z.wirkt ? ` · <b>${esc(t('kie.wirkt'))}</b>` : ''}</span>
+      <span class="hint mono">${esc(z.wann)}</span></div>`;
+  }).join('');
+  ziel.innerHTML = `<div class="wl-sec" style="margin-top:10px">${esc(t('kie.titel'))}</div><div class="dki">${zeilen}</div><div class="hint dki-quelle">${esc(t('kie.quelle'))}</div>`;
+}
+
 function openDetail(symbol: string, name: string, data: MarketDocData | null): void {
   if (!st) return;
   // Longpress zeigte evtl. gerade das Steckbrief-Kärtchen — das Sheet
@@ -8381,6 +8420,7 @@ function openDetail(symbol: string, name: string, data: MarketDocData | null): v
       ${q ? `<button class="dbtn pri" id="dOpenChart">${t('dt.imChartOeffnen')}</button>` : ''}
     </div>
     ${veto}
+    <div id="dKi"></div>
     ${newsHtml ? `<div class="wl-sec" style="margin-top:10px">${t('dt.schlagzeilen')}</div><div class="dnews">${newsHtml}</div>` : ''}`;
   sheet.querySelector('h3')!.textContent = name;
   sheet.querySelector('.dmeta .mono')!.textContent = symbol;
@@ -8392,7 +8432,10 @@ function openDetail(symbol: string, name: string, data: MarketDocData | null): v
     steck.textContent = sText;
     steck.hidden = sText === '';
   }
+  ($('dKi') as HTMLElement).dataset.sym = symbol;
   $('detailModal').classList.add('show');
+  // KI-Einordnung (Task 22): eigene Daten des Kontos, nachgeladen — kein Fremdtext.
+  void fuelleKiDetail(symbol);
   sheet.querySelector('#dOpenChart')?.addEventListener('click', () => {
     closeModal('detail');
     selectSymbol(symbol);
@@ -9043,6 +9086,17 @@ async function oeffneTradeDetail(row: TradeRow): Promise<void> {
   const body = $('tdBody');
   if (!body) return;
 
+  // KI-Einordnung der Nachricht, die am Trade mitwirkte (Join über newsId).
+  const kiIdE = jE?.signalContext?.ki?.newsId;
+  const kiIdA = jA?.signalContext?.ki?.newsId;
+  const kiVerlauf = kiIdE || kiIdA ? kiVerlaufAus(await ladeKiAnzeige(uid, row.symbol).catch(() => null)) : [];
+  if (!st || st.uid !== uid || lauf !== tradeDetailLauf) return;
+  const kiGrund = (newsId: string | undefined): { art: 'info'; text: string } | null => {
+    if (!newsId) return null;
+    const e = kiEintragZu(kiVerlauf, newsId, row.symbol);
+    return { art: 'info', text: e ? t('kie.journal').replace('{0}', kiZeile(e, Date.now()).text) : t('kie.journalWeg') };
+  };
+
   const teile: string[] = [];
   if (einstiegRow) {
     const f: TradeGrundFakten = {
@@ -9053,7 +9107,10 @@ async function oeffneTradeDetail(row: TradeRow): Promise<void> {
       quelle: einstiegRow.quelle ?? ausstiegRow?.quelle,
     };
     const short = einstiegRow.short === true;
-    teile.push(gruendeHtml(einstiegsGruende(f), einstiegRow, t(short ? 'td.warumLeer' : 'td.warumKauf')));
+    const r = einstiegsGruende(f);
+    const kiE = kiGrund(kiIdE);
+    if (kiE) r.gruende.push(kiE);
+    teile.push(gruendeHtml(r, einstiegRow, t(short ? 'td.warumLeer' : 'td.warumKauf')));
   } else if (ausstiegRow) {
     // Eröffnung nicht geladen: Der Ausstieg trägt Steckbrief und Quelle der
     // Position — das reicht für den Weg, nicht für die einzelnen Stimmen.
@@ -9074,7 +9131,10 @@ async function oeffneTradeDetail(row: TradeRow): Promise<void> {
   if (ausstiegRow) {
     const f: TradeGrundFakten = { ...ausstiegRow, signalContext: jA?.signalContext };
     const cover = ausstiegRow.cover === true || ausstiegRow.side === 'buy';
-    teile.push(gruendeHtml(ausstiegsGruende(f), ausstiegRow, t(cover ? 'td.warumEindeck' : 'td.warumVerkauf')));
+    const r = ausstiegsGruende(f);
+    const kiA = kiGrund(kiIdA);
+    if (kiA) r.gruende.splice(1, 0, kiA);
+    teile.push(gruendeHtml(r, ausstiegRow, t(cover ? 'td.warumEindeck' : 'td.warumVerkauf')));
   } else {
     const offen = st.positions.some((p) => p.symbol === row.symbol);
     teile.push(`<section class="td-sek" data-teil="offen"><div class="wl-sec">${escText(t('td.warumVerkauf'))}</div>

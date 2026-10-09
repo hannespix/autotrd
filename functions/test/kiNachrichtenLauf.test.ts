@@ -258,6 +258,45 @@ describe('Abdeckung und Ablage', () => {
     expect(JSON.stringify(stand)).not.toMatch(/usd|konten/i);
   });
 
+  it('Anzeige-Kopie (Task 22): je Konto nur zu EIGENEN Symbolen, nur Whitelist, nie in market/**', async () => {
+    store.set('market/ACME', { symbol: 'ACME', price: 100 });
+    meldung('alp-1', { symbole: ['ACME', 'BETA'], symboleGenannt: 2 });
+    // u0 beobachtet ACME, u1 nur BETA — jedes Konto bekommt nur das Seine.
+    const tn = async () => ({
+      uids: new Set(['u0', 'u1']),
+      relevant: new Set(['ACME', 'BETA']),
+      jeKonto: new Map([['u0', new Set(['ACME'])], ['u1', new Set(['BETA', '..'])]]),
+    });
+    await runKiNachrichten({ aufruf, jetzt, teilnehmer: tn, laufId: 'A1' });
+    uhrMs += 5 * 60_000;
+    await runKiNachrichten({ aufruf, jetzt, teilnehmer: tn, laufId: 'A2' });
+    const ki = store.get('users/u0/kiAnzeige/ACME') as { v: number; verlauf: Array<Record<string, unknown>> };
+    expect(ki.v).toBe(1);
+    expect(ki.verlauf[0]).toMatchObject({ id: 'alp-1_ACME', newsId: 'alp-1', richtung: 'positiv', gegengeprueft: true, handlungsfaehig: true, eingepreist: 'nein', ereignis: 'zahlen' });
+    expect(store.has('users/u1/kiAnzeige/ACME')).toBe(false); // fremdes Symbol
+    expect(store.has('users/u0/kiAnzeige/BETA')).toBe(false);
+    expect([...store.keys()].some((k) => k.includes('/kiAnzeige/..'))).toBe(false);
+    expect(store.get('market/ACME')).toEqual({ symbol: 'ACME', price: 100 }); // market/** unberührt
+    const json = JSON.stringify([...store.entries()].filter(([k]) => k.includes('/kiAnzeige/')));
+    for (const verboten of ['Schlagzeile', 'Zusammenfassung', 'neu und wesentlich', '"klar"', 'kurskontext', 'usd', 'modell', 'laufId']) {
+      expect(json, verboten).not.toContain(verboten);
+    }
+    // Ein weiterer Lauf ohne Neues schreibt die Kopie nicht neu.
+    const vorher = JSON.stringify(store.get('users/u0/kiAnzeige/ACME'));
+    uhrMs += 5 * 60_000;
+    await runKiNachrichten({ aufruf, jetzt, teilnehmer: tn, laufId: 'A3' });
+    expect(JSON.stringify(store.get('users/u0/kiAnzeige/ACME'))).toBe(vorher);
+  });
+
+  it('ohne Zuordnung je Konto wird keine Anzeige-Kopie geschrieben (lieber nichts als zu viel)', async () => {
+    meldung('alp-1');
+    await lauf();
+    uhrMs += 5 * 60_000;
+    await lauf();
+    expect([...store.keys()].some((k) => k.includes('/kiAnzeige/'))).toBe(false);
+    expect(urteil('alp-1')).toMatchObject({ handlungsfaehig: true });
+  });
+
   it('Journal: jeder Aufruf eingetragen, gebucht ≤ reserviert, Summe = Tagesbuch', async () => {
     meldung('alp-1');
     await lauf();
