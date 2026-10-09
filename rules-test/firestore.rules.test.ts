@@ -221,6 +221,12 @@ describe('users/{uid}', () => {
     await assertFails(bob().collection('users/alice/kiAnzeige').get());
   });
 
+  it('absagen (Task 21): nur der Owner liest, schreiben darf nur der Server', async () => {
+    await assertSucceeds(alice().doc('users/alice/absagen/2026-10-09').get());
+    await assertFails(alice().doc('users/alice/absagen/2026-10-09').set({ s: {} }));
+    await assertFails(bob().doc('users/alice/absagen/2026-10-09').get());
+  });
+
   it('alerts gehören dem User komplett', async () => {
     await assertSucceeds(alice().doc('users/alice/alerts/a1').set({ symbol: 'QQQ', above: 700 }));
     await assertFails(bob().doc('users/alice/alerts/a2').set({ symbol: 'QQQ' }));

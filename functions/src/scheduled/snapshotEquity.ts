@@ -61,6 +61,7 @@ import {
   type Position,
   type SchattenKlasse,
 } from '../../../shared/src/index.js';
+import { absagenAufraeumen } from '../core/absagen.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { accrueMarginInterest } from '../core/broker.js';
 import { getQuickQuote } from '../core/marketData.js';
@@ -255,6 +256,9 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   let anwaerter: { bilanz: EngineBilanz; fehlt: string[] } | null = null;
   for (const userDoc of users.docs) {
     try {
+      // „Warum NICHT gekauft" (Task 21): alte Tagesdocs räumen — best-effort,
+      // ein Fehler hier berührt keinen Snapshot.
+      await absagenAufraeumen(userDoc.ref, now).catch((err: unknown) => logger.warn(`Absagen-Aufräumen ${userDoc.id}`, err));
       const roh = userDoc.get('wallet.paperBalance') as number | undefined;
       if (typeof roh !== 'number' || !Number.isFinite(roh)) continue; // kein Wallet → kein Snapshot
 

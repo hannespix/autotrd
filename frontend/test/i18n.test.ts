@@ -1289,7 +1289,9 @@ describe('Tranche 5n — die zehn Analyse- und Melde-Funktionen', () => {
     renderJournal: ['Auto', 'buy', 'sell', 'engine', 'closed', 'class', 'color', 'colspan',
       'digit', 'span', 'stag', 'style', 'var', 'auf', 'number', 'title', 'aria', 'label',
       // CSS-Klasse der klickbaren Zeile (Task 21, Trade-Journal) — der Titel läuft über t('td.zeileTitel').
-      'klick'],
+      'klick',
+      // Wert der Auswahl „Abgelehnte Signale" (Task 21, Phase 2) — Anzeige über t('abs.option').
+      'absagen'],
     updateOrderPreview: ['buy', 'sell', 'short', 'exposure', 'maximumFractionDigits', 'secs'],
     renderWatchHint: [],
     renderStruktur: ['DSR', 'Sharpe', 'Test', 'buy', 'start', 'class', 'digit', 'div',

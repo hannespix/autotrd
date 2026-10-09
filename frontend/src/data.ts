@@ -18,6 +18,7 @@ import {
   type Steuerbericht,
   type Strategy,
   type Wallet,
+  absagenAusTag,
 } from '@autotrd/shared';
 import {
   collection,
@@ -1896,6 +1897,23 @@ export async function saveWorkspace(uid: string, data: WorkspaceDocData): Promis
 export async function ladeKiAnzeige(uid: string, symbol: string): Promise<unknown> {
   const snap = await getDoc(doc(db(), 'users', uid, 'kiAnzeige', symbol));
   return snap.exists() ? snap.get('verlauf') : null;
+}
+
+/** Eine abgewiesene Einstiegsprüfung samt Handelstag (Task 21, „Warum nicht gekauft"). */
+export type AbsageZeile = import('@autotrd/shared').AbsageEintrag & { tag: string };
+
+/**
+ * Abgewiesene Signale der letzten `tage` Handelstage (users/{uid}/absagen,
+ * Doc-ID = Handelstag). Jeder Eintrag wird gegen die Whitelist geprüft.
+ */
+export async function ladeAbsagen(uid: string, tage = 3): Promise<AbsageZeile[]> {
+  // Firestore kann Schlüssel nicht absteigend scannen — deshalb ein Datumsfenster
+  // (Doc-ID = Handelstag, lexikografisch = chronologisch); sortiert wird danach.
+  const ab = new Date(Date.now() - (tage + 1) * 86_400_000).toISOString().slice(0, 10);
+  const snap = await getDocs(query(collection(db(), 'users', uid, 'absagen'), where(documentId(), '>=', ab), limit(tage + 2)));
+  return snap.docs
+    .flatMap((d) => absagenAusTag(d.data()).map((e) => ({ ...e, tag: d.id })))
+    .sort((a, b) => (a.zuletzt < b.zuletzt ? 1 : a.zuletzt > b.zuletzt ? -1 : 0));
 }
 
 /** Alle KI-Einordnungen des Kontos (fürs Abzeichen im Markt-Raster) — ein Symbol je Doc. */

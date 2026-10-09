@@ -1821,3 +1821,13 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
 .dki-p { font-weight: 700; text-align: center; }
 .dki-quelle { margin-top: 6px; font-size: 11px; }
 .mkt-ki { margin-left: 4px; font-size: 9.5px; font-weight: 700; letter-spacing: .02em; }
+
+/* „Warum NICHT gekauft" (Task 21): Absage-Zeilen in der Historie. */
+.abs-liste { display: grid; gap: 0; }
+.abs-hinweis { font-size: 11px; line-height: 1.4; padding: 4px 2px 8px; }
+.abs-zeile { padding: 7px 2px; border-bottom: 1px solid var(--hair); }
+.abs-kopfzeile { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.abs-zeit { color: var(--t3); font-size: 11px; }
+.abs-sym { color: var(--t1); }
+.abs-n { margin-left: auto; color: var(--t2); }
+.abs-grund { margin-top: 3px; font-size: 12px; line-height: 1.35; color: var(--t2); }

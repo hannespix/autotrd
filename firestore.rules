@@ -127,6 +127,12 @@ service cloud.firestore {
         allow read: if isOwner(uid);
         allow write: if false;
       }
+      // „Warum NICHT gekauft" (Task 21): abgewiesene Einstiegssignale je
+      // Handelstag — nur feste Codes und Zahlen; schreibt nur der Scan.
+      match /absagen/{tag} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
       match /stats/{doc} {
         allow read: if isOwner(uid);
         allow write: if false;
