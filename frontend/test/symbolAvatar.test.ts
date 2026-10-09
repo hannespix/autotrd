@@ -69,8 +69,11 @@ describe('Quelltext-Pins — Einbau und Palette', () => {
   it('die drei Kern-Listen tragen das Monogramm (Livebar, Signale, Positionen)', () => {
     expect(dashboard.match(/symbolAvatar\(/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
     expect(dashboard).toContain('lbSym.innerHTML = symbolAvatar(sym, true)');
-    expect(dashboard).toContain('sigSym.innerHTML = symbolAvatar(sym, true)');
-    expect(dashboard).toContain('symTd.innerHTML = symbolAvatar(p.symbol)');
+    // Signale und Positionen rendern das Symbol seit Task 23 als Etikett —
+    // das Etikett selbst trägt den Avatar (symbolEtikett → symbolAvatar).
+    expect(dashboard).toContain('sigSym.innerHTML = symbolEtikett(sym);');
+    expect(dashboard).toContain('symTd.innerHTML = symbolEtikett(p.symbol, false);');
+    expect(dashboard).toContain('${mitAvatar ? symbolAvatar(sym, true) : \'\'}${escText(sym)}</span>');
   });
 
   it('die Fallback-Kette ist verdrahtet und der Logo-Weg läuft über UNSEREN Proxy', () => {

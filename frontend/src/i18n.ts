@@ -1186,6 +1186,7 @@ export const DE = {
   'kt.aktuelleRegeln': 'Aktuelle Regeln — was schlägt an?',
   'kt.faelle': 'Fälle',
   'kt.mittlFehler': 'Ø Fehler',
+  'sym.detailTitel': 'Details zu diesem Wert öffnen',
   'td.schliessen': 'Schließen',
   /* „Warum NICHT gekauft" (Task 21, Phase 2). */
   'abs.option': 'Abgelehnte Signale',
@@ -2937,6 +2938,7 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'kt.aktuelleRegeln': 'Current rules — what triggers?',
   'kt.faelle': 'Cases',
   'kt.mittlFehler': 'Avg error',
+  'sym.detailTitel': 'Open details for this symbol',
   'td.schliessen': 'Close',
   'abs.option': 'Rejected signals',
   'abs.laedt': 'Loading rejected signals …',

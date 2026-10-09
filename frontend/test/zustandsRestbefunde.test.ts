@@ -72,7 +72,8 @@ describe('F11-Rest — anonyme document-Listener am Abbruch-Signal', () => {
     // Login-Zyklus an und schreiben nach dem Abmelden in ein totes DOM.
     const aufrufe = dashboard.match(/document\.addEventListener\(/g) ?? [];
     const benannt = (dashboard.match(/document\.addEventListener\('keydown', on[A-Z]\w+\)/g) ?? []).length;
-    const mitSignal = (dashboard.match(/\}, \{ signal: docListenerSignal\(\) \}\)/g) ?? []).length;
+    // Capture-Listener (Task 23, Symbol-Links) tragen das Signal neben `capture: true`.
+    const mitSignal = (dashboard.match(/\}, \{ (?:capture: true, )?signal: docListenerSignal\(\) \}\)/g) ?? []).length;
     expect(aufrufe.length).toBe(benannt + mitSignal);
     expect(mitSignal).toBeGreaterThanOrEqual(5);
   });

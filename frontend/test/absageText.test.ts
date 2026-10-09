@@ -37,6 +37,7 @@ describe('absageText', () => {
 
   it('Anzeige nur über textContent/escText — kein gespeicherter Wert roh im Markup', () => {
     expect(dashboard).toContain("el.querySelector('.abs-grund')!.textContent = weitere ? `${grund} — ${weitere}` : grund;");
-    expect(dashboard).toContain("el.querySelector('.abs-sym')!.textContent = e.symbol;");
+    // Das Symbol ist ein Etikett (Task 23) — symbolEtikett escaped selbst.
+    expect(dashboard).toContain('<b class="abs-sym">${symbolEtikett(e.symbol, false)}</b>');
   });
 });
