@@ -1139,6 +1139,11 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
 .er-these { font-size: 12px; line-height: 1.45; color: var(--t1); font-weight: 600; }
 /* Widerlegt: der Satz gilt nicht mehr, soll aber lesbar bleiben. */
 .er-e[data-status='gilt_nicht'] .er-these { color: var(--t2); font-weight: 500; }
+/* Klartext (09.10.): Etikett nach Bedeutung; „zu wenig Daten" bleibt leise. */
+.tn-tag.tn-prob { background: var(--rd-soft); color: var(--rd); }
+.tn-tag.tn-hinw { background: var(--ac-soft); color: var(--ac); }
+.er-e[data-ton='offen'] .er-these { color: var(--t2); font-weight: 500; }
+.er-e .tn-tag { text-transform: none; letter-spacing: 0; }
 .er-beleg { font-size: 10px; color: var(--t3); margin-top: 4px; font-variant-numeric: tabular-nums; word-break: break-word; }
 .er-vor { font-size: 11px; line-height: 1.4; color: var(--t3); margin-top: 4px; }
 /* Der Bericht ist ein Fließtext von ~200 Wörtern — `.hint` mit 9 px wäre

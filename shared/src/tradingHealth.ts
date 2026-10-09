@@ -205,6 +205,13 @@ export interface TradingHealth {
    * („frisst die Reibung die Rendite?"), verrät aber keine Kontogröße.
    */
   feeShare: number | null;
+  /**
+   * Vorzeichen des Bruttoergebnisses (−1/0/+1, Laien-Leser 09.10.):
+   * `feeShare` rechnet mit dem BETRAG — bei einem Bruttoverlust las sich
+   * „Gebühren 30 % des Ergebnisses" sonst wie „im Rahmen". Nur das
+   * Vorzeichen, kein Betrag — verrät keine Kontogröße.
+   */
+  bruttoVorzeichen: -1 | 0 | 1;
   /** Ausstiegsgründe als Anteile — die wichtigste Einzeldiagnose. */
   exits: Record<string, ExitShare>;
   /** Dieselbe Diagnose, aber NUR über die letzten `EXIT_FENSTER_TAGE`. */
@@ -490,6 +497,7 @@ export function aggregateTradingHealth(
     winRatePct: trades > 0 ? Math.round((wins / trades) * 10_000) / 100 : null,
     profitFactor: grossLoss > 0 ? r4(grossWin / grossLoss) : null,
     feeShare: brutto > 0 ? r4(fees / brutto) : null,
+    bruttoVorzeichen: grossPnl > 0 ? 1 : grossPnl < 0 ? -1 : 0,
     exits,
     exits7t,
     trades7t,

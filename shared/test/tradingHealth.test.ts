@@ -109,6 +109,7 @@ describe('aggregateTradingHealth: Gebührenanteil', () => {
       konto(10, 5, { costs: { n: 10, fees: 30, grossPnl: 100 } }),
     ]);
     expect(h.feeShare).toBeCloseTo(0.3, 4);
+    expect(h.bruttoVorzeichen).toBe(1);
   });
 
   it('bleibt bei einem Brutto-VERLUST positiv', () => {
@@ -118,10 +119,14 @@ describe('aggregateTradingHealth: Gebührenanteil', () => {
       konto(10, 2, { costs: { n: 10, fees: 30, grossPnl: -100 } }),
     ]);
     expect(h.feeShare).toBeCloseTo(0.3, 4);
+    // Der Anteil allein verrät das Vorzeichen nicht — die Erkenntnis-
+    // Chronik braucht es, um „schon vor Gebühren im Minus" zu sagen.
+    expect(h.bruttoVorzeichen).toBe(-1);
   });
 
   it('ohne Kostendaten ⇒ null', () => {
     expect(aggregateTradingHealth([konto(5, 2)]).feeShare).toBeNull();
+    expect(aggregateTradingHealth([konto(5, 2)]).bruttoVorzeichen).toBe(0);
   });
 });
 

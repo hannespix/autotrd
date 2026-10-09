@@ -150,6 +150,35 @@ describe('KI_SYSTEM', () => {
     expect(KI_SYSTEM).toContain('Deutsch');
   });
 
+  it('schreibt für Laien (Owner 09.10.): kein Jargon, Klassen beim deutschen Namen, lesbar gerundet', () => {
+    expect(KI_SYSTEM).toContain('KEIN Trader');
+    expect(KI_SYSTEM).toContain('Kein Fachjargon');
+    expect(KI_SYSTEM).toContain('stocks_us = US-Aktien');
+    expect(KI_SYSTEM).toContain('crypto = Krypto');
+    expect(KI_SYSTEM).toContain('„rund 48 %" statt „48,93 %"');
+    // Laien-Leser 09.10.: Trades und Messungen nie verwechseln; gut/schlecht nach Gebühren.
+    expect(KI_SYSTEM).toContain('Schreib nie „Trades", wenn Messungen gemeint sind.');
+    expect(KI_SYSTEM).toContain('bemisst sich am Ergebnis NACH Gebühren');
+    expect(KI_SYSTEM).toContain('abwarten, bis mehr Daten da sind');
+  });
+
+  it('Eingabe: Bedeutung je Eintrag, Alt-Sätze aus der Fachsprache-Zeit nicht zitiert, Messreihen als Messungen erklärt', () => {
+    const chronik = {
+      date: '2026-10-09',
+      eintraege: {
+        a: { these: 'Neu.', status: 'gilt', ton: 'problem', seitAt: '2026-10-01T00:00:00Z', zuletztAt: 'x', beleg: {}, historie: [{ at: '2026-09-01T00:00:00Z', von: 'gilt_nicht', nach: 'gilt', these: 'Die Reibung dominiert.' }] },
+        b: { these: 'Klar.', status: 'gilt', ton: 'gut', seitAt: '2026-10-01T00:00:00Z', zuletztAt: 'x', beleg: {}, historie: [{ at: '2026-09-02T00:00:00Z', von: 'gilt_nicht', nach: 'gilt', these: 'Vorher klar.', klar: true }] },
+      },
+    } as unknown as Parameters<typeof baueEingabe>[0];
+    const s = baueEingabe(chronik, { trading: { trades: 10, feeShare: 0.42 }, signalSchatten: { live: { n: 5 } } });
+    expect(s).toContain('[gilt, Bedeutung problem, seit 2026-10-01]');
+    expect(s).not.toContain('Reibung');
+    expect(s).toContain('Wechsel am 2026-09-01 (vorher anders bewertet)');
+    expect(s).toContain('zuvor „Vorher klar."');
+    expect(s).toContain('Gebührenanteil 42 %');
+    expect(s).toContain('Messungen, KEINE Trades');
+  });
+
   it('der Token-Deckel ist gesetzt und moderat', () => {
     expect(KI_MAX_TOKENS).toBeGreaterThan(1000);
     expect(KI_MAX_TOKENS).toBeLessThanOrEqual(8000);

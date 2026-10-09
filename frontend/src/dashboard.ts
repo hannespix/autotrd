@@ -10752,6 +10752,41 @@ function renderHaltedauer(d: TagRueckblickDoc | null): void {
  * nachrechenbare Grundlage ist eine Behauptung, und genau davon hat ein
  * Handelssystem schon genug.
  */
+/**
+ * Die Zahlen hinter einem Erkenntnis-Satz, beschriftet statt als rohe
+ * Schlüssel (Owner 09.10.: „n 60 · klasse crypto · kantePct -0,32" versteht
+ * kein Laie). Unbekannte Schlüssel und reine Schwellen (stehen im Satz)
+ * fallen weg — lieber eine Zahl weniger als eine unverständliche.
+ */
+export function erBelegText(eintrag: string, beleg: Record<string, number | string | null> | undefined): string {
+  const de = (x: number, stellen: number): string =>
+    x.toLocaleString('de-DE', { minimumFractionDigits: stellen, maximumFractionDigits: stellen });
+  const vz = (x: number): string => `${x > 0 ? '+' : x < 0 ? '−' : ''}${de(Math.abs(x), 2)}`;
+  const teile: string[] = [];
+  for (const [k, v] of Object.entries(beleg ?? {})) {
+    // rohPct (vor Gebühren) fällt weg: auf zwei Stellen gerundet steht dort fast immer „+0,00 %" — eine Zahl ohne Aussage.
+    if (v === null || v === undefined || k === 'minN' || k === 'schwellePct' || k === 'rohPct') continue;
+    const n = typeof v === 'number' ? v : null;
+    switch (k) {
+      case 'nTrades': if (n !== null) teile.push(t('er.bTrades').replace('{0}', de(n, 0))); break;
+      case 'n': if (n !== null) teile.push(t(eintrag.startsWith('klasse_') ? 'er.bTrades' : 'er.bMessungen').replace('{0}', de(n, 0))); break;
+      // je Trade (Klassen) vs. je Signal (Messreihen) — Laien-Leser 09.10.: allein „nach Gebühren" fehlte der Bezug.
+      case 'kantePct': if (n !== null) teile.push(t(eintrag.startsWith('klasse_') ? 'er.bJeTrade' : 'er.bJeSignal').replace('{0}', vz(n))); break;
+      case 'trefferquotePct': if (n !== null) teile.push(t('er.bTreffer').replace('{0}', de(n, 1))); break;
+      case 'trefferquote': if (n !== null) teile.push(t('er.bTreffer').replace('{0}', de(n * 100, 1))); break;
+      case 'feeSharePct': if (n !== null) teile.push(t('er.bGebuehren').replace('{0}', de(n, 0))); break;
+      case 'anteilSignalPct': if (n !== null) teile.push(t('er.bSignalVerkauf').replace('{0}', de(n, 0))); break;
+      case 'alterMin': if (n !== null) teile.push(t('er.bHaltedauer').replace('{0}', de(n / 60, 1))); break;
+      case 'geprueft': if (n !== null) teile.push(t('er.bGetestet').replace('{0}', de(n, 0))); break;
+      case 'befoerdert': if (n !== null) teile.push(t('er.bBesser').replace('{0}', de(n, 0))); break;
+      case 'klasse': teile.push(CLASS_LABELS[String(v)] ?? String(v)); break;
+      case 'datum': if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) teile.push(`${v.slice(8, 10)}.${v.slice(5, 7)}.`); break;
+      default: break;
+    }
+  }
+  return teile.join(' · ');
+}
+
 function renderErkenntnisse(c: ErkenntnisChronik | null): void {
   const box = $('erList');
   const stand = $('erDate');
@@ -10766,31 +10801,47 @@ function renderErkenntnisse(c: ErkenntnisChronik | null): void {
       `<div class="hint">${t('er.ersteChronik')}</div>`;
     return;
   }
-  const rang: Record<string, number> = { gilt: 0, gilt_nicht: 1, wartet_auf_daten: 2 };
+  // Klartext (09.10.): Das Etikett sagt, was der Befund BEDEUTET (gut,
+  // Problem, Hinweis, zu wenig Daten) — nicht, ob eine These „gilt". Alte
+  // Einträge ohne Ton (vor dem ersten Lauf nach dem Deploy) behalten die
+  // bisherigen Etiketten, bis der Abendlauf sie neu schreibt.
+  const tonRang: Record<string, number> = { problem: 0, hinweis: 1, gut: 2, offen: 3 };
+  const rang: Record<string, number> = { gilt: 10, gilt_nicht: 11, wartet_auf_daten: 12 };
+  const tonMarke: Record<string, string> = {
+    gut: `<span class="tn-tag tn-ok">✓ ${t('er.tonGut')}</span>`,
+    problem: `<span class="tn-tag tn-prob">⚠ ${t('er.tonProblem')}</span>`,
+    hinweis: `<span class="tn-tag tn-hinw">ℹ ${t('er.tonHinweis')}</span>`,
+    offen: `<span class="tn-tag">⏳ ${t('er.tonOffen')}</span>`,
+  };
   const marke: Record<string, string> = {
     gilt: '<span class="tn-tag tn-ok">gilt</span>',
     gilt_nicht: '<span class="tn-tag">widerlegt</span>',
     wartet_auf_daten: `<span class="tn-tag">${t('er.wartetAufDaten')}</span>`,
   };
+  const ordnung = (e: (typeof eintraege)[number][1]): number =>
+    (e.ton ? tonRang[e.ton] : undefined) ?? rang[e.status] ?? 99;
+  const datum = (iso: string): string => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
   box.innerHTML = eintraege
-    .sort((a, b) => (rang[a[1].status] ?? 9) - (rang[b[1].status] ?? 9) || a[0].localeCompare(b[0]))
-    .map(([, e]) => {
-      const belege = Object.entries(e.beleg ?? {})
-        .map(([k, v]) => `${k} ${typeof v === 'number' ? String(Math.round(v * 100) / 100).replace('.', ',') : (v ?? '--')}`)
-        .join(' · ');
-      const seit = e.seitAt ? `${t('ap.seit')} ${e.seitAt.slice(0, 10)}` : '';
+    .sort((a, b) => ordnung(a[1]) - ordnung(b[1]) || a[0].localeCompare(b[0]))
+    .map(([key, e]) => {
+      const belege = erBelegText(key, e.beleg);
+      const seit = e.seitAt ? `${t('ap.seit')} ${datum(e.seitAt)}` : '';
       // Ein Wechsel ist die eigentliche Nachricht — ohne ihn wüsste man nie,
-      // dass eine frühere Annahme gekippt ist.
+      // dass eine frühere Annahme gekippt ist. Alt-Sätze aus der
+      // Fachsprache-Zeit werden nicht zitiert, nur der Wechsel genannt.
       const letzter = e.historie?.[e.historie.length - 1];
       const wechsel = letzter
-        ? `<div class="er-vor">${t('er.zuvor')} (${letzter.at.slice(0, 10)}): ${esc(letzter.these)}</div>`
+        ? letzter.klar
+          ? `<div class="er-vor">${t('er.zuvor')} (${datum(letzter.at)}): ${esc(letzter.these)}</div>`
+          : `<div class="er-vor">${t('er.zuvorAnders').replace('{0}', datum(letzter.at))}</div>`
         : '';
       // Status und Datum stehen ÜBER dem Satz, nicht daneben: In einer
       // Flex-Zeile schrumpfen weder das Tag noch das nowrap-Datum, der Satz
       // bekäme also nur den Rest — auf dem Handy gemessene 141 von 310 px.
+      const attr = e.ton ? `data-ton="${esc(e.ton)}"` : `data-status="${esc(e.status)}"`;
       return (
-        `<div class="er-e" data-status="${esc(e.status)}">` +
-        `<div class="er-meta">${marke[e.status] ?? ''}<span class="tn-t mono">${seit}</span></div>` +
+        `<div class="er-e" ${attr}>` +
+        `<div class="er-meta">${(e.ton ? tonMarke[e.ton] : undefined) ?? marke[e.status] ?? ''}<span class="tn-t mono">${seit}</span></div>` +
         `<div class="er-these">${esc(e.these)}</div>` +
         (belege ? `<div class="er-beleg mono">${esc(belege)}</div>` : '') +
         wechsel +

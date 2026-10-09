@@ -754,7 +754,8 @@ describe('Auswertungs-Karten sind zweisprachig (Tranche 5g)', () => {
      * deutscher. Deshalb je Absatz eine Probe auf das ENDE. */
     expect(EN['dc.hinweis']).toContain('since the start of the window');
     expect(EN['hd.hinweis']).toContain('not the signal');
-    expect(EN['er.hinweis']).toContain('nothing is claimed');
+    // Klartext-Fassung 09.10.: Probe auf das ENDE des neuen Absatzes.
+    expect(EN['er.hinweis']).toContain('instead of a claim');
     for (const k of ['dc.hinweis', 'hd.hinweis', 'er.hinweis'] as const) {
       expect(EN[k]!.length, `${k} wirkt abgeschnitten`).toBeGreaterThan(200);
     }
