@@ -85,6 +85,10 @@ import {
   benchmarkKurve,
   benchmarkSatz,
   volDurchschnittFrisch,
+  einstiegsGruende,
+  ausstiegsGruende,
+  type TradeGruende,
+  type TradeGrundFakten,
 } from '@autotrd/shared';
 import type { Unsubscribe } from 'firebase/firestore';
 import {
@@ -132,6 +136,7 @@ import {
   loadBarsOnce,
   loadIntraday,
   ladeJournalZuZeit,
+  ladeJournal,
   loadIntradayChunks,
   tagVorTagen,
   loadDailyChunk,
@@ -234,6 +239,7 @@ import { kartenAussage } from './shareAussage.js';
 import {
   type KursPunkt,
   type TradeStoryDaten,
+  gegenstueck,
   kursFenster,
   storyKontext,
   waehleTradeStory,
@@ -1245,6 +1251,13 @@ function layout(email: string): string {
   <div class="dmodal" id="detailModal">
     <div class="dmodal-bg" data-close="detail"></div>
     <div class="dsheet" id="detailSheet"></div>
+  </div>
+
+  <!-- Trade-Journal (Task 21, Owner 09.10.): Klick auf eine Zeile der
+       Historie erklärt, warum gekauft und warum verkauft wurde. -->
+  <div class="dmodal" id="tradeModal">
+    <div class="dmodal-bg" data-close="trade"></div>
+    <div class="dsheet" id="tradeSheet" style="width:min(560px,100%)"></div>
   </div>
 
   <!-- Handels-Analyse als eigene Vollbild-Ansicht (Owner-Feedback 28.07.:
@@ -5051,6 +5064,30 @@ function wireSortKopf(bodyId: string, key: 'sig' | 'jn', anwenden: () => void): 
 function wireHistorie(): void {
   wireSortKopf('sigBody', 'sig', sortiereSigZeilen);
   wireSortKopf('jBody', 'jn', renderJournal);
+  const jb = $('jBody');
+  if (jb && jb.dataset.wiredKlick !== '1') {
+    jb.dataset.wiredKlick = '1';
+    // Ein langer Druck zeigt den Symbol-Steckbrief (450 ms, symbolSteckbrief.ts)
+    // — der Klick danach darf nicht zusätzlich das Journal öffnen.
+    let druckAb = 0;
+    jb.addEventListener('pointerdown', () => { druckAb = Date.now(); });
+    const zeile = (e: Event): TradeRow | null => {
+      const tr = (e.target as HTMLElement).closest<HTMLElement>('tr[data-ji]');
+      return tr ? (jZeilen[Number(tr.dataset.ji)] ?? null) : null;
+    };
+    jb.addEventListener('click', (e) => {
+      if (druckAb > 0 && Date.now() - druckAb > 400) return;
+      const row = zeile(e);
+      if (row) void oeffneTradeDetail(row);
+    });
+    jb.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const row = zeile(e);
+      if (!row) return;
+      e.preventDefault();
+      void oeffneTradeDetail(row);
+    });
+  }
   const mehr = $('jMore');
   if (mehr && mehr.dataset.wired !== '1') {
     mehr.dataset.wired = '1';
@@ -8353,6 +8390,7 @@ function openDetail(symbol: string, name: string, data: MarketDocData | null): v
 
 const MODAL_IDS = {
   detail: 'detailModal',
+  trade: 'tradeModal',
   options: 'optModal',
   analytics: 'anModal',
   stop: 'stopModal',
@@ -8874,9 +8912,16 @@ function renderJournal(): void {
     }</td></tr>`;
     return;
   }
-  for (const t of zeilen) {
+  jZeilen = zeilen;
+  const zeileTitel = t('td.zeileTitel'); // vor der Schleife: `t` ist darin die Zeile
+  zeilen.forEach((t, i) => {
     const tr = document.createElement('tr');
     tr.dataset.sym = t.symbol; // Anker für den Symbol-Steckbrief (18:1x)
+    // Klick/Enter öffnet das Trade-Journal (Task 21).
+    tr.dataset.ji = String(i);
+    tr.tabIndex = 0;
+    tr.className = 'j-klick';
+    tr.title = zeileTitel;
     const time = new Date(t.executedAt).toLocaleString('de-DE', {
       day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
     });
@@ -8887,7 +8932,129 @@ function renderJournal(): void {
       <td class="${t.pnl !== undefined ? pnlClass(t.pnl) : ''}">${t.pnl !== undefined ? money(t.pnl) : '—'}</td>`;
     tr.querySelectorAll('td')[1]!.textContent = t.symbol + (t.source === 'engine' ? ' · Auto' : '');
     jb.appendChild(tr);
+  });
+}
+
+/** Die zuletzt gezeichneten Historie-Zeilen — Index = `data-ji`. */
+let jZeilen: TradeRow[] = [];
+/** Laufende Detail-Anfrage: Ein späterer Klick verwirft eine ältere Antwort. */
+let tradeDetailLauf = 0;
+
+/** Journal-Doc eines Trades: über die ID (= Trade-ID), sonst über den Zeitstempel. */
+async function journalZuTrade(uid: string, row: TradeRow): Promise<JournalRow | null> {
+  try {
+    return row.id ? await ladeJournal(uid, row.id) : await ladeJournalZuZeit(uid, row.executedAt);
+  } catch {
+    return null; // Ohne Journal bleiben die Fakten des Trade-Docs — ehrlich als Lücke markiert.
   }
+}
+
+function tradeZeit(iso: string): string {
+  return new Date(iso).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+/* Das Blatt formatiert wie die Gründe-Texte (shared/tradeGruende: „−20,70 $")
+ * — sonst stünden „$-20.70" und „−20,70 $" untereinander (CLAUDE.md §8,
+ * Naht-Befund 21.08.: Punkt und Komma in derselben Karte). */
+const deZahl = (n: number, max = 2): string =>
+  n.toLocaleString('de-DE', { minimumFractionDigits: Math.abs(n) >= 1 ? 2 : 0, maximumFractionDigits: max });
+const deGeld = (n: number): string => `${n > 0 ? '+' : n < 0 ? '−' : ''}${deZahl(Math.abs(n))} $`;
+
+function gruendeHtml(r: TradeGruende, row: TradeRow | null, frage: string, wannErsatz = ''): string {
+  const ICON: Record<string, string> = { pro: '✓', contra: '✗', info: '•', luecke: '?' };
+  const wann = row
+    ? ` · ${tradeZeit(row.executedAt)} · ${row.qty.toLocaleString('de-DE', { maximumFractionDigits: 6 })} × ${deZahl(row.price, 4)}`
+    : wannErsatz;
+  return `<section class="td-sek" data-teil="${r.art}">
+    <div class="wl-sec">${escText(frage)}</div>
+    <div class="td-kopf">${escText(r.titel)}${escText(wann)}</div>
+    <ul class="td-gr">${r.gruende
+      .map((g) => `<li data-art="${g.art}" data-icon="${ICON[g.art] ?? '•'}">${escText(g.text)}</li>`)
+      .join('')}</ul>
+  </section>`;
+}
+
+/**
+ * Trade-Journal einer Historie-Zeile (Task 21, Owner 09.10.: „wenn man drauf
+ * klickt, die Entscheidungsgründe … festhalten, so dass man ein richtig
+ * schönes Trading-Journal hat").
+ *
+ * Zeigt Kauf UND Verkauf zusammen, egal welche der beiden Zeilen man
+ * anklickt: Das Gegenstück kommt aus der geladenen Historie
+ * (`gegenstueck`). Gründe stammen ausschließlich aus eingefrorenen Fakten
+ * (Journal- und Trade-Doc, `shared/tradeGruende.ts`) — was nicht
+ * gespeichert wurde, steht als Lücke da, statt rekonstruiert zu werden.
+ */
+async function oeffneTradeDetail(row: TradeRow): Promise<void> {
+  if (!st) return;
+  const uid = st.uid;
+  const lauf = ++tradeDetailLauf;
+  const sheet = $('tradeSheet');
+  const ausstieg = typeof row.pnl === 'number';
+  const gegen = gegenstueck(row, st.trades);
+  const einstiegRow = ausstieg ? gegen : row;
+  const ausstiegRow = ausstieg ? row : gegen;
+  // Kopf zeigt die POSITION (Long/Short), nicht die angeklickte Zeile: Ein
+  // ▼ am Verkauf einer Long-Position läse sich wie ein Short.
+  const shortPos = einstiegRow?.short === true || ausstiegRow?.cover === true;
+  const ri = tradeRichtung(shortPos ? { side: 'sell', short: true } : { side: 'buy' });
+  const ergebnis = ausstiegRow && typeof ausstiegRow.pnl === 'number'
+    ? `<span class="mono ${pnlClass(ausstiegRow.pnl)}">${escText(deGeld(ausstiegRow.pnl))}</span>`
+    : '';
+  sheet.innerHTML = `<button class="dclose" data-close="trade" aria-label="${escText(t('td.schliessen'))}">✕</button>
+    <h3 data-sym="${escText(row.symbol)}">${escText(row.symbol)}</h3>
+    <div class="dmeta"><span class="stag ${ri.klasse}">${ri.pfeil} ${escText(ri.text)}</span>${ergebnis}</div>
+    <div id="tdBody" class="hint" role="status">${escText(t('td.laedt'))}</div>`;
+  $('tradeModal').classList.add('show');
+
+  const [jE, jA] = await Promise.all([
+    einstiegRow ? journalZuTrade(uid, einstiegRow) : Promise.resolve(null),
+    ausstiegRow ? journalZuTrade(uid, ausstiegRow) : Promise.resolve(null),
+  ]);
+  if (!st || st.uid !== uid || lauf !== tradeDetailLauf) return;
+  const body = $('tdBody');
+  if (!body) return;
+
+  const teile: string[] = [];
+  if (einstiegRow) {
+    const f: TradeGrundFakten = {
+      ...einstiegRow,
+      signalContext: jE?.signalContext,
+      assetClass: jE?.assetClass,
+      bucket: jE?.bucket ?? einstiegRow.bucket ?? ausstiegRow?.bucket,
+      quelle: einstiegRow.quelle ?? ausstiegRow?.quelle,
+    };
+    const short = einstiegRow.short === true;
+    teile.push(gruendeHtml(einstiegsGruende(f), einstiegRow, t(short ? 'td.warumLeer' : 'td.warumKauf')));
+  } else if (ausstiegRow) {
+    // Eröffnung nicht geladen: Der Ausstieg trägt Steckbrief und Quelle der
+    // Position — das reicht für den Weg, nicht für die einzelnen Stimmen.
+    const cover = ausstiegRow.cover === true || ausstiegRow.side === 'buy';
+    const f: TradeGrundFakten = {
+      side: cover ? 'sell' : 'buy',
+      short: cover,
+      bucket: ausstiegRow.bucket,
+      quelle: ausstiegRow.quelle,
+      sync: ausstiegRow.sync,
+      assetClass: jA?.assetClass,
+    };
+    const r = einstiegsGruende(f);
+    r.gruende.unshift({ art: 'luecke', text: t('td.kaufNichtGeladen') });
+    const wann = ausstiegRow.acquiredAt ? ` · ${tradeZeit(ausstiegRow.acquiredAt)}` : '';
+    teile.push(gruendeHtml(r, null, t(cover ? 'td.warumLeer' : 'td.warumKauf'), wann));
+  }
+  if (ausstiegRow) {
+    const f: TradeGrundFakten = { ...ausstiegRow, signalContext: jA?.signalContext };
+    const cover = ausstiegRow.cover === true || ausstiegRow.side === 'buy';
+    teile.push(gruendeHtml(ausstiegsGruende(f), ausstiegRow, t(cover ? 'td.warumEindeck' : 'td.warumVerkauf')));
+  } else {
+    const offen = st.positions.some((p) => p.symbol === row.symbol);
+    teile.push(`<section class="td-sek" data-teil="offen"><div class="wl-sec">${escText(t('td.warumVerkauf'))}</div>
+      <p class="hint">${escText(t(offen ? 'td.nochOffen' : 'td.verkaufNichtGeladen'))}</p></section>`);
+  }
+  body.className = '';
+  body.removeAttribute('role');
+  body.innerHTML = teile.join('') + `<p class="hint td-fuss">${escText(t('td.fuss'))}</p>`;
 }
 
 /**

@@ -1287,7 +1287,9 @@ describe('Tranche 5n — die zehn Analyse- und Melde-Funktionen', () => {
     // Attributnamen des Erklär-Tooltips — DOM-Technik, kein Nutzer-Text
     // (der Text selbst läuft über t('jn.*Titel')).
     renderJournal: ['Auto', 'buy', 'sell', 'engine', 'closed', 'class', 'color', 'colspan',
-      'digit', 'span', 'stag', 'style', 'var', 'auf', 'number', 'title', 'aria', 'label'],
+      'digit', 'span', 'stag', 'style', 'var', 'auf', 'number', 'title', 'aria', 'label',
+      // CSS-Klasse der klickbaren Zeile (Task 21, Trade-Journal) — der Titel läuft über t('td.zeileTitel').
+      'klick'],
     updateOrderPreview: ['buy', 'sell', 'short', 'exposure', 'maximumFractionDigits', 'secs'],
     renderWatchHint: [],
     renderStruktur: ['DSR', 'Sharpe', 'Test', 'buy', 'start', 'class', 'digit', 'div',

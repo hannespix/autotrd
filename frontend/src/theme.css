@@ -1799,3 +1799,18 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
   .adm-liste.register { max-height: 320px; }
   .adm-kopf { gap: 12px; }
 }
+
+/* Trade-Journal (Task 21): Historie-Zeilen öffnen das Detail-Blatt. */
+.j-klick { cursor: pointer; }
+.j-klick:hover td { background: var(--sd); }
+.j-klick:focus-visible { outline: 2px solid var(--ac); outline-offset: -2px; }
+.td-sek { margin-top: 14px; }
+.td-kopf { font-size: 12px; color: var(--t2); margin: 2px 0 8px; }
+.td-gr { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.td-gr li { display: grid; grid-template-columns: 18px 1fr; gap: 6px; font-size: 13px; line-height: 1.45; color: var(--t1); }
+.td-gr li::before { content: attr(data-icon); font-weight: 700; text-align: center; }
+.td-gr li[data-art='pro']::before { color: var(--gn); }
+.td-gr li[data-art='contra']::before { color: var(--rd); }
+.td-gr li[data-art='info']::before { color: var(--t3); }
+.td-gr li[data-art='luecke'] { color: var(--t3); font-style: italic; }
+.td-fuss { margin-top: 14px; font-size: 11px; }

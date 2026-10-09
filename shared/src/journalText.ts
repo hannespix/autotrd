@@ -118,7 +118,8 @@ export function journalThese(e: JournalThesenFakten): string {
     gruende.push(`der Pfad „${sc.typ}" ausgelöst hat`);
   }
   if (sc?.forecast?.dir) {
-    const wohin = sc.forecast.dir === 'up' ? 'aufwärts' : 'abwärts';
+    // Gespeichert wird buy/sell (predictionVote); 'up' tragen nur Alt-Einträge.
+    const wohin = sc.forecast.dir === 'buy' || sc.forecast.dir === 'up' ? 'aufwärts' : 'abwärts';
     const gewicht =
       typeof sc.forecast.weight === 'number'
         ? ` (Gewicht ${sc.forecast.weight.toFixed(2).replace('.', ',')})`

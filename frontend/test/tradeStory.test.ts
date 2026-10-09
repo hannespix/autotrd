@@ -15,6 +15,7 @@ import {
   aktBei,
   aktPlan,
   findeTradePaare,
+  gegenstueck,
   kursFenster,
   storyKontext,
   tradeProzent,
@@ -210,5 +211,48 @@ describe('Quelltext-Pins — Ehrlichkeit des Maschinen-Videos', () => {
     expect(dashboard).toMatch(/loadIntradayChunks\(paar\.exit\.symbol/);
     expect(dashboard).toMatch(/loadDailyChunk\(paar\.exit\.symbol/);
     expect(dashboard).toContain("t('ts.keineKurse')");
+  });
+});
+
+describe('gegenstueck (Task 21: Kauf- und Verkaufsgrund zusammen)', () => {
+  const tr = (symbol: string, side: 'buy' | 'sell', executedAt: string, pnl?: number): HistoryTrade =>
+    ({ symbol, side, qty: 1, price: 10, executedAt, ...(pnl !== undefined ? { pnl } : {}) });
+  const kauf1 = tr('AAPL', 'buy', '2026-10-01T14:00:00Z');
+  const verkauf1 = tr('AAPL', 'sell', '2026-10-02T14:00:00Z', 5);
+  const kauf2 = tr('AAPL', 'buy', '2026-10-03T14:00:00Z');
+  const verkauf2 = tr('AAPL', 'sell', '2026-10-04T14:00:00Z', -3);
+  const fremd = tr('MSFT', 'sell', '2026-10-01T15:00:00Z', 1);
+  const alle = [verkauf2, kauf2, verkauf1, fremd, kauf1];
+
+  it('Ausstieg ⇒ jüngste Eröffnung davor, Eröffnung ⇒ frühester Schluss danach', () => {
+    expect(gegenstueck(verkauf2, alle)).toBe(kauf2);
+    expect(gegenstueck(verkauf1, alle)).toBe(kauf1);
+    expect(gegenstueck(kauf1, alle)).toBe(verkauf1);
+    expect(gegenstueck(kauf2, alle)).toBe(verkauf2);
+  });
+
+  it('offene Position oder nicht geladene Eröffnung ⇒ null, kein fremdes Symbol', () => {
+    const offen = tr('AAPL', 'buy', '2026-10-05T14:00:00Z');
+    expect(gegenstueck(offen, [...alle, offen])).toBeNull();
+    expect(gegenstueck(fremd, alle)).toBeNull();
+  });
+
+  it('Nachkauf zwischen Eröffnung und Verkauf: gepaart wird mit der ERÖFFNUNG (Red-Team H4)', () => {
+    const auf = tr('NVDA', 'buy', '2026-10-01T14:00:00Z');
+    const nach = tr('NVDA', 'buy', '2026-10-02T14:00:00Z');
+    const teil = { ...tr('NVDA', 'sell', '2026-10-02T18:00:00Z', 1), teilSchluss: true };
+    const zu = tr('NVDA', 'sell', '2026-10-03T14:00:00Z', 4);
+    const wieder = tr('NVDA', 'buy', '2026-10-04T14:00:00Z');
+    const zu2 = tr('NVDA', 'sell', '2026-10-05T14:00:00Z', 2);
+    const alle = [zu2, wieder, zu, teil, nach, auf];
+    expect(gegenstueck(zu, alle)).toBe(auf);
+    expect(gegenstueck(zu2, alle)).toBe(wieder);
+  });
+
+  it('Short: Leerverkauf (sell ohne Ergebnis) ⇔ Eindeckung (buy mit Ergebnis)', () => {
+    const auf = tr('TSLA', 'sell', '2026-10-01T14:00:00Z');
+    const zu = tr('TSLA', 'buy', '2026-10-01T16:00:00Z', 2);
+    expect(gegenstueck(auf, [zu, auf])).toBe(zu);
+    expect(gegenstueck(zu, [zu, auf])).toBe(auf);
   });
 });
