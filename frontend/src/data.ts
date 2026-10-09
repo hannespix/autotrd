@@ -1890,6 +1890,18 @@ export async function saveWorkspace(uid: string, data: WorkspaceDocData): Promis
 
 /** Quotes aller vorhandenen market/**-Docs (für die Markt-Übersicht). */
 /**
+ * Ein einzelnes market-Doc, einmalig (Task 23: Detailblatt für JEDES
+ * angeklickte Symbol — nicht nur die, die das Markt-Raster schon geladen hat).
+ * Füllt nebenbei den Kennzahlen-Cache für den Steckbrief.
+ */
+export async function ladeMarktDoc(symbol: string): Promise<MarketDocData | null> {
+  const snap = await getDoc(doc(db(), 'market', symbol));
+  const data = snap.exists() ? (snap.data() as MarketDocData) : null;
+  merkeKennzahlen(symbol, data);
+  return data;
+}
+
+/**
  * KI-Einordnungen zu EIGENEN Symbolen (Task 22): `users/{uid}/kiAnzeige/{sym}`,
  * je Konto geschrieben, damit niemand die Watchlist anderer ablesen kann.
  * Roh zurückgegeben — der Aufrufer prüft jeden Eintrag gegen die Whitelist.

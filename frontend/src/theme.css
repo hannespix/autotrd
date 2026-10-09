@@ -1282,8 +1282,12 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
   border: 1px solid var(--hair); border-radius: 999px; padding: 0 5px; color: var(--t3);
 }
 /* Symbol in der Positionstabelle: Klick holt die Position ins Chart */
-.pos-sym { cursor: pointer; }
-.pos-sym:hover { text-decoration: underline; }
+/* Symbol-Etikett (Task 23): überall anklickbar → Detailblatt. */
+.sym-link { cursor: pointer; border-radius: 4px; text-decoration-color: transparent; }
+.sym-link:hover { text-decoration: underline dotted; text-underline-offset: 3px; }
+.sym-link:focus-visible { outline: 2px solid var(--ac); outline-offset: 1px; }
+/* Das Detailblatt darf über jedem anderen Blatt liegen (Trade-Journal, Optionen). */
+#detailModal { z-index: 230; }
 
 /* Dashboard-Individualisierung Teil 1: Modul-Kopf (▾/✕), ⚙-Module, Sidebars */
 /* Ergonomie (Owner 21.08.): Klapp-Pfeil ganz links am Titel, die ganze

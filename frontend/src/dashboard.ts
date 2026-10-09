@@ -143,6 +143,7 @@ import {
   ladeJournal,
   ladeKiAnzeige,
   ladeKiAnzeigeAlle,
+  ladeMarktDoc,
   ladeAbsagen,
   type AbsageZeile,
   loadIntradayChunks,
@@ -1690,7 +1691,7 @@ function renderBrokerStatus(r: BrokerStatusResult): string {
              <th class="num">${t('br.abwBroker')}</th><th class="num">${t('br.abwDifferenz')}</th></tr></thead>
            <tbody>${r.abweichungen
              .map(
-               (a) => `<tr><td data-sym="${e(a.symbol)}">${e(a.symbol)}</td><td class="num">${a.eigeneMenge}</td>
+               (a) => `<tr><td data-sym="${e(a.symbol)}">${symbolEtikett(a.symbol, false)}</td><td class="num">${a.eigeneMenge}</td>
                  <td class="num">${a.brokerMenge}</td>
                  <td class="num dn"><b>${a.differenz > 0 ? '+' : ''}${a.differenz}</b></td></tr>`,
              )
@@ -1877,7 +1878,7 @@ function wireChartCtx(): void {
   if (!st) return;
   clearSubs(st.symbolSubs);
   const sym = st.currentSymbol;
-  $('chSym').textContent = sym;
+  $('chSym').innerHTML = symbolEtikett(sym, false); // Task 23: Klick → Detailblatt
   $('chSub').textContent = resolveName(sym);
   $('flSym').textContent = sym;
   $('flSym2').textContent = sym;
@@ -2355,7 +2356,7 @@ function hudHtml(sym: string, bar: HudBar): string {
     bar.volume === null || bar.volume === 0
       ? ''
       : ` · Vol ${bar.volume >= 1e6 ? `${(bar.volume / 1e6).toFixed(1)}M` : Math.round(bar.volume).toLocaleString('de-DE')}`;
-  return `<span class="hud-fold">▾</span> <b>${sym}</b> <span class="c-t3">${bar.time}</span>
+  return `<span class="hud-fold">▾</span> <b>${symbolEtikett(sym, false)}</b> <span class="c-t3">${bar.time}</span>
     <span class="${up ? 'c-gn' : 'c-rd'}">O ${fmtNum(bar.open)} H ${fmtNum(bar.high)} L ${fmtNum(bar.low)} C ${fmtNum(bar.close)} (${up ? '+' : ''}${pct} %)</span>${vol}`;
 }
 
@@ -3110,7 +3111,7 @@ function renderAbgleich(
    * benennen kann, kann man auch nicht beheben. */
   const abwListe = (a.abweichungen ?? []).length > 0
     ? `<div class="mono" style="margin-top:4px">${(a.abweichungen ?? [])
-        .map((x) => `<span data-sym="${escText(x.symbol)}">${escText(x.symbol)}</span> ${t('ab.buch')} ${fmtNum(x.eigeneMenge)} / ${t('ab.broker')} ${fmtNum(x.brokerMenge)}`)
+        .map((x) => `${symbolEtikett(x.symbol, false)} ${t('ab.buch')} ${fmtNum(x.eigeneMenge)} / ${t('ab.broker')} ${fmtNum(x.brokerMenge)}`)
         .join(' · ')}</div>`
     : '';
   if (a.status === 'fehler') {
@@ -4936,8 +4937,7 @@ function wireWatchlist(): void {
       <td data-th="RSI">--</td><td data-th="MACD">--</td><td data-th="BB %">--</td>
       <td data-th="${t('tab.konfluenz')}">--</td><td data-th="Signal">--</td>`;
     const sigSym = tr.querySelector('td')!;
-    sigSym.innerHTML = symbolAvatar(sym, true);
-    sigSym.appendChild(document.createTextNode(sym));
+    sigSym.innerHTML = symbolEtikett(sym); // Task 23: Symbol → Detailblatt, Rest der Zeile → Chart
     tr.style.cursor = 'pointer';
     /* Der Zeilen-Klick waehlt das Symbol — die Signal-Zelle nicht (22.08.).
      * Auf dem Handy ist der Longpress dort die einzige Geste; ohne diese
@@ -8460,6 +8460,73 @@ function openDetail(symbol: string, name: string, data: MarketDocData | null): v
   });
 }
 
+/**
+ * Das anklickbare Symbol-Etikett (Task 23, Owner 09.10.: „überall im Tool,
+ * wo Symbole vorkommen, draufklicken können … im Popup die detaillierten
+ * Informationen").
+ *
+ * EIN Erzeuger für alle Stellen: Avatar + Kürzel, Klasse `sym-link`, und
+ * `data-sym` (damit der Hover-/Longpress-Steckbrief weiter greift). Der
+ * Klick läuft über `wireSymbolLinks` — ein einziger Handler in der
+ * CAPTURE-Phase, der die Zeilen-Klicks darunter (Chart wählen, Journal
+ * öffnen) gar nicht erst erreicht. Deshalb ist das Etikett ein OPT-IN
+ * (Klasse), nicht jedes `[data-sym]`: Eingabefelder, Suchlisten und die
+ * Livebar-Kacheln tragen das Attribut auch, sind aber keine Links.
+ */
+function symbolEtikett(sym: string, mitAvatar = true): string {
+  return `<span class="sym-link" data-sym="${escText(sym)}" role="link" tabindex="0" title="${escText(t('sym.detailTitel'))}">`
+    + `${mitAvatar ? symbolAvatar(sym, true) : ''}${escText(sym)}</span>`;
+}
+
+/** Laufende Detail-Anfrage — ein späterer Klick verwirft eine ältere Antwort. */
+let symbolDetailLauf = 0;
+
+/**
+ * Detailblatt für ein BELIEBIGES Symbol: Klarname aus dem Katalog (oder das
+ * Kürzel selbst), market-Doc einmalig nachgeladen. Ohne Doc zeigt das Blatt
+ * ehrlich „keine Scan-Daten" statt gar nicht zu öffnen.
+ */
+async function oeffneSymbolDetail(sym: string): Promise<void> {
+  if (!st) return;
+  const lauf = ++symbolDetailLauf;
+  versteckeSymbolTip();
+  const name = symbolHerkunft(sym)?.name ?? sym;
+  const data = await ladeMarktDoc(sym).catch(() => null);
+  if (!st || lauf !== symbolDetailLauf) return;
+  openDetail(sym, name, data);
+}
+
+/**
+ * Der zentrale Klick-Pfad für `.sym-link` — Capture-Phase, damit der Klick
+ * NICHT zusätzlich die Zeile darunter auslöst (Signal-Zeile → Chart,
+ * Historie → Trade-Journal, HUD → Einklappen). Enter/Leertaste gleich.
+ * Ein langer Druck ist der Steckbrief (450 ms, Touch) — der Klick danach
+ * darf das Blatt nicht öffnen (dieselbe 400-ms-Sperre wie in der Historie).
+ */
+function wireSymbolLinks(): void {
+  let druckAb = 0;
+  const link = (e: Event): HTMLElement | null => (e.target as Element | null)?.closest?.<HTMLElement>('.sym-link') ?? null;
+  document.addEventListener('pointerdown', (e) => { if (link(e)) druckAb = Date.now(); }, { capture: true, signal: docListenerSignal() });
+  document.addEventListener('click', (e) => {
+    const el = link(e);
+    if (!el) return;
+    e.stopPropagation();
+    e.preventDefault();
+    if (druckAb > 0 && Date.now() - druckAb > 400) return;
+    const sym = el.dataset.sym;
+    if (sym) void oeffneSymbolDetail(sym);
+  }, { capture: true, signal: docListenerSignal() });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const el = (e.target as Element | null)?.closest?.<HTMLElement>('.sym-link');
+    if (!el || el !== document.activeElement) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const sym = el.dataset.sym;
+    if (sym) void oeffneSymbolDetail(sym);
+  }, { capture: true, signal: docListenerSignal() });
+}
+
 const MODAL_IDS = {
   detail: 'detailModal',
   trade: 'tradeModal',
@@ -8761,17 +8828,10 @@ function renderPortfolio(): void {
       <td data-th="%" class="${pct !== null ? pnlClass(pct) : ''}">${pct !== null ? fmtPct(pct) : '--'}</td>
       <td class="pos-act"><button class="hbtn" data-exit style="color:var(--rd)">${short ? 'Cover' : 'Exit'}</button></td>`;
     const symTd = tr.querySelector('td')!;
-    symTd.innerHTML = symbolAvatar(p.symbol);
-    symTd.appendChild(document.createTextNode(p.symbol));
-    // Klick aufs Symbol holt die Position ins Haupt-Chart (04.08.) — dort
-    // zeigen Marke, Preislinien und die Kurve seit Einstieg den ganzen Verlauf
-    symTd.className = 'pos-sym';
-    symTd.title = t('pf.imChart');
-    symTd.addEventListener('click', () => {
-      if (!st) return;
-      publishSymbol(st.chartGroup, p.symbol);
-      $('chartArea').scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
+    // Task 23: Symbol → Detailblatt (dort „Im Chart öffnen"); vorher holte
+    // der Klick die Position direkt ins Chart (04.08.) — das ist jetzt der
+    // zweite Klick, dafür ist das Verhalten überall im Tool gleich.
+    symTd.innerHTML = symbolEtikett(p.symbol, false);
     if (short) {
       const tag = document.createElement('span');
       tag.className = 'stag t-sell';
@@ -9012,7 +9072,9 @@ function renderJournal(): void {
       <td><span class="stag ${ri.klasse}" title="${escText(ri.titel)}" aria-label="${escText(ri.titel)}">${ri.pfeil} ${escText(ri.text)}</span></td>
       <td>${t.qty}</td><td>${fmtNum(t.price)}</td>
       <td class="${t.pnl !== undefined ? pnlClass(t.pnl) : ''}">${t.pnl !== undefined ? money(t.pnl) : '—'}</td>`;
-    tr.querySelectorAll('td')[1]!.textContent = t.symbol + (t.source === 'engine' ? ' · Auto' : '');
+    const symZelle = tr.querySelectorAll('td')[1]!;
+    symZelle.innerHTML = symbolEtikett(t.symbol, false); // Task 23: Symbol → Detailblatt, Rest der Zeile → Journal
+    if (t.source === 'engine') symZelle.appendChild(document.createTextNode(' · Auto'));
     jb.appendChild(tr);
   });
 }
@@ -9075,11 +9137,10 @@ function renderAbsagen(liste: HTMLElement, filter: string): void {
     el.className = 'abs-zeile';
     el.dataset.sym = e.symbol; // Symbol-Steckbrief
     const ri = tradeRichtung(e.seite === 'short' ? { side: 'sell', short: true } : { side: 'buy' });
-    el.innerHTML = `<div class="abs-kopfzeile"><span class="mono abs-zeit"></span><b class="abs-sym"></b>
+    el.innerHTML = `<div class="abs-kopfzeile"><span class="mono abs-zeit"></span><b class="abs-sym">${symbolEtikett(e.symbol, false)}</b>
       <span class="stag ${ri.klasse}" title="${escText(t(e.seite === 'short' ? 'abs.leer' : 'abs.kauf'))}">${ri.pfeil} ${escText(ri.text)}</span>
       <span class="mono abs-n"></span></div><div class="abs-grund"></div>`;
     el.querySelector('.abs-zeit')!.textContent = new Date(e.zuletzt).toLocaleString(ort, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-    el.querySelector('.abs-sym')!.textContent = e.symbol;
     el.querySelector('.abs-n')!.textContent = `${e.n}×`;
     const grund = absageText(e);
     const weitere = absageWeitere(e);
@@ -9155,7 +9216,7 @@ async function oeffneTradeDetail(row: TradeRow): Promise<void> {
     ? `<span class="mono ${pnlClass(ausstiegRow.pnl)}">${escText(deGeld(ausstiegRow.pnl))}</span>`
     : '';
   sheet.innerHTML = `<button class="dclose" data-close="trade" aria-label="${escText(t('td.schliessen'))}">✕</button>
-    <h3 data-sym="${escText(row.symbol)}">${escText(row.symbol)}</h3>
+    <h3>${symbolEtikett(row.symbol)}</h3>
     <div class="dmeta"><span class="stag ${ri.klasse}">${ri.pfeil} ${escText(ri.text)}</span>${ergebnis}</div>
     <div id="tdBody" class="hint" role="status">${escText(t('td.laedt'))}</div>`;
   $('tradeModal').classList.add('show');
@@ -10836,7 +10897,7 @@ function renderMomentum(m: MomentumDoc | null): void {
           .map((eintrag) => {
             const drin = gehalten.has(eintrag.symbol);
             return (
-              `<div class="fl-row" data-sym="${esc(eintrag.symbol)}"><span>${esc(eintrag.symbol)}</span>` +
+              `<div class="fl-row" data-sym="${esc(eintrag.symbol)}"><span>${symbolEtikett(eintrag.symbol, false)}</span>` +
               `<span class="mono ${pnlClass(eintrag.score)}">${eintrag.score >= 0 ? '+' : ''}${eintrag.score.toFixed(1)} %</span>` +
               `<span class="mono">${drin ? t('mo.gehalten') : '—'}</span></div>`
             );
@@ -11309,7 +11370,7 @@ function renderTradeJournal(rows: JournalRow[]): void {
         )
         .join('');
       return (
-        `<div class="tn-e"><div class="tn-h"><span class="tn-nm" data-sym="${esc(r.symbol)}">${esc(r.symbol)} · ${
+        `<div class="tn-e"><div class="tn-h"><span class="tn-nm" data-sym="${esc(r.symbol)}">${symbolEtikett(r.symbol, false)} · ${
           r.side === 'buy' ? t('sk.kauf') : t('sk.verkauf')
         } · ${r.qty}</span>${marke}` +
         `<span class="tn-t mono">${zeit}</span></div>` +
@@ -12229,6 +12290,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   wirePanelChrome();
   wireEvTipFokusNetz();
   wireSymbolTip();
+  wireSymbolLinks();
   wireSidebarResize();
   // Test-Hook (E2E): Reorder über denselben Pfad wie der Drop
   (window as unknown as { __autotrdWs?: unknown }).__autotrdWs = {
