@@ -143,6 +143,8 @@ import {
   ladeJournal,
   ladeKiAnzeige,
   ladeKiAnzeigeAlle,
+  ladeAbsagen,
+  type AbsageZeile,
   loadIntradayChunks,
   tagVorTagen,
   loadDailyChunk,
@@ -252,6 +254,7 @@ import {
 } from './tradeStory.js';
 import { iBtn, initInfoTips } from './infotips.js';
 import { kiEintragZu, kiZeile } from './kiEinordnung.js';
+import { absageText, absageWeitere } from './absageText.js';
 import { serverText, setzeSprache, sprachWahl, t, valText } from './i18n.js';
 import { reglerWarnung } from './reglerHinweis.js';
 import { mountLegalFooter } from './legal.js';
@@ -512,6 +515,10 @@ interface DashState {
   /** Keine älteren Zeilen mehr — der Knopf verschwindet. */
   tradesDone: boolean;
   tradesLoading: boolean;
+  /** „Warum nicht gekauft" (Task 21): geladene Absagen; null = noch nicht geladen. */
+  absagen: AbsageZeile[] | null;
+  absagenLaedt: boolean;
+  absagenFehler: boolean;
   /** Katalog-Symbole mit offenem Markt im letzten Scan (Heartbeat). */
   catalogOpen: number;
   /** Davon frisch bekurst — s. `renderWatchHint`. */
@@ -782,12 +789,14 @@ function layout(email: string): string {
           <select id="jSide" class="inp" style="max-width:110px">
             <option value="">Alle</option><option value="buy">${t('lay.nurKaeufe')}</option>
             <option value="sell">${t('lay.nurVerkaeufe')}</option><option value="closed">${t('lay.nurMitPnl')}</option>
+            <option value="absagen">${t('abs.option')}</option>
           </select>
         </div>
         <div class="tw"><table class="tbl">
           <thead><tr><th>Zeit</th><th>Sym</th><th>Side</th><th>Qty</th><th>Preis</th><th>P&amp;L</th></tr></thead>
           <tbody id="jBody"><tr><td colspan="6" class="c-t3">Keine Trades</td></tr></tbody>
         </table></div>
+        <div id="jAbs" class="abs-liste" hidden></div>
         <button class="btn btn-n" id="jMore" style="width:100%;margin-top:6px">${t('lay.aeltereLaden')}</button>
       </div></div>
 
@@ -5116,6 +5125,14 @@ function wireHistorie(): void {
     el.dataset.wired = '1';
     el.addEventListener('input', renderJournal);
   }
+  // „Abgelehnte Signale" bei jedem Umschalten frisch laden — sie ändern sich alle 5 Minuten.
+  const seiteWahl = $('jSide') as HTMLSelectElement | null;
+  if (seiteWahl && seiteWahl.dataset.wiredAbs !== '1') {
+    seiteWahl.dataset.wiredAbs = '1';
+    seiteWahl.addEventListener('change', () => {
+      if (st && seiteWahl.value === 'absagen') { st.absagen = null; st.absagenFehler = false; renderJournal(); }
+    });
+  }
 }
 
 /* ── Vergleichs-Chart (M9 Chart-Stack) ──────────────────────────────── */
@@ -8898,6 +8915,16 @@ function renderJournal(): void {
   const jb = $('jBody') as HTMLTableSectionElement;
   const filter = ($('jFilter') as HTMLInputElement | null)?.value.trim().toUpperCase() ?? '';
   const seite = ($('jSide') as HTMLSelectElement | null)?.value ?? '';
+  // „Abgelehnte Signale" ist eine eigene Liste über die volle Breite — die
+  // 6-Spalten-Tabelle ist in der Seitenspalte zu schmal für einen Satz.
+  const tw = jb.closest('.tw') as HTMLElement | null;
+  const absListe = $('jAbs');
+  if (tw) tw.hidden = seite === 'absagen';
+  if (absListe) absListe.hidden = seite !== 'absagen';
+  if (seite === 'absagen') {
+    if (absListe) renderAbsagen(absListe, filter);
+    return;
+  }
   const zeilen = st.trades.filter((t) => {
     if (filter && !t.symbol.toUpperCase().includes(filter)) return false;
     if (seite === 'closed') return t.pnl !== undefined && t.pnl !== null;
@@ -9004,6 +9031,61 @@ function kiBilanz(quotePct: number, n: number, nettoAvgPct: number | null | unde
     farbe: reif ? (quotePct > 50 ? 'var(--gn)' : 'var(--yl,#d9a441)') : 'var(--t3)',
     titel: t('ew.kiBilanzTitel') + netto,
   };
+}
+
+/**
+ * „Warum NICHT gekauft" (Task 21, Phase 2): abgewiesene Signale der letzten
+ * Handelstage in der Historien-Tabelle. Nur gespeicherte Codes und Zahlen;
+ * alles Angezeigte läuft über escText/textContent.
+ */
+function renderAbsagen(liste: HTMLElement, filter: string): void {
+  if (!st) return;
+  const zaehler = $('jCount');
+  const mehr = $('jMore') as HTMLButtonElement | null;
+  if (mehr) mehr.hidden = true;
+  const hinweis = (text: string): void => {
+    const d = document.createElement('div');
+    d.className = 'hint abs-hinweis';
+    d.textContent = text;
+    liste.appendChild(d);
+  };
+  liste.innerHTML = '';
+  if (st.absagen === null) {
+    hinweis(st.absagenFehler ? t('abs.fehler') : t('abs.laedt'));
+    if (!st.absagenLaedt && !st.absagenFehler) {
+      st.absagenLaedt = true;
+      const uid = st.uid;
+      void ladeAbsagen(uid)
+        .then((zeilen) => { if (st && st.uid === uid) st.absagen = zeilen; })
+        .catch((e: unknown) => { console.warn('Absagen nicht ladbar', e); if (st && st.uid === uid) st.absagenFehler = true; })
+        .finally(() => { if (st && st.uid === uid) { st.absagenLaedt = false; renderJournal(); } });
+    }
+    return;
+  }
+  const zeilen = st.absagen.filter((e) => !filter || e.symbol.toUpperCase().includes(filter));
+  if (zaehler) zaehler.textContent = String(zeilen.length);
+  hinweis(t('abs.erklaerung'));
+  if (zeilen.length === 0) {
+    hinweis(t('abs.keine'));
+    return;
+  }
+  const ort = sprachWahl() === 'en' ? 'en-US' : 'de-DE';
+  for (const e of zeilen) {
+    const el = document.createElement('div');
+    el.className = 'abs-zeile';
+    el.dataset.sym = e.symbol; // Symbol-Steckbrief
+    const ri = tradeRichtung(e.seite === 'short' ? { side: 'sell', short: true } : { side: 'buy' });
+    el.innerHTML = `<div class="abs-kopfzeile"><span class="mono abs-zeit"></span><b class="abs-sym"></b>
+      <span class="stag ${ri.klasse}" title="${escText(t(e.seite === 'short' ? 'abs.leer' : 'abs.kauf'))}">${ri.pfeil} ${escText(ri.text)}</span>
+      <span class="mono abs-n"></span></div><div class="abs-grund"></div>`;
+    el.querySelector('.abs-zeit')!.textContent = new Date(e.zuletzt).toLocaleString(ort, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    el.querySelector('.abs-sym')!.textContent = e.symbol;
+    el.querySelector('.abs-n')!.textContent = `${e.n}×`;
+    const grund = absageText(e);
+    const weitere = absageWeitere(e);
+    el.querySelector('.abs-grund')!.textContent = weitere ? `${grund} — ${weitere}` : grund;
+    liste.appendChild(el);
+  }
 }
 
 /** Die zuletzt gezeichneten Historie-Zeilen — Index = `data-ji`. */
@@ -11611,6 +11693,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     tradesDone: false,
     dcModus: 'symbol',
     tradesLoading: false,
+    absagen: null,
+    absagenLaedt: false,
+    absagenFehler: false,
     catalogOpen: 0,
     catalogQuotes: 0,
     positionSubs: new Map(),

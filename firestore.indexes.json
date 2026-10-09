@@ -71,6 +71,11 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "absagen",
+      "fieldPath": "s",
+      "indexes": []
     }
   ]
 }

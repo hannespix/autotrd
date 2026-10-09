@@ -107,6 +107,11 @@ import {
   type SizingSchatten,
   type SizingSchattenSumme,
   kennzahlenFelder,
+  absageMerken,
+  absagenFeld,
+  type AbsageGrund,
+  type AbsageMerk,
+  type AbsageZahlen,
 } from '../../../shared/src/index.js';
 import { atrPct } from '../../../shared/src/index.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
@@ -853,6 +858,8 @@ async function executeUserTrades(
   // etwas gelernt hat.
   const tunePriors = await ladeTunePriors();
 
+  /** Absage-Schreibvorgänge aller Konten (Task 21) — am Laufende gemeinsam abgewartet. */
+  const absagenSchreiben: Promise<unknown>[] = [];
   for (const userDoc of users.docs) {
     const uid = userDoc.id;
     const strategy = userDoc.get('settings.strategy') as Strategy | undefined;
@@ -1203,6 +1210,37 @@ async function executeUserTrades(
       // „habe es nicht in den Optionen gefunden") — die Hülle klemmt nur noch.
       const posLimit = maxOpenPositions(clamped);
       const hebel = clampLeverage(clamped.broker.leverage);
+      /* „Warum NICHT gekauft" (Task 21, Phase 2): Absagen dieses Scans je
+       * Symbol — REIN BEOBACHTEND. Jeder Aufruf steht NACH der Entscheidung
+       * und ist abgefangen; nichts hier fließt in den Handel zurück. */
+      const absagen = new Map<string, AbsageMerk>();
+      /** Kostenzahlen der letzten echten Einstiegsprüfung je Symbol (aus entrySperre). */
+      const sperrZahlen = new Map<string, Partial<AbsageZahlen>>();
+      const absage = (
+        symbol: string,
+        seite: 'long' | 'short',
+        grund: AbsageGrund,
+        weg: 'regelbaum' | 'konfluenz',
+        z: Partial<AbsageZahlen> = {},
+      ): void => {
+        // „nicht handelbar" ist eine dauerhafte Eigenschaft (Index, Devise,
+        // Future, Auslandsbörse), kein abgewiesenes Signal (Red-Team 09.10.).
+        if (grund === 'nicht_handelbar') return;
+        try {
+          absageMerken(absagen, symbol, seite, grund, weg, { regime, ...sperrZahlen.get(symbol), ...z });
+        } catch {
+          /* Beobachtung darf den Scan nie stören. */
+        }
+      };
+      /** Nach executeTrade: gekauft ⇒ keine Absage für das Symbol; abgelehnt ⇒ fester Code, nie der Freitext-Grund. */
+      const absageNachAusfuehrung = (symbol: string, seite: 'long' | 'short', weg: 'regelbaum' | 'konfluenz', ausgefuehrt: boolean): void => {
+        try {
+          if (ausgefuehrt) absagen.delete(symbol);
+          else absageMerken(absagen, symbol, seite, 'ausfuehrung_abgelehnt', weg, { regime, ...sperrZahlen.get(symbol) });
+        } catch {
+          /* Beobachtung darf den Scan nie stören. */
+        }
+      };
 
       // Entry-Cooldown nach Risk-Exits (MA3-Fund 26.07.): Ohne ihn kauft die
       // Konfluenz ein per Stop-Loss verkauftes Symbol im selben/nächsten Scan
@@ -1750,6 +1788,11 @@ async function executeUserTrades(
         // `unter_kosten` auf 0 — nicht weil die Kostenschwelle nichts tat,
         // sondern weil der Korrelations-Deckel vorher zugeschlagen hatte.
         // Zum Feinjustieren der Schwelle braucht man beide Zahlen.
+        // Task 21: die Zahlen, die gleich entscheiden — nur gemerkt, nie gelesen von der Sperre.
+        if (echtesBuch) {
+          const k = side === 'short' ? kostenShort : kosten;
+          sperrZahlen.set(symbol, { erwartetPct: k.edgePct, kostenPct: k.costPct, noetigPct: k.needPct });
+        }
         if (!handelbar) gate.nicht_handelbar += 1;
         else if (!platz) gate.cluster_voll += 1;
         if (handelbar) {
@@ -2051,11 +2094,12 @@ async function executeUserTrades(
           } else if (dir === 'buy' && !pos) {
             // Entry-Guards der Risiko-Hülle: Positionslimit + Cooldowns
             // (je Strategie UND nach Risk-Exits desselben Wallets)
-            if (positions.size >= posLimit) { gate.pos_limit += 1; continue; }
-            if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; continue; }
-            if (cooldownActive(engineCooldowns[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; continue; }
-            if (coreSymbols.has(symbol)) { gate.sockel_besitz += 1; continue; } // hält der Sockel
-            if (entrySperre(symbol, data.atrPct, alleSymbole(), 'long')) continue;
+            if (positions.size >= posLimit) { gate.pos_limit += 1; absage(symbol, 'long', 'pos_limit', 'regelbaum', { offen: positions.size, limit: posLimit }); continue; }
+            if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; absage(symbol, 'long', 'cooldown_aktiv', 'regelbaum', { cooldownMin: cdMin }); continue; }
+            if (cooldownActive(engineCooldowns[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; absage(symbol, 'long', 'cooldown_aktiv', 'regelbaum', { cooldownMin: cdMin }); continue; }
+            if (coreSymbols.has(symbol)) { gate.sockel_besitz += 1; absage(symbol, 'long', 'sockel_besitz', 'regelbaum'); continue; } // hält der Sockel
+            const sperreL = entrySperre(symbol, data.atrPct, alleSymbole(), 'long');
+            if (sperreL) { absage(symbol, 'long', sperreL, 'regelbaum'); continue; }
             // assetClass durchreichen (MA3-Fund 26.07.): Ohne sie schrieb der
             // Broker die Stop/Take-LEVEL mit den GLOBALEN Prozenten fest —
             // die MA6-Klassen-Profile (Krypto 6/10 usw.) griffen beim Kauf
@@ -2079,6 +2123,7 @@ async function executeUserTrades(
               clamped,
               scanId,
             );
+            absageNachAusfuehrung(symbol, 'long', 'regelbaum', r.executed);
             if (r.executed) {
               executed += 1;
               // Der Regelbaum handelt bar gedeckt (er liefert ja/nein, kein
@@ -2129,11 +2174,12 @@ async function executeUserTrades(
           } else if (dir === 'sell' && !pos && strategy.signals.allowShort === true) {
             // Regelbaum-Short (R2): Verkaufs-Signal ohne Position — gleiche
             // Entry-Guards wie beim Kauf, Level gespiegelt im Broker.
-            if (positions.size >= posLimit) { gate.pos_limit += 1; continue; }
-            if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; continue; }
-            if (cooldownActive(engineCooldowns[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; continue; }
-            if (coreSymbols.has(symbol)) { gate.sockel_besitz += 1; continue; } // hält der Sockel
-            if (entrySperre(symbol, data.atrPct, alleSymbole(), 'short')) continue;
+            if (positions.size >= posLimit) { gate.pos_limit += 1; absage(symbol, 'short', 'pos_limit', 'regelbaum', { offen: positions.size, limit: posLimit }); continue; }
+            if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; absage(symbol, 'short', 'cooldown_aktiv', 'regelbaum', { cooldownMin: cdMin }); continue; }
+            if (cooldownActive(engineCooldowns[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; absage(symbol, 'short', 'cooldown_aktiv', 'regelbaum', { cooldownMin: cdMin }); continue; }
+            if (coreSymbols.has(symbol)) { gate.sockel_besitz += 1; absage(symbol, 'short', 'sockel_besitz', 'regelbaum'); continue; } // hält der Sockel
+            const sperreS = entrySperre(symbol, data.atrPct, alleSymbole(), 'short');
+            if (sperreS) { absage(symbol, 'short', sperreS, 'regelbaum'); continue; }
             const r = await executeTrade(
               {
                 uid,
@@ -2152,6 +2198,7 @@ async function executeUserTrades(
               clamped,
               scanId,
             );
+            absageNachAusfuehrung(symbol, 'short', 'regelbaum', r.executed);
             if (r.executed) {
               executed += 1;
               gebundeneKaufkraft += (r.trade?.qty ?? 0) * (r.trade?.price ?? data.price);
@@ -2319,6 +2366,13 @@ async function executeUserTrades(
          * Gesperrt ist, wenn EINER der beiden gesperrt ist; die Überzeugung
          * nimmt den schwächeren. Ein bestätigender Einstieg wäre ohne KI
          * genauso entstanden — er gehört in den technischen Steckbrief. */
+        /** Task 21: t und n des Steckbriefs, der gesperrt hat — nur gelesen. */
+        const steckbriefZahlen = (sb: { tech: string; gebucht: string }): Partial<AbsageZahlen> => {
+          // Die Zahlen des Steckbriefs, der TATSÄCHLICH gesperrt hat (tech ODER gebucht).
+          const tech = bucketVerdict(filterBuckets[sb.tech]);
+          const v = tech.blocked ? tech : bucketVerdict(filterBuckets[sb.gebucht]);
+          return { steckbriefT: v.t, steckbriefN: v.n };
+        };
         const steckbriefe = (dir: 'buy' | 'sell', seite: 'long' | 'short') => {
           const basis = { assetClass: classify(symbol), timeframe: tf, side: seite, regime };
           const tech = bucketKey({ ...basis, signature: signalSignature(sig.votes, dir) });
@@ -2395,10 +2449,11 @@ async function executeUserTrades(
           // Positionslimit galt vorher nur für Regelbaum-Käufe — die
           // Konfluenz konnte beliebig viele Positionen öffnen. Und nach
           // einem Risk-Exit hält der Cooldown den Sofort-Rückkauf auf.
-          if (positions.size >= posLimit) { gate.pos_limit += 1; continue; }
-          if (cooldownActive(engineCooldowns[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; continue; }
-          if (coreSymbols.has(symbol)) { gate.sockel_besitz += 1; continue; } // hält der Sockel
-          if (entrySperre(symbol, data.atrPct, alleSymbole(), 'long')) continue;
+          if (positions.size >= posLimit) { gate.pos_limit += 1; absage(symbol, 'long', 'pos_limit', 'konfluenz', { offen: positions.size, limit: posLimit }); continue; }
+          if (cooldownActive(engineCooldowns[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; absage(symbol, 'long', 'cooldown_aktiv', 'konfluenz', { cooldownMin: cdMin }); continue; }
+          if (coreSymbols.has(symbol)) { gate.sockel_besitz += 1; absage(symbol, 'long', 'sockel_besitz', 'konfluenz'); continue; } // hält der Sockel
+          const sperreL = entrySperre(symbol, data.atrPct, alleSymbole(), 'long');
+          if (sperreL) { absage(symbol, 'long', sperreL, 'konfluenz'); continue; }
           // Steckbrief des Einstiegs (Trade-Filter, scharf seit 02.08.):
           // Sorten, deren EIGENE Historie n≥30 und t≤−1,5 zeigt, werden
           // nicht mehr gehandelt — nur gezählt. Exits bleiben frei.
@@ -2406,6 +2461,7 @@ async function executeUserTrades(
           const bucket = sb.gebucht;
           if (sb.gesperrt) {
             gate.filter_blockiert += 1;
+            absage(symbol, 'long', 'filter_blockiert', 'konfluenz', steckbriefZahlen(sb));
             continue;
           }
           // Überzeugungs-Sizing (Owner 01.08.): Einsatz folgt messbarer
@@ -2475,6 +2531,7 @@ async function executeUserTrades(
             clamped,
             scanId,
           );
+          absageNachAusfuehrung(symbol, 'long', 'konfluenz', r.executed);
           if (r.executed) {
             executed += 1;
             gebundeneKaufkraft += (r.trade?.qty ?? 0) * (r.trade?.price ?? data.price);
@@ -2524,14 +2581,16 @@ async function executeUserTrades(
           // Leerverkauf (Opt-in): Verkaufs-Signal ohne Position eröffnet
           // einen Short — gleiche Entry-Guards wie beim Kauf (Limit,
           // Cooldown), gleiche Risiko-Hülle, Level gespiegelt im Broker.
-          if (positions.size >= posLimit) { gate.pos_limit += 1; continue; }
-          if (cooldownActive(engineCooldowns[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; continue; }
-          if (coreSymbols.has(symbol)) { gate.sockel_besitz += 1; continue; } // hält der Sockel
-          if (entrySperre(symbol, data.atrPct, alleSymbole(), 'short')) continue;
+          if (positions.size >= posLimit) { gate.pos_limit += 1; absage(symbol, 'short', 'pos_limit', 'konfluenz', { offen: positions.size, limit: posLimit }); continue; }
+          if (cooldownActive(engineCooldowns[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; absage(symbol, 'short', 'cooldown_aktiv', 'konfluenz', { cooldownMin: cdMin }); continue; }
+          if (coreSymbols.has(symbol)) { gate.sockel_besitz += 1; absage(symbol, 'short', 'sockel_besitz', 'konfluenz'); continue; } // hält der Sockel
+          const sperreS = entrySperre(symbol, data.atrPct, alleSymbole(), 'short');
+          if (sperreS) { absage(symbol, 'short', sperreS, 'konfluenz'); continue; }
           const sb = steckbriefe('sell', 'short');
           const bucket = sb.gebucht;
           if (sb.gesperrt) {
             gate.filter_blockiert += 1;
+            absage(symbol, 'short', 'filter_blockiert', 'konfluenz', steckbriefZahlen(sb));
             continue;
           }
           // Klassen-Regler (04.08.) multipliziert auf die Überzeugung. Der
@@ -2572,6 +2631,7 @@ async function executeUserTrades(
             clamped,
             scanId,
           );
+          absageNachAusfuehrung(symbol, 'short', 'konfluenz', r.executed);
           if (r.executed) {
             executed += 1;
             await zaehleKiEinstieg('sell');
@@ -2599,6 +2659,18 @@ async function executeUserTrades(
         await (userDoc.ref.update as (...a: unknown[]) => Promise<unknown>)(
           ...cooldownUpdates,
         ).catch(() => undefined);
+      }
+
+      // „Warum NICHT gekauft" (Task 21): EIN merge-Write je Konto und Scan,
+      // nur wenn es Absagen gab — parallel, erst am Laufende abgewartet und
+      // abgefangen: Ein Schreibfehler hier berührt keinen Trade.
+      if (absagen.size > 0) {
+        absagenSchreiben.push(
+          Promise.resolve()
+            .then(() => userDoc.ref.collection('absagen').doc(handelstagET(now))
+              .set(absagenFeld(absagen, handelstagET(now), now.toISOString(), (n) => FieldValue.increment(n)), { merge: true }))
+            .catch((err: unknown) => logger.warn(`Absagen für ${uid} nicht geschrieben`, err)),
+        );
       }
 
       // Schatten-Flotte des Auto-Tuners (MT2): Jede Parameter-Variante rechnet
@@ -2649,6 +2721,7 @@ async function executeUserTrades(
       logger.error(`Auto-Trading-Fehler für ${uid}`, err);
     }
   }
+  await Promise.allSettled(absagenSchreiben);
   // Stufe 3: markieren, welche Urteile tatsächlich gestimmt haben — der
   // Bewertungslauf zählt nur diese als „wirksam" (nur Zeitstempel, kein Konto).
   if (kiGestimmt.size > 0) {
