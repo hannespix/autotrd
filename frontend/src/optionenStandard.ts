@@ -162,7 +162,7 @@ export const STANDARD_TEXT_DE: Record<string, OptionText> = {
     wirkung: 'Tageskerzen: wenige Trades, wenig Gebühren, Signale ändern sich nur alle paar Tage. 5-Minuten: viele Trades am Tag — in der Messung fraßen die Gebühren dabei ein Mehrfaches des Gewinns.',
   },
   cooldownMin: {
-    kurz: 'So viele Minuten wartet die Engine nach einem Schutzverkauf (Stop, Ziel, Frist), bevor sie denselben Wert wieder kauft.',
+    kurz: 'So viele Minuten wartet die Engine nach einem Verkauf (Stop, Ziel, Frist oder Signal), bevor sie denselben Wert wieder kauft.',
     wirkung: 'Plus 60 heißt: eine Stunde länger warten — weniger Hin-und-Her, weniger Gebühren, dafür mal eine verpasste Chance. Im Seitwärtsmarkt wartet sie von selbst doppelt so lang. Mindestens 5 Minuten, höchstens 1440 (ein Tag).',
   },
   minConfluence: {
@@ -265,7 +265,7 @@ export const STANDARD_TEXT_EN: Record<string, Partial<OptionText>> = {
     wirkung: 'Daily: few trades, low fees, signals change only every few days. 5-minute: many trades a day — in our measurement fees ate several times the profit.',
   },
   cooldownMin: {
-    kurz: 'How many minutes the engine waits after a protective sale (stop, target, time limit) before buying the same symbol again.',
+    kurz: 'How many minutes the engine waits after a sale (stop, target, time limit or signal) before buying the same symbol again.',
     wirkung: 'Plus 60 means one hour longer — less back-and-forth, fewer fees, but the odd missed chance. In a sideways market it waits twice as long by itself. At least 5 minutes, at most 1440 (one day).',
   },
   minConfluence: {
