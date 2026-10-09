@@ -1411,9 +1411,9 @@ function layout(email: string): string {
       <p class="hint">${t('opt.startkapitalHint')}</p>
       <div class="opt-grid" id="owGrid">
         <div class="opt-sub">${t('opt.kapitalPosition')}</div>
-        <label>${t('opt.startkapital')}
+        <label>${t('opt.startkapital')} ${iBtn('startkapital')}
           <input id="owCap" class="inp st-num" type="number" min="100" step="500" /></label>
-        <label>${t('opt.investmentJeTrade')}
+        <label>${t('opt.investmentJeTrade')} ${iBtn('maxPos')}
           <input id="owMax" class="inp st-num" type="number" min="1" max="100" step="1" /></label>
         <label>${t('opt.risikoJeTrade')} ${iBtn('riskPerTrade')}
           <input id="owRisk" class="inp st-num" type="number" min="0" max="5" step="0.25" /></label>

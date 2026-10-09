@@ -231,6 +231,16 @@ export const DE = {
   // hier nur die beiden Attribut-Texte des Knopfes selbst.
   'tip.erklaerung': 'Erklärung',
   'tip.wasBedeutet': 'Was bedeutet das?',
+  // Standard-Block im Popover (Task 24): Standardwert, eigener Wert, Wirkung, Rücksetzen.
+  'tip.standard': 'Standard',
+  'tip.deinWert': 'Dein Wert',
+  'tip.wieStandard': '(= Standard)',
+  'tip.aufStandard': 'Auf Standard setzen',
+  'tip.eingetragen': 'Standard eingetragen — unten „Speichern" drücken, damit es gilt.',
+  'tip.wirkung': 'Was eine Änderung bewirkt',
+  'tip.mehr': 'Ausführliche Erklärung',
+  'tip.an': 'An',
+  'tip.aus': 'Aus',
   // Onboarding-Tour (Tranche 5d). Die Stationen stehen als Schlüssel hier,
   // nicht in dashboard.ts — ein englischer Nutzer beim ERSTEN Login sieht
   // sonst ausgerechnet die Einführung auf Deutsch.
@@ -1854,6 +1864,15 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'panel.erkenntnisse': 'Insights',
   'tip.erklaerung': 'Explanation',
   'tip.wasBedeutet': 'What does this mean?',
+  'tip.standard': 'Default',
+  'tip.deinWert': 'Your value',
+  'tip.wieStandard': '(= default)',
+  'tip.aufStandard': 'Reset to default',
+  'tip.eingetragen': 'Default entered — press “Save” below to apply it.',
+  'tip.wirkung': 'What a change does',
+  'tip.mehr': 'Full explanation',
+  'tip.an': 'On',
+  'tip.aus': 'Off',
   'pal.themaEinstellen': 'Set light/dark (Options → Display)',
   'pal.engineStoppen': 'Stop engine',
   'pal.engineStarten': 'Start engine (paper)',
