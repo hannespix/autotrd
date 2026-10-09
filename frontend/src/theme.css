@@ -975,6 +975,17 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
 .ipop { position: absolute; z-index: 300; background: var(--card-solid); border: 1px solid var(--bd2); border-radius: 12px; padding: 10px 12px; box-shadow: var(--sh-pop2); font-size: 12px; line-height: 1.5; color: var(--t2); }
 .ipop b { display: block; margin-bottom: 4px; color: var(--t1); font-size: 12.5px; }
 .ipop p { margin: 0; }
+/* Standard-Block (Task 24): Kurz-Satz, Standard/Dein Wert, Wirkung, Rücksetzen — vor dem Langtext. */
+.ipop-std { margin: 2px 0 8px; }
+.ipop-kurz { color: var(--t1); font-size: 12.5px; margin: 0 0 6px !important; }
+.ipop-werte { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-bottom: 6px; }
+.ipop-werte b, .ipop-wirkung b { display: inline; margin: 0; font-size: inherit; color: var(--t1); }
+.ipop-ok { color: var(--gn); }
+.ipop-reset { border: 1px solid var(--bd2); background: var(--ac-soft); color: var(--t1); border-radius: 8px; padding: 3px 8px; font-size: 11.5px; cursor: pointer; }
+.ipop-reset:hover { border-color: var(--ac); }
+.ipop-hinweis { color: var(--gn); margin: 4px 0 0 !important; }
+.ipop-mehr summary { cursor: pointer; color: var(--t3); font-size: 11.5px; margin-top: 4px; }
+.ipop-mehr[open] summary { margin-bottom: 4px; }
 
 /* Trade-Fenster (Redesign 25.07.): Katalog-Combobox + Summenblock */
 .mt-combo { position: relative; }

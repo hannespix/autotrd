@@ -11,7 +11,8 @@
  * (Karten werden komplett neu gerendert).
  */
 
-import { sprachWahl, t as uebersetzt, type Sprache } from './i18n.js';
+import { sprachWahl, t as uebersetzt, type Sprache, type TextSchluessel } from './i18n.js';
+import { OPTIONEN_STANDARD, standardBlockHtml } from './optionenStandard.js';
 
 /** Ein Tip: Überschrift + ausführliche Erklärung. */
 export interface Tip {
@@ -64,6 +65,10 @@ export const INFO_DE: Record<string, Tip> = {
   periode: {
     t: 'Daten-Periode',
     d: 'Wie viel Kurshistorie die Indikator-Berechnung sieht (z. B. 1 Jahr Tageskerzen). Beeinflusst gleitende Durchschnitte und den Kontext der Signale, nicht die Handelsfrequenz.',
+  },
+  startkapital: {
+    t: 'Startkapital',
+    d: 'Das Übungsgeld, mit dem ein neues Depot beginnt. Es wird nur beim Anlegen oder beim Zurücksetzen des Kontos eingesetzt — ein laufendes Depot behält seinen Kontostand, auch wenn du die Zahl hier änderst. Die Positionsgrößen rechnen mit dem tatsächlichen Kontostand, nicht mit dieser Zahl.',
   },
   maxPos: {
     t: 'Maximale Positionsgröße',
@@ -496,6 +501,10 @@ export const INFO_EN: Record<string, Partial<Tip>> = {
     t: 'Data period',
     d: 'How much price history the indicator computation sees (e.g. one year of daily candles). It affects moving averages and the context of the signals, not the trading frequency.',
   },
+  startkapital: {
+    t: 'Starting capital',
+    d: 'The practice money a new wallet begins with. It is only used when the account is created or reset — a running wallet keeps its balance even if you change the number here. Position sizes are computed from the actual balance, not from this number.',
+  },
   maxPos: {
     t: 'Maximum position size',
     d: 'The largest share of the starting capital a SINGLE position may tie up. The classic risk-management tool against concentration risk: 10 % means a total loss on one symbol costs at most a tenth of the portfolio.',
@@ -750,6 +759,53 @@ export const INFO: Record<string, Tip> = waehleTips(INFO_DE, INFO_EN, sprachWahl
 let pop: HTMLElement | null = null;
 let openKey: string | null = null;
 
+const tx = (k: string): string => uebersetzt(k as TextSchluessel);
+
+/**
+ * Aktueller Wert des Options-Felds zu einem Tip (Task 24) — null, wenn das
+ * Feld nicht im DOM steht (der Tip erscheint auch außerhalb des Modals).
+ */
+function feldWert(key: string): number | string | boolean | null {
+  const feld = OPTIONEN_STANDARD[key]?.feld;
+  if (!feld) return null;
+  const el = document.getElementById(feld) as HTMLInputElement | HTMLSelectElement | null;
+  if (!el) return null;
+  if (el instanceof HTMLInputElement && el.type === 'checkbox') return el.checked;
+  return el.value;
+}
+
+/**
+ * Das Popover eines Tips bauen. Für Trading-Optionen steht der Standard-
+ * Block OBEN (Kurz-Satz, Standard, Dein Wert, Wirkung, Rücksetzen) und der
+ * ausführliche Text darunter zum Aufklappen — Laien lesen zuerst das, was
+ * sie zum Drehen brauchen (Owner 09.10.: „so einfach verständlich wie
+ * möglich). Alle anderen Tips bleiben, wie sie waren.
+ */
+export function popoverHtml(key: string, info: Tip, aktuell: number | string | boolean | null, hinweis = ''): string {
+  const block = standardBlockHtml(key, aktuell, sprachWahl(), tx);
+  if (!block) return `<b>${info.t}</b><p>${info.d}</p>`;
+  return `<b>${info.t}</b>${block}${hinweis ? `<p class="ipop-hinweis">✓ ${hinweis}</p>` : ''}`
+    + `<details class="ipop-mehr"><summary>${tx('tip.mehr')}</summary><p>${info.d}</p></details>`;
+}
+
+/**
+ * Auf-Standard-setzen: schreibt den Standard ins Feld und feuert input +
+ * change, damit das Modal seine Nicht-gespeichert-Warnung zeigt.
+ * Gespeichert wird NICHT — das bleibt der Speichern-Knopf; ein Klick im
+ * Popover darf keine Strategie schreiben.
+ */
+function aufStandard(key: string): boolean {
+  const o = OPTIONEN_STANDARD[key];
+  if (!o?.feld) return false;
+  const el = document.getElementById(o.feld) as HTMLInputElement | HTMLSelectElement | null;
+  if (!el) return false;
+  if (el instanceof HTMLInputElement && el.type === 'checkbox') el.checked = o.standard === true;
+  else el.value = String(o.standard);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  return true;
+}
+
 function ensurePop(): HTMLElement {
   if (pop) return pop;
   pop = document.createElement('div');
@@ -792,7 +848,7 @@ export function initInfoTips(): void {
         return;
       }
       openKey = key;
-      p.innerHTML = `<b>${info.t}</b><p>${info.d}</p>`;
+      p.innerHTML = popoverHtml(key, info, feldWert(key));
       p.hidden = false;
       // Unter dem Knopf platzieren, an den Viewport geklemmt (absolute + Scroll)
       const r = btn.getBoundingClientRect();
@@ -802,6 +858,13 @@ export function initInfoTips(): void {
       const maxLeft = window.scrollX + window.innerWidth - pw - 8;
       p.style.left = `${Math.max(minLeft, Math.min(r.left + window.scrollX - 10, maxLeft))}px`;
       p.style.top = `${r.bottom + window.scrollY + 6}px`;
+      return;
+    }
+    const reset = el.closest?.('.ipop-reset') as HTMLElement | null;
+    if (reset && openKey) {
+      const key = reset.dataset['reset'] ?? '';
+      const info = INFO[key];
+      if (info && aufStandard(key)) p.innerHTML = popoverHtml(key, info, feldWert(key), tx('tip.eingetragen'));
       return;
     }
     if (!el.closest?.('#infoPop')) hidePop();

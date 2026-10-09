@@ -1388,8 +1388,12 @@ describe('Tranche 5p — der Wächter über alle übrigen Quelldateien', () => {
    *  - symbolSteckbrief.ts: führt sein EIGENES kuratiertes Text-Datenmodul
    *                 (132 Steckbriefe, Vollständigkeit erzwingt
    *                 symbolSteckbrief.test.ts) — die EN-Fassung folgt als
-   *                 eigene Tranche, wie bei infotips.ts. */
-  const AUSGENOMMEN = new Set(['i18n.ts', 'legal.ts', 'infotips.ts', 'dashboard.ts', 'symbolSteckbrief.ts']);
+   *                 eigene Tranche, wie bei infotips.ts.
+   *  - optionenStandard.ts: Standard + Wirkung je Trading-Option (Task 24),
+   *                 eigenes zweisprachiges Paar STANDARD_TEXT_DE/EN;
+   *                 Vollständigkeit und Übersetzung erzwingt
+   *                 optionenStandard.test.ts. */
+  const AUSGENOMMEN = new Set(['i18n.ts', 'legal.ts', 'infotips.ts', 'dashboard.ts', 'symbolSteckbrief.ts', 'optionenStandard.ts']);
   // Code-Werte, die wie deutsche Wörter aussehen: Firestore-Feldnamen und
   // Typ-Literale (data.ts liest v['von']; quelle === 'keine').
   const CODE_WERTE = new Set(['von', 'keine']);
