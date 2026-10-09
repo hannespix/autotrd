@@ -9324,9 +9324,9 @@ function kurvenText(e: Parameters<typeof erklaerungsTeile>[0]): string {
             teil.trades === 1 ? t('kv.abschlussTraegt') : t('kv.abschluesseTragen')
           } ${t('kv.ohneZeitpunkt')}`;
         case 'keineSnapshots':
-          return `${t('kv.keineSnapshots1')}${reset(teil.resetAm)} ${t('kv.keineSnapshots2')} ${teil.uhrzeit}.`;
+          return `${t('kv.keineSnapshots1')}${reset(teil.resetAm)} ${t('kv.keineSnapshots2')} ${t('kv.snapshotZeit')}.`;
         default:
-          return `${t('kv.einSnapshot1')}${reset(teil.resetAm)} ${t('kv.einSnapshot2')} ${teil.uhrzeit}).`;
+          return `${t('kv.einSnapshot1')}${reset(teil.resetAm)} ${t('kv.einSnapshot2')} ${t('kv.snapshotZeit')}).`;
       }
     })
     .join(' ')
@@ -10856,7 +10856,7 @@ function renderStruktur(d: StrukturDoc | null): void {
       const zahlen =
         r.art === 'start'
           ? `${t('sk.versuch')} ${r.nVersuche}`
-          : `${t('sk.vorsprung')} ${fmt(r.vorsprung)} · DSR ${fmt(r.dsr)} · ${t('sk.latte')} ${fmt(r.latte)}` +
+          : `${t('sk.vorsprung')} ${fmt(r.vorsprung)} · ${t('sk.guete')} ${fmt(r.dsr)} · ${t('sk.latte')} ${fmt(r.latte)}` +
             ` · Test-Sharpe ${fmt(r.testSharpe)} · n=${r.nSuch}/${r.nTest} · ${t('sk.versuch')} ${r.nVersuche}`;
       const gruende = r.gruende.length > 0 ? `<div class="tn-r">${esc(r.gruende.join(' · '))}</div>` : '';
       return (
