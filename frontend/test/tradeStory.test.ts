@@ -237,6 +237,18 @@ describe('gegenstueck (Task 21: Kauf- und Verkaufsgrund zusammen)', () => {
     expect(gegenstueck(fremd, alle)).toBeNull();
   });
 
+  it('Nachkauf zwischen Eröffnung und Verkauf: gepaart wird mit der ERÖFFNUNG (Red-Team H4)', () => {
+    const auf = tr('NVDA', 'buy', '2026-10-01T14:00:00Z');
+    const nach = tr('NVDA', 'buy', '2026-10-02T14:00:00Z');
+    const teil = { ...tr('NVDA', 'sell', '2026-10-02T18:00:00Z', 1), teilSchluss: true };
+    const zu = tr('NVDA', 'sell', '2026-10-03T14:00:00Z', 4);
+    const wieder = tr('NVDA', 'buy', '2026-10-04T14:00:00Z');
+    const zu2 = tr('NVDA', 'sell', '2026-10-05T14:00:00Z', 2);
+    const alle = [zu2, wieder, zu, teil, nach, auf];
+    expect(gegenstueck(zu, alle)).toBe(auf);
+    expect(gegenstueck(zu2, alle)).toBe(wieder);
+  });
+
   it('Short: Leerverkauf (sell ohne Ergebnis) ⇔ Eindeckung (buy mit Ergebnis)', () => {
     const auf = tr('TSLA', 'sell', '2026-10-01T14:00:00Z');
     const zu = tr('TSLA', 'buy', '2026-10-01T16:00:00Z', 2);

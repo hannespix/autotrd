@@ -51,25 +51,41 @@ export function findeTradePaare(trades: readonly HistoryTrade[]): TradePaar[] {
 
 /**
  * Das Gegenstück eines Trades in der GELADENEN Historie (Task 21: Klick in
- * der Historie zeigt Kauf- und Verkaufsgrund zusammen). Zum Ausstieg die
- * Eröffnung — dieselbe Regel wie in `findeTradePaare`. Zur Eröffnung der
- * Schluss: der FRÜHESTE Gegenseiten-Trade desselben Symbols danach, der ein
- * Ergebnis trägt. null, wenn die Position noch offen ist oder das
- * Gegenstück außerhalb der geladenen Seiten liegt — erfunden wird nichts.
+ * der Historie zeigt Kauf- und Verkaufsgrund zusammen).
+ *
+ * Zum Ausstieg die ERÖFFNUNG: der FRÜHESTE Gegenseiten-Trade ohne Ergebnis
+ * nach dem letzten vollständigen Ausstieg desselben Symbols. Nicht der
+ * jüngste (Red-Team 09.10., H4): Nachkäufe (Aufstockung, Sockel-Nachschub)
+ * liegen zwischen Eröffnung und Verkauf, und mit ihnen gepaart verschwände
+ * der eigentliche Einstiegsgrund. Teilverkäufe beenden die Position nicht
+ * und zählen deshalb nicht als Grenze.
+ *
+ * Zur Eröffnung der Schluss: der FRÜHESTE Gegenseiten-Trade mit Ergebnis
+ * danach. null, wenn die Position noch offen ist oder das Gegenstück
+ * außerhalb der geladenen Seiten liegt — erfunden wird nichts. Die
+ * geladene Historie ist ein lückenloses jüngstes Fenster: Fehlt der
+ * vorige Ausstieg, fehlt auch alles davor.
  */
-export function gegenstueck<T extends HistoryTrade>(trade: T, trades: readonly T[]): T | null {
+export function gegenstueck<T extends HistoryTrade & { teilSchluss?: boolean }>(trade: T, trades: readonly T[]): T | null {
   const hatErgebnis = (x: HistoryTrade): boolean => typeof x.pnl === 'number' && Number.isFinite(x.pnl);
-  const ausstieg = hatErgebnis(trade);
-  let treffer: T | null = null;
-  for (const k of trades) {
-    if (k === trade || k.symbol !== trade.symbol || k.side === trade.side) continue;
-    if (ausstieg) {
-      if (hatErgebnis(k) || k.executedAt >= trade.executedAt) continue;
-      if (!treffer || k.executedAt > treffer.executedAt) treffer = k;
-    } else {
-      if (!hatErgebnis(k) || k.executedAt <= trade.executedAt) continue;
+  const gleich = trades.filter((k) => k !== trade && k.symbol === trade.symbol);
+  if (hatErgebnis(trade)) {
+    let grenze = '';
+    for (const k of gleich) {
+      if (hatErgebnis(k) && k.teilSchluss !== true && k.executedAt < trade.executedAt && k.executedAt > grenze) grenze = k.executedAt;
+    }
+    let treffer: T | null = null;
+    for (const k of gleich) {
+      if (k.side === trade.side || hatErgebnis(k)) continue;
+      if (k.executedAt >= trade.executedAt || k.executedAt <= grenze) continue;
       if (!treffer || k.executedAt < treffer.executedAt) treffer = k;
     }
+    return treffer;
+  }
+  let treffer: T | null = null;
+  for (const k of gleich) {
+    if (k.side === trade.side || !hatErgebnis(k) || k.executedAt <= trade.executedAt) continue;
+    if (!treffer || k.executedAt < treffer.executedAt) treffer = k;
   }
   return treffer;
 }

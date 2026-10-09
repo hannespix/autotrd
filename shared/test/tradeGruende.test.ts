@@ -11,7 +11,7 @@ describe('einstiegsGruende', () => {
       signalContext: { typ: 'konfluenz', konfluenz: 2, minKonfluenz: 2, votes: { rsi: 'hold', macd: 'buy', bollinger: 'sell', forecast: 'buy' }, regime: 'trend' },
     });
     expect(r.titel).toBe('Gekauft');
-    expect(texte(r)).toContain('2 von mindestens 2 nötigen Anzeichen zeigten gleichzeitig auf steigende Kurse: der Trend-Messer (MACD) und die Kursprognose des Systems.');
+    expect(texte(r)).toContain('Die Anzeichen für steigende Kurse kamen auf 2 Punkte (nötig: mindestens 2). Dafür sprachen: der Trend-Messer (MACD) und die Kursprognose des Systems.');
     expect(texte(r)).toContain('Dagegen sprach: das Schwankungsband (Bollinger).');
     expect(texte(r)).toContain('ruhiger Aufwärtstrend');
     expect(texte(r)).toContain('Anlageklasse: US-Aktien.');
@@ -22,8 +22,8 @@ describe('einstiegsGruende', () => {
     const r = einstiegsGruende({ side: 'buy', source: 'engine', signalContext: { typ: 'konfluenz', konfluenz: 1, minKonfluenz: 2, votes: { macd: 'buy' }, ki: { richtung: 'positiv', probe: true } } });
     expect(texte(r)).toContain('Die Technik allein reichte nicht');
     const mitKiStimme = einstiegsGruende({ side: 'buy', signalContext: { typ: 'konfluenz', konfluenz: 1, minKonfluenz: 2, votes: { macd: 'buy', ki: 'buy' }, ki: { richtung: 'positiv', probe: true } } });
-    expect(texte(mitKiStimme)).toContain('(1 von mindestens 2 nötigen Anzeichen: der Trend-Messer (MACD)).');
-    expect(texte(r)).toContain('als gut für das Unternehmen eingestuft — der Kauf kam nur deshalb zustande');
+    expect(texte(mitKiStimme)).toContain('Die Technik allein reichte nicht für einen Kauf: 1 Punkt (nötig: mindestens 2). Dafür sprach: der Trend-Messer (MACD).');
+    expect(texte(r)).toContain('als gut für den Wert eingestuft — der Kauf kam nur deshalb zustande');
   });
 
   it('Prognose-Pfeil: gespeichert wird buy/sell (Alt: up/down) — „nach oben" ist pro beim Kauf', () => {
@@ -41,14 +41,14 @@ describe('einstiegsGruende', () => {
 
   it('ohne Journal: Stimmen und Weg aus dem Steckbrief (wie im Lagebericht)', () => {
     const r = einstiegsGruende({ side: 'buy', source: 'engine', bucket: 'crypto|intraday|macd+rsi|long|seitwaerts' });
-    expect(texte(r)).toContain('Mehrere Anzeichen zeigten gleichzeitig auf steigende Kurse: der Trend-Messer (MACD) und der Überhitzungs-Messer (RSI).');
-    expect(texte(r)).toContain('Gesamtmarkt ohne klare Richtung');
+    expect(texte(r)).toContain('Laut Aufzeichnung sprachen für steigende Kurse: der Trend-Messer (MACD) und der Überhitzungs-Messer (RSI).');
+    expect(texte(r)).toContain('keine klare Richtung am Gesamtmarkt');
     expect(texte(r)).toContain('Anlageklasse: Krypto.');
     const hand = einstiegsGruende({ side: 'buy', source: 'engine', bucket: 'stocks_us|daily|manuell|long|alle' });
     expect(texte(hand)).toContain('Von dir selbst ausgelöst');
     const probe = einstiegsGruende({ side: 'buy', source: 'engine', bucket: 'stocks_us|intraday|ki|long|trend' });
     expect(texte(probe)).toContain('Nachrichten-Bewertung');
-    expect(texte(probe)).not.toContain('Mehrere Anzeichen');
+    expect(texte(probe)).not.toContain('Laut Aufzeichnung');
   });
 
   it('Momentum, Sockel, Regelbaum, Hand und Leerverkauf haben eigene Sätze', () => {
@@ -74,7 +74,7 @@ describe('ausstiegsGruende', () => {
     const r = ausstiegsGruende({ side: 'sell', riskExit: 'stop_loss', pnl: -42.5, entryPrice: 100, price: 95, fee: 1.2, holdingDays: 3.2 });
     expect(r.titel).toBe('Verkauft');
     expect(texte(r)).toContain('Die Verlustbremse hat ausgelöst (Stop-Loss)');
-    expect(texte(r)).toContain('Ergebnis: −42,50 $ (−5,0 % Kursänderung), Gebühren 1,20 $.');
+    expect(texte(r)).toContain('Ergebnis nach Gebühren: −42,50 $. Darin schon abgezogen: 1,20 $ Gebühr für den Verkauf.');
     expect(texte(r)).toContain('Gehalten: etwa 3 Tage.');
     expect(r.gruende.find((g) => g.text.startsWith('Ergebnis'))!.art).toBe('contra');
   });
@@ -82,9 +82,9 @@ describe('ausstiegsGruende', () => {
   it('Signal-Ausstieg nennt, welche Anzeichen gedreht haben; Eindeckung rechnet die Richtung um', () => {
     expect(texte(ausstiegsGruende({ side: 'sell', source: 'engine', pnl: 5, signalContext: { typ: 'konfluenz', votes: { macd: 'sell', rsi: 'sell' } } })))
       .toContain('Die Anzeichen haben gedreht: der Trend-Messer (MACD) und der Überhitzungs-Messer (RSI) zeigten nun auf fallende Kurse.');
-    const cover = ausstiegsGruende({ side: 'buy', cover: true, pnl: 10, entryPrice: 50, price: 45 });
+    const cover = ausstiegsGruende({ side: 'buy', cover: true, pnl: 10, entryPrice: 50, price: 45, qty: 2 });
     expect(cover.titel).toContain('eingedeckt');
-    expect(texte(cover)).toContain('(+10,0 % Kursänderung)');
+    expect(texte(cover)).toContain('Ergebnis nach Gebühren: +10,00 $ (+10,0 % auf den Einsatz).');
   });
 
   it('Trailing-Stop zeigt den Höchstkurs; unbekannter Grund fällt ehrlich zurück; Hand und Übernahme', () => {
@@ -102,6 +102,43 @@ describe('Zahlformat', () => {
   it('Tausenderpunkt und Komma wie im Rest des Blatts', () => {
     const r = ausstiegsGruende({ side: 'sell', pnl: 1234.5, riskExit: 'trailing_stop', peakPrice: 66020, price: 64210, entryPrice: 61070 });
     expect(texte(r)).toContain('Höchster Kurs während der Haltezeit: 66.020,00; verkauft bei 64.210,00.');
-    expect(texte(r)).toContain('Ergebnis: +1.234,50 $');
+    expect(texte(r)).toContain('Ergebnis nach Gebühren: +1.234,50 $');
+  });
+});
+
+describe('Red-Team 09.10. (Widerlegungsbefunde)', () => {
+  it('H1: Sockel-Kauf trägt typ momentum, ist aber Sockel — der Steckbrief entscheidet', () => {
+    const r = einstiegsGruende({ side: 'buy', source: 'engine', bucket: 'stocks_us|daily|core|long|alle', signalContext: { typ: 'momentum' } });
+    expect(texte(r)).toContain('Grundbestands (Sockel)');
+    expect(texte(r)).not.toContain('Momentum-Auswahl');
+  });
+
+  it('H2: Trend-Solo nennt die Schwelle 1 und den MACD, nicht „1 von mindestens 2"', () => {
+    const r = einstiegsGruende({ side: 'buy', signalContext: { typ: 'konfluenz', konfluenz: 1, minKonfluenz: 2, votes: { macd: 'buy' }, soloTrend: true, regime: 'trend' } });
+    expect(texte(r)).toContain('in dieser Lage genügt dieses eine Anzeichen');
+    expect(texte(r)).not.toContain('mindestens 2');
+  });
+
+  it('H3: Short-Ausstieg spiegelt Stop-, Trailing- und Tiefstkurs-Texte', () => {
+    const t = texte(ausstiegsGruende({ side: 'buy', cover: true, pnl: 5, riskExit: 'trailing_stop', peakPrice: 90, price: 93 }));
+    expect(t).toContain('Tiefster Kurs während der Haltezeit: 90,00; zurückgekauft bei 93,00.');
+    expect(t).toContain('Tiefststand wieder stieg');
+    expect(t).not.toContain('Höchst');
+    expect(texte(ausstiegsGruende({ side: 'buy', cover: true, pnl: -5, riskExit: 'stop_loss' }))).toContain('Der Kurs stieg auf die vorher festgelegte Schmerzgrenze');
+  });
+
+  it('M6/M8: ohne aufgezeichnete Stimmen wird nichts behauptet', () => {
+    expect(einstiegsGruende({ side: 'buy', quelle: 'konfluenz' }).gruende[0]).toMatchObject({ art: 'luecke' });
+    expect(ausstiegsGruende({ side: 'sell', source: 'engine', pnl: 1 }).gruende[0]).toMatchObject({ art: 'luecke' });
+  });
+
+  it('M9: nachgebuchter Verkauf ohne Ergebnis ist kein Leerverkauf', () => {
+    expect(einstiegsGruende({ side: 'sell', sync: true }).titel).toBe('Gekauft');
+  });
+
+  it('M10: KI-Probe beim Short spricht vom Leerverkauf', () => {
+    const r = einstiegsGruende({ side: 'sell', short: true, signalContext: { typ: 'konfluenz', konfluenz: 1, minKonfluenz: 2, votes: { rsi: 'sell' }, ki: { richtung: 'negativ', probe: true } } });
+    expect(texte(r)).toContain('reichte nicht für einen Leerverkauf');
+    expect(texte(r)).toContain('der Leerverkauf kam nur deshalb zustande');
   });
 });

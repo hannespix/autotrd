@@ -78,13 +78,15 @@ const INDIKATOR: Record<string, string> = {
   lex: 'die Nachrichten-Wortliste',
 };
 
+/* `seitwaerts` ist zugleich der Ersatzwert, wenn die Marktlage nicht messbar
+ * war (regime.ts) — der Satz behauptet deshalb keine gemessene Seitwärtslage. */
 const MARKTLAGE: Record<string, string> = {
-  trend: 'Marktlage beim Kauf: ruhiger Aufwärtstrend am Gesamtmarkt.',
-  seitwaerts: 'Marktlage beim Kauf: Gesamtmarkt ohne klare Richtung — deshalb wird dann seltener und mit kleinerem Einsatz gehandelt.',
-  stress: 'Marktlage beim Kauf: unruhiger Gesamtmarkt.',
+  trend: 'Marktlage beim Einstieg: ruhiger Aufwärtstrend am Gesamtmarkt.',
+  seitwaerts: 'Marktlage beim Einstieg: keine klare Richtung am Gesamtmarkt (oder nicht messbar) — dann wird seltener und mit kleinerem Einsatz gehandelt.',
+  stress: 'Marktlage beim Einstieg: unruhiger Gesamtmarkt.',
 };
 
-/** Ausstiegsgründe in Alltagssprache. Unbekannte Gründe fallen auf eine ehrliche Formulierung zurück. */
+/** Ausstiegsgründe einer LONG-Position. Unbekannte Gründe fallen auf eine ehrliche Formulierung zurück. */
 const AUSSTIEG: Record<string, string> = {
   stop_loss: 'Die Verlustbremse hat ausgelöst (Stop-Loss): Der Kurs fiel auf die vorher festgelegte Schmerzgrenze, damit der Verlust nicht größer wird.',
   take_profit: 'Das Kursziel war erreicht (Take-Profit): Der Gewinn wurde mitgenommen.',
@@ -92,14 +94,22 @@ const AUSSTIEG: Record<string, string> = {
   trailing_stop_broker: 'Die mitlaufende Verlustbremse beim Broker hat ausgelöst (Trailing-Stop): Der Kurs fiel um den festgelegten Abstand vom Höchststand zurück.',
   max_hold: 'Die maximale Haltedauer war erreicht: Die Position wurde planmäßig geschlossen.',
   breaker: 'Die Tages-Notbremse hat ausgelöst: An diesem Tag waren die Verluste des Kontos zu hoch, deshalb wurden die automatischen Positionen geschlossen.',
-  margin_call: 'Sicherheitsverkauf: Für das geliehene Geld fehlte Deckung, deshalb musste verkauft werden.',
-  ki_news: 'Eine von der KI gelesene und gegengeprüfte Nachricht sprach klar gegen diese Position — deshalb wurde verkauft.',
+  margin_call: 'Sicherheitsverkauf: Für das geliehene Geld fehlte Deckung, deshalb musste geschlossen werden.',
+  ki_news: 'Eine von der KI gelesene und gegengeprüfte Nachricht sprach klar gegen diese Position — deshalb wurde geschlossen.',
   ki_stop: 'Nach einer Nachricht gegen die Position wurde die Verlustbremse enger gezogen (KI-Stop), und diese hat ausgelöst.',
-  exit_nachlauf: 'Der Verkaufsauftrag lag zunächst beim Broker und wurde erst später ausgeführt; der Verkauf wurde danach verbucht.',
-  fill_sync: 'Der Broker hat einen Verkauf gemeldet, der nachträglich verbucht wurde.',
+  exit_nachlauf: 'Der Auftrag zum Schließen lag zunächst beim Broker und wurde erst später ausgeführt; das wurde danach verbucht.',
+  fill_sync: 'Der Broker hat ein Schließen der Position gemeldet, das nachträglich verbucht wurde.',
   momentum_rebalance: 'Regelmäßiger Umbau der Momentum-Auswahl: Das Symbol gehörte nicht mehr zu den stärksten oder der Marktfilter stand auf Vorsicht.',
-  core_rebalance: 'Der Grundbestand (Sockel) wurde neu gewichtet; dabei wurde dieser Anteil verkauft.',
+  core_rebalance: 'Der Grundbestand (Sockel) wurde neu zusammengestellt; diese Position gehörte nicht mehr dazu.',
   core_aufloesung: 'Der Grundbestand (Sockel) wurde aufgelöst.',
+};
+
+/** Gespiegelte Texte für das Eindecken einer SHORT-Position — wo die Richtung zählt. */
+const AUSSTIEG_SHORT: Record<string, string> = {
+  stop_loss: 'Die Verlustbremse hat ausgelöst (Stop-Loss): Der Kurs stieg auf die vorher festgelegte Schmerzgrenze, deshalb wurde zurückgekauft, damit der Verlust nicht größer wird.',
+  take_profit: 'Das Kursziel war erreicht (Take-Profit): Der Kurs war weit genug gefallen, der Gewinn wurde mitgenommen.',
+  trailing_stop: 'Die mitlaufende Verlustbremse hat ausgelöst (Trailing-Stop): Sie zieht mit fallendem Kurs nach unten mit; als der Kurs um den festgelegten Abstand vom Tiefststand wieder stieg, wurde zurückgekauft.',
+  trailing_stop_broker: 'Die mitlaufende Verlustbremse beim Broker hat ausgelöst (Trailing-Stop): Der Kurs stieg um den festgelegten Abstand vom Tiefststand.',
 };
 
 /** Deutsches Zahlformat mit Tausenderpunkt — ohne Intl, damit Server und Browser gleich rechnen. */
@@ -110,8 +120,11 @@ const zahl = (x: number, stellen = 2): string => {
 };
 const vz = (x: number, stellen = 2): string => `${x > 0 ? '+' : x < 0 ? '−' : ''}${zahl(Math.abs(x), stellen)}`;
 const geld = (x: number): string => `${vz(x)} $`;
+/** Punktzahl ohne überflüssige Nachkommastellen („2", „1,5"). */
+const punkte = (x: number): string => (Number.isInteger(x) ? String(x) : zahl(x, 1));
+const punkteWort = (x: number): string => `${punkte(x)} ${x === 1 ? 'Punkt' : 'Punkte'}`;
 
-/** Aktive Stimmen einer Richtung als Aufzählung („der Trend-Messer (MACD) und die Kursprognose"). */
+/** Aktive Stimmen einer Richtung als Aufzählung („der Trend-Messer (MACD) und …"). */
 function stimmenText(votes: Record<string, string> | undefined, richtung: 'buy' | 'sell'): string[] {
   if (!votes) return [];
   return Object.entries(votes)
@@ -132,24 +145,34 @@ function stimmenAusSteckbrief(bucket: string | undefined, richtung: 'buy' | 'sel
   return Object.fromEntries(sig.split('+').filter((k) => k.length > 0).map((k) => [k, richtung]));
 }
 
+/** Einstiegsweg: der Steckbrief zuerst (Sockel-Käufe tragen `typ: 'momentum'`,
+ *  aber die Signatur `core`), sonst die gestempelte Quelle, sonst `typ`. */
+function einstiegsweg(f: TradeGrundFakten): string {
+  const ausDoc = tradeQuelle({ source: f.source, bucket: f.bucket, sync: f.sync, quelle: f.quelle });
+  if (ausDoc !== 'unbekannt') return ausDoc;
+  const typ = f.signalContext?.typ;
+  if (typ === 'manuell') return 'hand';
+  return typ ?? 'unbekannt';
+}
+
 /** Warum gekauft (bzw. leerverkauft) — aus dem Journal-Doc des EINSTIEGS. */
 export function einstiegsGruende(f: TradeGrundFakten): TradeGruende {
-  const short = f.side === 'sell' || f.short === true;
+  // Ein nachgebuchter Verkauf ohne Ergebnis ist kein Leerverkauf (adoptBroker
+  // setzt pnl nur bei bekannter Deckung) — bei `sync` zählt nur `short`.
+  const short = f.short === true || (f.side === 'sell' && f.sync !== true);
   const titel = f.nachkauf === true
     ? (short ? 'Leerverkauf aufgestockt' : 'Position aufgestockt')
     : (short ? 'Leerverkauf eröffnet (Wette auf fallende Kurse)' : 'Gekauft');
   const g: Grund[] = [];
   const sc = f.signalContext;
-  // Der Einstiegsweg: zuerst das, was das Journal beim Kauf festhielt, sonst
-  // dieselbe Ableitung wie im Lagebericht (Steckbrief → gestempelte Quelle).
-  const weg = sc?.typ === 'manuell' ? 'hand' : sc?.typ ?? tradeQuelle({ source: f.source, bucket: f.bucket, sync: f.sync, quelle: f.quelle });
-  const manuell = weg === 'hand';
+  const weg = einstiegsweg(f);
+  const geschaeft = short ? 'Leerverkauf' : 'Kauf';
 
   if (f.sync === true || weg === 'sync') {
-    g.push({ art: 'luecke', text: 'Diese Position wurde aus dem Broker-Depot übernommen. Warum sie ursprünglich gekauft wurde, ist nicht aufgezeichnet.' });
+    g.push({ art: 'luecke', text: 'Diese Position wurde aus dem Broker-Depot übernommen. Warum sie ursprünglich eröffnet wurde, ist nicht aufgezeichnet.' });
     return { art: 'einstieg', titel, gruende: g };
   }
-  if (manuell) {
+  if (weg === 'hand') {
     g.push({ art: 'info', text: 'Von dir selbst ausgelöst (manueller Trade).' });
     return { art: 'einstieg', titel, gruende: g };
   }
@@ -168,26 +191,34 @@ export function einstiegsGruende(f: TradeGrundFakten): TradeGruende {
     // Bei einer Probe zählt die Konfluenz nur die TECHNIK — die Nachrichten-
     // Stimme steht in einer eigenen Zeile und gehört nicht in diese Aufzählung.
     const dafuer = stimmenText(votes, richtung).filter((n) => !probe || (n !== INDIKATOR['ki'] && n !== INDIKATOR['lex']));
-    if (typeof sc?.konfluenz === 'number') {
-      const latte = typeof sc.minKonfluenz === 'number' ? ` von mindestens ${sc.minKonfluenz} nötigen` : '';
-      const wer = dafuer.length > 0 ? `: ${aufzaehlen(dafuer)}` : '';
+    const wer = dafuer.length > 0 ? ` Dafür ${dafuer.length === 1 ? 'sprach' : 'sprachen'}: ${aufzaehlen(dafuer)}.` : '';
+    if (sc?.soloTrend === true && !short) {
+      // engine.ts trendSolo: im ruhigen Aufwärtstrend genügt EINE Stimme —
+      // die des Trend-Messers. Die Schwelle ist dann 1, nicht minKonfluenz.
+      g.push({ art: 'pro', text: 'Der Trend-Messer (MACD) zeigte auf steigende Kurse, und der Gesamtmarkt lag in einem ruhigen Aufwärtstrend — in dieser Lage genügt dieses eine Anzeichen.' });
+    } else if (typeof sc?.konfluenz === 'number') {
+      // `konfluenz` ist eine PUNKTZAHL: Die Systemprognose und dein Prognose-
+      // Pfeil können mit Gewicht mehr als einen Punkt geben (engine.ts,
+      // scanMarket) — deshalb nicht „Anzeichen" zählen.
+      const latte = typeof sc.minKonfluenz === 'number' ? ` (nötig: mindestens ${punkte(sc.minKonfluenz)})` : '';
       g.push({
         art: probe ? 'info' : 'pro',
         text: probe
-          ? `Die Technik allein reichte nicht für einen Kauf (${sc.konfluenz}${latte} Anzeichen${wer}).`
-          : `${sc.konfluenz}${latte} Anzeichen zeigten gleichzeitig auf ${wohin} Kurse${wer}.`,
+          ? `Die Technik allein reichte nicht für einen ${geschaeft}: ${punkteWort(sc.konfluenz)}${latte}.${wer}`
+          : `Die Anzeichen für ${wohin} Kurse kamen auf ${punkteWort(sc.konfluenz)}${latte}.${wer}`,
       });
     } else if (weg === 'ki_probe') {
       // Ohne Journal: Der Steckbrief verrät nur, DASS eine Nachrichten-Bewertung trug.
-      g.push({ art: 'info', text: 'Der Kauf kam über eine Nachrichten-Bewertung zustande — darum mit kleinerem Einsatz (Probegröße).' });
+      g.push({ art: 'info', text: `Der ${geschaeft} kam über eine Nachrichten-Bewertung zustande — darum mit kleinerem Einsatz (Probegröße).` });
+    } else if (dafuer.length > 0) {
+      g.push({ art: 'pro', text: `Laut Aufzeichnung ${dafuer.length === 1 ? 'sprach' : 'sprachen'} für ${wohin} Kurse: ${aufzaehlen(dafuer)}.` });
     } else {
-      const wer = dafuer.length > 0 ? `: ${aufzaehlen(dafuer)}` : '';
-      g.push({ art: 'pro', text: `Mehrere Anzeichen zeigten gleichzeitig auf ${wohin} Kurse${wer}.` });
+      g.push({ art: 'luecke', text: 'Einstieg über das Anzeichen-System; welche Anzeichen es waren, ist für diesen Trade nicht aufgezeichnet.' });
     }
     const dagegen = stimmenText(votes, short ? 'buy' : 'sell');
     if (dagegen.length > 0) g.push({ art: 'contra', text: `Dagegen sprach: ${aufzaehlen(dagegen)}.` });
   } else {
-    g.push({ art: 'luecke', text: 'Für diesen Kauf ist kein Grund aufgezeichnet (älterer Trade oder nachträglich verbucht).' });
+    g.push({ art: 'luecke', text: `Für diesen ${geschaeft} ist kein Grund aufgezeichnet (älterer Trade oder nachträglich verbucht).` });
   }
 
   // `forecast` im Journal ist der Pfeil, den DU im Chart gezeichnet hast
@@ -199,16 +230,13 @@ export function einstiegsGruende(f: TradeGrundFakten): TradeGruende {
   }
   if (sc?.ki?.richtung) {
     const pos = sc.ki.richtung === 'positiv';
-    const text = `Die KI hat eine Nachricht gelesen, gegengeprüft und als ${pos ? 'gut' : 'schlecht'} für das Unternehmen eingestuft`
-      + (sc.ki.probe ? ' — der Kauf kam nur deshalb zustande, darum mit kleinerem Einsatz (Probegröße).' : '.');
+    const text = `Die KI hat eine Nachricht gelesen, gegengeprüft und als ${pos ? 'gut' : 'schlecht'} für den Wert eingestuft`
+      + (sc.ki.probe ? ` — der ${geschaeft} kam nur deshalb zustande, darum mit kleinerem Einsatz (Probegröße).` : '.');
     g.push({ art: pos !== short ? 'pro' : 'contra', text });
   }
   if (sc?.lexikon?.dir) {
     const pos = sc.lexikon.dir === 'buy';
     g.push({ art: pos !== short ? 'pro' : 'contra', text: `Eine Wortliste hat Nachrichten als ${pos ? 'positiv' : 'negativ'} gewertet (Ersatz, weil das KI-Tagesbudget aufgebraucht war)${sc.lexikon.probe ? ' — darum mit kleinerem Einsatz.' : '.'}` });
-  }
-  if (sc?.soloTrend === true) {
-    g.push({ art: 'info', text: 'Der Kauf kam allein über den Trendfilter zustande (keine weiteren Anzeichen).' });
   }
   const regime = sc?.regime ?? (typeof f.bucket === 'string' ? f.bucket.split('|')[4] : undefined);
   if (regime && MARKTLAGE[regime]) g.push({ art: 'info', text: MARKTLAGE[regime]! });
@@ -228,33 +256,38 @@ export function ausstiegsGruende(f: TradeGrundFakten): TradeGruende {
   if (f.sync === true) {
     g.push({ art: 'luecke', text: 'Aus der Broker-Historie übernommen — der Grund ist nicht aufgezeichnet.' });
   } else if (f.riskExit) {
-    g.push({ art: 'info', text: AUSSTIEG[f.riskExit] ?? `Automatisch geschlossen (Grund: ${f.riskExit}).` });
+    const text = (cover ? AUSSTIEG_SHORT[f.riskExit] : undefined) ?? AUSSTIEG[f.riskExit];
+    g.push({ art: 'info', text: text ?? `Automatisch geschlossen (Grund: ${f.riskExit}).` });
   } else if (f.source === 'manual' || sc?.typ === 'manuell') {
-    g.push({ art: 'info', text: 'Von dir selbst verkauft (manueller Trade).' });
+    g.push({ art: 'info', text: cover ? 'Von dir selbst zurückgekauft (manueller Trade).' : 'Von dir selbst verkauft (manueller Trade).' });
   } else if (sc?.typ === 'regelbaum') {
-    g.push({ art: 'info', text: 'Das feste Regelwerk (Regelbaum) hat ein Verkaufssignal gegeben.' });
+    g.push({ art: 'info', text: `Das feste Regelwerk (Regelbaum) hat ein Signal zum ${cover ? 'Zurückkaufen' : 'Verkaufen'} gegeben.` });
   } else {
     const gedreht = stimmenText(sc?.votes, cover ? 'buy' : 'sell');
-    g.push({
-      art: 'info',
-      text: gedreht.length > 0
-        ? `Die Anzeichen haben gedreht: ${aufzaehlen(gedreht)} ${gedreht.length === 1 ? 'zeigte' : 'zeigten'} nun auf ${cover ? 'steigende' : 'fallende'} Kurse.`
-        : 'Die Anzeichen für die Position waren nicht mehr da — das Signal hat gedreht.',
-    });
+    g.push(gedreht.length > 0
+      ? { art: 'info', text: `Die Anzeichen haben gedreht: ${aufzaehlen(gedreht)} ${gedreht.length === 1 ? 'zeigte' : 'zeigten'} nun auf ${cover ? 'steigende' : 'fallende'} Kurse.` }
+      // Ohne Stimmen nichts behaupten: Auch dein Prognose-Pfeil kann den
+      // Ausstieg allein auslösen, und der wird am Ausstieg nicht gespeichert.
+      : { art: 'luecke', text: 'Vom Anzeichen-System geschlossen; welches Anzeichen den Ausschlag gab, ist für diesen Trade nicht aufgezeichnet.' });
   }
-  if (f.riskExit === 'trailing_stop' || f.riskExit === 'trailing_stop_broker') {
-    if (typeof f.peakPrice === 'number' && typeof f.price === 'number' && f.peakPrice > 0) {
-      g.push({ art: 'info', text: `Höchster Kurs während der Haltezeit: ${zahl(f.peakPrice)}; verkauft bei ${zahl(f.price)}.` });
-    }
+  if ((f.riskExit === 'trailing_stop' || f.riskExit === 'trailing_stop_broker')
+    && typeof f.peakPrice === 'number' && typeof f.price === 'number' && f.peakPrice > 0) {
+    // Am Short ist peakPrice der TIEFSTSTAND (broker.ts: lowWater).
+    g.push({ art: 'info', text: cover
+      ? `Tiefster Kurs während der Haltezeit: ${zahl(f.peakPrice)}; zurückgekauft bei ${zahl(f.price)}.`
+      : `Höchster Kurs während der Haltezeit: ${zahl(f.peakPrice)}; verkauft bei ${zahl(f.price)}.` });
   }
   if (typeof f.pnl === 'number') {
-    const pct = typeof f.entryPrice === 'number' && f.entryPrice > 0 && typeof f.price === 'number'
-      ? ((cover ? f.entryPrice - f.price : f.price - f.entryPrice) / f.entryPrice) * 100
-      : null;
-    const gebuehr = typeof f.fee === 'number' && f.fee > 0 ? `, Gebühren ${zahl(f.fee)} $` : '';
+    // pnl ist NETTO: Kommission und Slippage beider Seiten stecken schon drin
+    // (broker.ts, effektive Preise). `fee` ist nur die Gebühr dieses Auftrags.
+    const einsatz = typeof f.entryPrice === 'number' && f.entryPrice > 0 && typeof f.qty === 'number' && f.qty > 0
+      ? f.entryPrice * f.qty : null;
+    const pct = einsatz !== null ? (f.pnl / einsatz) * 100 : null;
+    const gebuehr = typeof f.fee === 'number' && f.fee > 0
+      ? ` Darin schon abgezogen: ${zahl(f.fee)} $ Gebühr für ${cover ? 'den Rückkauf' : 'den Verkauf'}.` : '';
     g.push({
       art: f.pnl >= 0 ? 'pro' : 'contra',
-      text: `Ergebnis: ${geld(f.pnl)}${pct !== null ? ` (${vz(pct, 1)} % Kursänderung)` : ''}${gebuehr}.`,
+      text: `Ergebnis nach Gebühren: ${geld(f.pnl)}${pct !== null ? ` (${vz(pct, 1)} % auf den Einsatz)` : ''}.${gebuehr}`,
     });
   }
   if (typeof f.holdingDays === 'number' && f.holdingDays >= 0) {
