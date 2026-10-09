@@ -1038,7 +1038,7 @@ function layout(email: string): string {
           <summary class="hint" style="cursor:pointer">${t('pf.grosseKurve')}</summary>
           <div id="pfCurveMeta" class="hint mono" style="margin-top:6px"></div>
           <svg id="pfCurve" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true" style="display:block;width:100%;height:120px"></svg>
-          <label class="lbl" style="margin-top:6px">Drawdown ${iBtn('drawdown')}</label>
+          <label class="lbl" style="margin-top:6px">${t('kt.drawdown')} ${iBtn('drawdown')}</label>
           <svg id="pfDDCurve" viewBox="0 0 100 18" preserveAspectRatio="none" aria-hidden="true" style="display:block;width:100%;height:54px"></svg>
         </details>
         </div>
@@ -1154,7 +1154,7 @@ function layout(email: string): string {
         <div id="fcAcc" class="vbig c-ac">--</div>
         <div class="row" style="gap:12px">
           <div><label class="lbl">Bewertet</label><div id="fcScored" class="smv">0</div></div>
-          <div><label class="lbl">Lookback</label><div id="fcLb" class="smv">--</div></div>
+          <div><label class="lbl">${t('kt.rueckblick')}</label><div id="fcLb" class="smv">--</div></div>
         </div>
         <div class="hint" id="fcTuning">${t('lay.selfTuning')}</div>
         <div class="hint" id="fcVoteInfo"></div>
@@ -1173,11 +1173,11 @@ function layout(email: string): string {
         <span id="moFilter" class="tn-tag" style="float:right"></span>
       </div><div class="cbody">
         <div class="row" style="gap:12px;margin-top:8px">
-          <div><label class="lbl">Schatten-Depot</label><div id="moEq" class="smv mono">--</div></div>
+          <div><label class="lbl">${t('kt.probedepot')}</label><div id="moEq" class="smv mono">--</div></div>
           <div><label class="lbl">Trades</label><div id="moTrades" class="smv mono">0</div></div>
           <div><label class="lbl">Bewertbar</label><div id="moRanked" class="smv mono">--</div></div>
         </div>
-        <label class="lbl" style="margin-top:10px">Spitze des Universums</label>
+        <label class="lbl" style="margin-top:10px">${t('kt.spitzeRangliste')}</label>
         <div id="moTop" class="fl-tbl"><div class="hint">${t('lay.erstesRanking')}</div></div>
         <div class="hint" id="moHint"></div>
       </div></div>
@@ -1199,7 +1199,7 @@ function layout(email: string): string {
           <div><label class="lbl">Versuche</label><div id="skTries" class="smv mono">--</div></div>
           <div><label class="lbl">${t('lay.amtiertSeit')}</label><div id="skSince" class="smv mono">--</div></div>
         </div>
-        <label class="lbl" style="margin-top:10px">Amtierender Baum — was feuert?</label>
+        <label class="lbl" style="margin-top:10px">${t('kt.aktuelleRegeln')}</label>
         <div id="skBed" class="fl-tbl"><div class="hint">${t('lay.kommtMitTageslauf')}</div></div>
         <label class="lbl" style="margin-top:10px">${t('lay.pruefJournal')}</label>
         <div id="skLog" class="tn-log"><div class="hint">${t('lay.keinLauf')}</div></div>
@@ -4662,7 +4662,7 @@ function renderFcLabStats(hostId: string, stats: ForecastStatsDoc | null): void 
   }
   const best = stats?.best;
   host.innerHTML =
-    `<div class="fl-row fl-head"><span>Lookback</span><span>n</span><span>${t('fl.treffer')}</span><span>MAE</span></div>` +
+    `<div class="fl-row fl-head"><span>${t('kt.rueckblick')}</span><span>${t('kt.faelle')}</span><span>${t('fl.treffer')}</span><span>${t('kt.mittlFehler')}</span></div>` +
     rows
       .map((r) => {
         const isBest = best !== undefined && best.lookback === r.lb;
@@ -4685,7 +4685,7 @@ function renderFcLabRows(rows: EvaluatedForecastRow[]): void {
     return;
   }
   host.innerHTML =
-    `<div class="fl-row fl-head"><span>${t('fl.basis')}</span><span>Lookback</span><span>${t('chart.lblPrognose')}</span><span>${t('fl.richtung')}</span><span>MAE</span></div>` +
+    `<div class="fl-row fl-head"><span>${t('fl.basis')}</span><span>${t('kt.rueckblick')}</span><span>${t('chart.lblPrognose')}</span><span>${t('fl.richtung')}</span><span>${t('kt.mittlFehler')}</span></div>` +
     done
       .map((r) => {
         const hit = r.dirHit === true;
@@ -9324,9 +9324,9 @@ function kurvenText(e: Parameters<typeof erklaerungsTeile>[0]): string {
             teil.trades === 1 ? t('kv.abschlussTraegt') : t('kv.abschluesseTragen')
           } ${t('kv.ohneZeitpunkt')}`;
         case 'keineSnapshots':
-          return `${t('kv.keineSnapshots1')}${reset(teil.resetAm)} ${t('kv.keineSnapshots2')} ${teil.uhrzeit}.`;
+          return `${t('kv.keineSnapshots1')}${reset(teil.resetAm)} ${t('kv.keineSnapshots2')} ${t('kv.snapshotZeit')}.`;
         default:
-          return `${t('kv.einSnapshot1')}${reset(teil.resetAm)} ${t('kv.einSnapshot2')} ${teil.uhrzeit}).`;
+          return `${t('kv.einSnapshot1')}${reset(teil.resetAm)} ${t('kv.einSnapshot2')} ${t('kv.snapshotZeit')}).`;
       }
     })
     .join(' ')
@@ -10856,7 +10856,7 @@ function renderStruktur(d: StrukturDoc | null): void {
       const zahlen =
         r.art === 'start'
           ? `${t('sk.versuch')} ${r.nVersuche}`
-          : `${t('sk.vorsprung')} ${fmt(r.vorsprung)} · DSR ${fmt(r.dsr)} · ${t('sk.latte')} ${fmt(r.latte)}` +
+          : `${t('sk.vorsprung')} ${fmt(r.vorsprung)} · ${t('sk.guete')} ${fmt(r.dsr)} · ${t('sk.latte')} ${fmt(r.latte)}` +
             ` · Test-Sharpe ${fmt(r.testSharpe)} · n=${r.nSuch}/${r.nTest} · ${t('sk.versuch')} ${r.nVersuche}`;
       const gruende = r.gruende.length > 0 ? `<div class="tn-r">${esc(r.gruende.join(' · '))}</div>` : '';
       return (
