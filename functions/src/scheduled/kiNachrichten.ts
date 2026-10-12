@@ -78,6 +78,8 @@ import {
   endUrteil,
   hauptversuchWorstUsd,
   isStrategy,
+  kiTrichterTag,
+  type KiTrichterTag,
   kostenUsd,
   parsePruefung,
   parseSichtung,
@@ -798,6 +800,22 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
       },
       { merge: true },
     );
+    // Tagestrichter (Loop #138, 12.10.): summiert die Zähler über den ET-Tag,
+    // damit „wo bleiben die Meldungen hängen?" auch abends beantwortbar ist —
+    // die Felder oben gelten nur für DIESEN Lauf. `update` ersetzt `trichter`
+    // als Ganzes (ein `merge` behielte Auslass-Gründe des Vortags). Reine
+    // Messung: ein Fehler hier berührt weder Urteile noch Handel.
+    await standRef
+      .get()
+      .then((vorher) => {
+        const t = kiTrichterTag(
+          { trichter: vorher.get('trichter') as Partial<KiTrichterTag> | undefined },
+          e,
+          budgetTag(jetzt()),
+        );
+        return standRef.update({ trichter: t.trichter, ...(t.vortag ? { vortag: t.vortag } : {}) });
+      })
+      .catch((err: unknown) => logger.warn('kiNachrichten: Tagestrichter nicht geschrieben', err));
     // Anzeige-Kopie für Detailblatt, Journal und Abzeichen (Task 22) — ganz
     // am Ende und abgefangen: Sie darf kein Urteil und keinen Handel berühren.
     // Eine Stunde Rückblick holt nach, was ein abgebrochener Lauf nicht kopierte.

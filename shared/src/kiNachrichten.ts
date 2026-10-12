@@ -661,3 +661,73 @@ export function budgetNachricht(tag: string, verbrauchtUsd: number, limitUsd: nu
     + 'Der Handel läuft normal weiter.'
   );
 }
+
+/* ── Tagestrichter (Loop #138, 12.10.) ──────────────────────────────────── */
+
+/**
+ * Was ein KI-Nachrichten-Lauf am Tag insgesamt durchgelassen hat — reine
+ * Messung, keine Wirkung auf Urteile oder Handel.
+ *
+ * Anlass: An drei Handelstagen (08., 09., 12.10.) gab es 0 Scans mit
+ * handlungsfähiger KI-Lage und 0 KI-Aktionen, obwohl 170 Urteile mit
+ * Richtung offen waren. `meta/kiNachrichten` überschreibt seine Zähler alle
+ * fünf Minuten; abends steht dort der letzte (leere) Lauf, und die Frage
+ * „wo im Trichter bleiben die Meldungen hängen — Sichtung, Gegenprüfung oder
+ * Handlungsfähigkeit?" ist aus den gespeicherten Zahlen nicht beantwortbar.
+ *
+ * Gleicher ET-Tag summiert, neuer Tag beginnt bei null; der vorige Tag
+ * bleibt als `vortag` stehen, damit eine Kontrolle nach Mitternacht ihn noch
+ * sieht. Nur Zähler — keine Symbole, keine Kosten, keine Kontozahl
+ * (`meta/**` ist öffentlich).
+ */
+export interface KiTrichterTag {
+  tag: string;
+  laeufe: number;
+  gesichtet: number;
+  geprueft: number;
+  handlungsfaehig: number;
+  ausgelassen: Partial<Record<KiAuslassGrund, number>>;
+  aufrufFehler: number;
+  budgetErreicht: boolean;
+}
+
+export interface KiTrichterLauf {
+  gesichtet: number;
+  geprueft: number;
+  handlungsfaehig: number;
+  ausgelassen: Partial<Record<KiAuslassGrund, number>>;
+  aufrufFehler: number;
+  budgetErreicht: boolean;
+}
+
+const trichterZahl = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+
+export function kiTrichterTag(
+  vorher: { trichter?: Partial<KiTrichterTag> | null | undefined } | null | undefined,
+  lauf: KiTrichterLauf,
+  tag: string,
+): { trichter: KiTrichterTag; vortag: Partial<KiTrichterTag> | null } {
+  const alt = vorher?.trichter ?? null;
+  const gleich = !!alt && alt.tag === tag;
+  const basis = gleich ? alt : null;
+  const ausgelassen: Partial<Record<KiAuslassGrund, number>> = {};
+  const altAus = (basis?.ausgelassen ?? {}) as Record<string, unknown>;
+  for (const k of new Set([...Object.keys(altAus), ...Object.keys(lauf.ausgelassen)])) {
+    const n = trichterZahl(altAus[k]) + trichterZahl(lauf.ausgelassen[k as KiAuslassGrund]);
+    if (n > 0) ausgelassen[k as KiAuslassGrund] = n;
+  }
+  return {
+    trichter: {
+      tag,
+      laeufe: trichterZahl(basis?.laeufe) + 1,
+      gesichtet: trichterZahl(basis?.gesichtet) + trichterZahl(lauf.gesichtet),
+      geprueft: trichterZahl(basis?.geprueft) + trichterZahl(lauf.geprueft),
+      handlungsfaehig: trichterZahl(basis?.handlungsfaehig) + trichterZahl(lauf.handlungsfaehig),
+      ausgelassen,
+      aufrufFehler: trichterZahl(basis?.aufrufFehler) + trichterZahl(lauf.aufrufFehler),
+      budgetErreicht: (basis?.budgetErreicht === true) || lauf.budgetErreicht,
+    },
+    // Tageswechsel: der alte Tag wird zum Vortag; am selben Tag bleibt der Vortag stehen.
+    vortag: gleich ? null : alt,
+  };
+}
