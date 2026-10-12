@@ -52,6 +52,11 @@ const ref = (pfad: string): Record<string, unknown> => ({
   set: async (d: Daten, opt?: { merge?: boolean }) => {
     store.set(pfad, opt?.merge ? mischen(store.get(pfad), d) : mischen(undefined, d));
   },
+  // update: Felder als Ganzes ersetzen (wie Firestore) — Dokument muss existieren.
+  update: async (d: Daten) => {
+    if (!store.has(pfad)) throw Object.assign(new Error('NOT_FOUND'), { code: 5 });
+    store.set(pfad, mischen(store.get(pfad), d));
+  },
   create: async (d: Daten) => {
     const f = schreibFehler(pfad);
     if (f) throw f;
@@ -256,6 +261,11 @@ describe('Abdeckung und Ablage', () => {
     expect(anfragen[1]!.eingabe).not.toContain('klar');
     const stand = store.get('meta/kiNachrichten')!;
     expect(JSON.stringify(stand)).not.toMatch(/usd|konten/i);
+    // Tagestrichter (Loop #138): beide Läufe desselben ET-Tags summiert —
+    // Lauf 1 sichtet, Lauf 2 prüft gegen; der Stand oben zeigt nur Lauf 2.
+    expect(stand['trichter']).toMatchObject({ tag: '2026-10-05', laeufe: 2, gesichtet: 1, geprueft: 1, handlungsfaehig: 1 });
+    expect((stand['trichter'] as { ausgelassen: Record<string, number> }).ausgelassen['sammelmeldung']).toBeGreaterThanOrEqual(1);
+    expect(stand['vortag']).toBeUndefined();
   });
 
   it('Anzeige-Kopie (Task 22): je Konto nur zu EIGENEN Symbolen, nur Whitelist, nie in market/**', async () => {
