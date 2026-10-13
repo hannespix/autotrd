@@ -351,6 +351,28 @@ describe('Exit-Geld erreicht die letzte Stufe', () => {
     expect(h.exits7t['take_profit']!.pnl).toBeGreaterThan(0);
   });
 
+  it('Sockel-Ausstiege (Loop #138): eigener Topf, über Konten summiert, fehlt nie', () => {
+    /* Der Scan blendet Sockel-Positionen aus, der Minuten-Puls nicht. Ob der
+     * Sockel am Monats-Rebalance oder an Prozent-Stop/Ziel/Trailing endet,
+     * zeigt nur dieser getrennte Topf. */
+    const exits7tSockel = {
+      stop_loss: { n: 7, pnl: -300, wins: 0 },
+      take_profit: { n: 4, pnl: 160, wins: 4 },
+      core_rebalance: { n: 1, pnl: 20, wins: 1 },
+    };
+    const h = aggregateTradingHealth([
+      { ...konto(10, 5), exits7tSockel },
+      { ...konto(10, 5), exits7tSockel },
+      { ...konto(10, 5) },
+    ] as AccountContribution[]);
+    expect(h.exits7tSockel['stop_loss']?.n).toBe(14);
+    expect(h.exits7tSockel['take_profit']?.n).toBe(8);
+    expect(h.exits7tSockel['core_rebalance']?.n).toBe(2);
+    expect(h.exits7tSockel['stop_loss']!.pnl).toBeLessThan(0);
+    // Ohne Sockel-Beiträge ist der Topf leer, aber vorhanden.
+    expect(aggregateTradingHealth([konto(10, 5)] as AccountContribution[]).exits7tSockel).toEqual({});
+  });
+
   it('ein fehlendes pnl im Beitrag zählt als 0, nicht als NaN', () => {
     // Altbestand aus der Zeit vor dem Feld darf die Summe nicht vergiften:
     // Ein einziges NaN würde den ganzen Eimer unbrauchbar machen.

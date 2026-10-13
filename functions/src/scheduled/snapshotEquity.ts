@@ -465,6 +465,10 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
       // vom 09.08. — erst zeigen, wenn sie Hunderte Alt-Trades überstimmt
       // hat. Das Fenster zeigt sie sofort.
       const exits7t = exitBreakdownSeit(closed, fensterSeit);
+      // Nur Sockel (Loop #138, 13.10.): Enden Sockel-Positionen am Monats-
+      // Rebalance — wie der Scan es vorsieht — oder an den Prozent-Marken
+      // des Minuten-Pulses? Reine Messung, dieselbe Funktion wie oben.
+      const exits7tSockel = exitBreakdownSeit(closed.filter((t) => t.quelle === 'sockel'), fensterSeit);
       // Quellen NUR im 7-Tage-Fenster (Task 18, Red-Team M3): Die kumulative
       // Sicht mischt Altbestand ohne Steckbrief mit heutiger Drift — erst das
       // Fenster sagt, ob die Lücke noch entsteht oder nur noch nachhallt.
@@ -595,6 +599,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         exits,
         exits7t,
         exits7tSeit: fensterSeit,
+        exits7tSockel,
         costs,
         // Gemessene Ausführungs-Reibung (19.08.) — Entscheidungskurs gegen
         // echten Broker-Fill, je Klasse, Einstieg und Ausstieg getrennt.
@@ -633,6 +638,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         },
         exits,
         exits7t,
+        exits7tSockel,
         costs: { n: costs.n, fees: costs.fees, grossPnl: costs.grossPnl },
         // Klassen-Aufschlüsselung mit ins Aggregat: Ohne sie sagt das
         // Gesamtbild nur, DASS zu teuer gehandelt wird — nicht wo.
