@@ -64,6 +64,13 @@ export interface AccountContribution {
    * überstimmt haben.
    */
   exits7t?: Record<string, ExitBucket> | undefined;
+  /**
+   * Dieselbe 7-Tage-Verteilung NUR für Sockel-Trades (Loop #138, 13.10.):
+   * Der Scan blendet den Sockel aus, der Minuten-Puls aber nicht — ob
+   * Sockel-Positionen an Prozent-Stop, Ziel oder Trailing enden statt am
+   * Monats-Rebalance, war aus der Gesamt-Verteilung nicht ablesbar.
+   */
+  exits7tSockel?: Record<string, ExitBucket> | undefined;
   /** `netPnl` gibt es in `CostProfile` nicht — es folgt aus brutto − Gebühren. */
   costs?: Pick<CostProfile, 'n' | 'fees' | 'grossPnl'> | undefined;
   /** Ergebnis je Anlageklasse — Grundlage der Klassen-Kante (04.08.). */
@@ -218,6 +225,8 @@ export interface TradingHealth {
   exits7t: Record<string, ExitShare>;
   /** Geschlossene Trades im 7-Tage-Fenster — der Nenner von `exits7t`. */
   trades7t: number;
+  /** Ausstiegsgründe der SOCKEL-Trades im 7-Tage-Fenster (Loop #138). */
+  exits7tSockel: Record<string, ExitShare>;
   /** Nur ab MIN_ACCOUNTS_PUBLIC gesetzt, sonst null (s. Kopfkommentar). */
   netPnl: number | null;
   fees: number | null;
@@ -271,6 +280,7 @@ export function aggregateTradingHealth(
   let netPnl = 0;
   const exitN: Record<string, { n: number; pnl: number; wins: number }> = {};
   const exitNeuN: Record<string, { n: number; pnl: number; wins: number }> = {};
+  const exitSockelN: Record<string, { n: number; pnl: number; wins: number }> = {};
   const klassenRoh: Record<
     string,
     { n: number; pnl: number; fees: number; notional: number; konten: number }
@@ -359,6 +369,13 @@ export function aggregateTradingHealth(
       e.wins += b.wins;
       exitNeuN[grund] = e;
     }
+    for (const [grund, b] of Object.entries(c.exits7tSockel ?? {})) {
+      const e = exitSockelN[grund] ?? { n: 0, pnl: 0, wins: 0 };
+      e.n += b.n;
+      e.pnl += Number.isFinite(b.pnl) ? b.pnl : 0;
+      e.wins += b.wins;
+      exitSockelN[grund] = e;
+    }
 
     // Klassen-Beitrag dieses Kontos — Summen, keine Quoten (s. u.).
     for (const [name, slice] of Object.entries(c.byClass ?? {})) {
@@ -412,6 +429,7 @@ export function aggregateTradingHealth(
   };
   const exits = exitShares(exitN);
   const exits7t = exitShares(exitNeuN);
+  const exits7tSockel = exitShares(exitSockelN);
   const trades7t = Object.values(exitNeuN).reduce((a, e) => a + e.n, 0);
 
   // Klassen aus den SUMMEN rechnen, nicht aus gemittelten Konto-Kanten:
@@ -501,6 +519,7 @@ export function aggregateTradingHealth(
     exits,
     exits7t,
     trades7t,
+    exits7tSockel,
     netPnl: oeffentlich ? Math.round(netPnl * 100) / 100 : null,
     fees: oeffentlich ? Math.round(fees * 100) / 100 : null,
     amountsWithheld: !oeffentlich,

@@ -141,3 +141,11 @@ describe('snapshotEquity — die Verdrahtung (Quelltext-Wächter)', () => {
     expect(EXIT_FENSTER_TAGE).toBe(7);
   });
 });
+
+describe('Sockel-Ausstiege (Loop #138, 13.10.) — Verdrahtung', () => {
+  it('der Abendlauf filtert den Sockel über die gespeicherte Quelle und reicht den Topf privat UND ins Aggregat', () => {
+    expect(snapshot).toContain("const exits7tSockel = exitBreakdownSeit(closed.filter((t) => t.quelle === 'sockel'), fensterSeit);");
+    // Zweimal: im privaten Konto-Doc und im Beitrag zum öffentlichen Aggregat.
+    expect(snapshot.split('        exits7tSockel,\n').length - 1).toBe(2);
+  });
+});
