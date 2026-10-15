@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SOCKEL_MIN_KALENDERWOCHEN,
   SOCKEL_MIN_WOCHEN,
+  SOCKEL_REIBUNG_PCT,
   bewerteSockelAusstieg,
-  bootstrap80,
+  blockBootstrap80,
   isoWoche,
   sockelAusstiege,
   sockelEntscheidung,
@@ -11,80 +13,118 @@ import {
   type SockelTradeRoh,
 } from '../src/sockelKontrafakt.js';
 
-// 15:00 UTC = 11:00 ET — mitten im Handelstag, eindeutig im ET-Tag.
-const t = (tag: string, teil: Partial<SockelTradeRoh>): SockelTradeRoh => ({
-  symbol: 'AXTI', side: 'sell', at: `${tag}T15:00:00.000Z`, price: 98, quelle: 'sockel', ...teil,
+const AB = '2026-10-01'; // Testdaten liegen vor dem Produktions-Start (V5 eigener Test)
+
+// 15:00 UTC = 11:00 ET — Handelszeit; 22:00 UTC = 18:00 ET — Abend-Lauf ohne Broker.
+const t = (tag: string, teil: Partial<SockelTradeRoh>, uhr = '15:00'): SockelTradeRoh => ({
+  symbol: 'AXTI', side: 'sell', at: `${tag}T${uhr}:00.000Z`, price: 98, quelle: 'sockel', ...teil,
 });
 
 describe('Sockel-Ausstiege an Prozent-Marken (Task 30)', () => {
-  it('Stop-Ausstieg mit Messpunkt am nächsten Sockel-Lauf und Rückkauf', () => {
-    const a = sockelAusstiege([
-      t('2026-10-06', { side: 'buy', price: 100 }),
-      t('2026-10-07', { riskExit: 'stop_loss', price: 98, entryPrice: 100 }),
-      t('2026-10-13', { side: 'buy', price: 103 }), // Rebalance kauft zurück
-    ]);
-    expect(a).toEqual([{ symbol: 'AXTI', exitTag: '2026-10-07', exitPreis: 98, einstand: 100, tagT: '2026-10-13', rueckkauf: true }]);
+  it('F2: der Lauf am SELBEN Abend ist der Messpunkt, Rückkauf zu seinem eigenen Brutto-Preis', () => {
+    const { faelle } = sockelAusstiege([
+      t('2026-10-07', { riskExit: 'stop_loss', price: 97.9, rawPrice: 98, entryPrice: 100 }),
+      t('2026-10-07', { side: 'buy', price: 99.1, rawPrice: 99 }, '22:00'), // 18:00 ET
+      t('2026-10-14', { side: 'buy', price: 104, rawPrice: 104 }), // Aufstockung eine Woche später
+    ], AB);
+    expect(faelle).toEqual([{
+      symbol: 'AXTI', exitAt: '2026-10-07T15:00:00.000Z', exitTag: '2026-10-07', exitPreis: 98, einstand: 100,
+      tagT: '2026-10-07', rueckkaufPreis: 99,
+    }]);
   });
 
-  it('nur Prozent-Marken und nur Sockel: Rebalance-Verkauf, Konfluenz-Stop und Käufe zählen nicht', () => {
-    const a = sockelAusstiege([
+  it('V1: Brutto-Ausstieg — Broker-Fill vor Rohkurs vor Effektivpreis', () => {
+    const fall = (teil: Partial<SockelTradeRoh>) => sockelAusstiege([t('2026-10-07', { riskExit: 'stop_loss', entryPrice: 100, ...teil })], AB).faelle[0]!;
+    expect(fall({ price: 97.9, rawPrice: 98, brokerFillPrice: 97.5 }).exitPreis).toBe(97.5);
+    expect(fall({ price: 97.9, rawPrice: 98 }).exitPreis).toBe(98);
+    expect(fall({ price: 97.9 }).exitPreis).toBe(97.9);
+  });
+
+  it('V6: fill_sync wird gezählt, nicht bewertet; Rebalance-, Konfluenz- und Signal-Verkäufe zählen nicht', () => {
+    const r = sockelAusstiege([
+      t('2026-10-07', { riskExit: 'fill_sync', entryPrice: 100 }),
       t('2026-10-07', { riskExit: 'core_rebalance', entryPrice: 100 }),
       t('2026-10-07', { riskExit: 'stop_loss', entryPrice: 100, quelle: 'konfluenz' }),
       t('2026-10-07', { riskExit: 'signal', entryPrice: 100 }),
-      t('2026-10-08', { side: 'buy', entryPrice: 100 }),
+    ], AB);
+    expect(r).toEqual({ faelle: [], unklar: 1 });
+  });
+
+  it('V5: Ausstiege vor dem Mess-Start zählen nicht (auch nicht als unklar)', () => {
+    const r = sockelAusstiege([
+      t('2026-10-09', { riskExit: 'stop_loss', entryPrice: 100 }),
+      t('2026-10-09', { riskExit: 'fill_sync', entryPrice: 100 }),
     ]);
-    expect(a).toEqual([]);
+    expect(r).toEqual({ faelle: [], unklar: 0 });
   });
 
-  it('ohne Folge-Lauf: Messpunkt = Ausstieg + 7 Tage, kein Rückkauf', () => {
-    const [a] = sockelAusstiege([t('2026-10-07', { riskExit: 'trailing_stop', entryPrice: 90 })]);
-    expect(a).toMatchObject({ tagT: '2026-10-14', rueckkauf: false });
+  it('R4: T = früherer von „nächster Lauf" und „Ausstieg + 7 Tage"', () => {
+    const ohne = sockelAusstiege([t('2026-10-07', { riskExit: 'trailing_stop', entryPrice: 90 })], AB).faelle[0]!;
+    expect(ohne).toMatchObject({ tagT: '2026-10-14', rueckkaufPreis: null });
+    const spaet = sockelAusstiege([
+      t('2026-10-07', { riskExit: 'trailing_stop', entryPrice: 90 }),
+      t('2026-10-20', { side: 'buy', price: 99 }),
+    ], AB).faelle[0]!;
+    expect(spaet).toMatchObject({ tagT: '2026-10-14', rueckkaufPreis: null });
   });
 
-  it('ein Lauf am SELBEN Tag ist kein Messpunkt (der Stop kann davor gelegen haben)', () => {
-    const [a] = sockelAusstiege([
+  it('ein Lauf ohne Kauf dieses Symbols ist Messpunkt ohne Rückkauf', () => {
+    const { faelle } = sockelAusstiege([
       t('2026-10-07', { riskExit: 'stop_loss', entryPrice: 100 }),
-      { ...t('2026-10-07', { side: 'buy' }), at: '2026-10-07T19:00:00.000Z' },
-    ]);
-    expect(a!.tagT).toBe('2026-10-14');
+      t('2026-10-07', { side: 'buy', symbol: 'SNDK', price: 50 }, '22:00'),
+    ], AB);
+    expect(faelle[0]).toMatchObject({ tagT: '2026-10-07', rueckkaufPreis: null });
   });
 });
 
-describe('Bewertung gegen Tageskerzen — Lookahead-Gate', () => {
-  const a: SockelAusstieg = { symbol: 'AXTI', exitTag: '2026-10-07', exitPreis: 98, einstand: 100, tagT: '2026-10-13', rueckkauf: false };
+describe('Bewertung gegen Tageskerzen', () => {
+  const a: SockelAusstieg = {
+    symbol: 'AXTI', exitAt: '2026-10-07T15:00:00.000Z', exitTag: '2026-10-07', exitPreis: 98, einstand: 100,
+    tagT: '2026-10-13', rueckkaufPreis: null,
+  };
+  const k = (date: string, open: number, low: number, close: number) => ({ date, open, low, close });
   const kerzen = [
-    { date: '2026-10-07', low: 97, close: 98.5 },
-    { date: '2026-10-08', low: 96, close: 101 },
-    { date: '2026-10-09', low: 99, close: 104 },
-    { date: '2026-10-12', low: 100, close: 105 },
-    { date: '2026-10-13', low: 104, close: 107.8 },
-    { date: '2026-10-14', low: 50, close: 60 }, // NACH T — darf nichts ändern
+    k('2026-10-07', 101, 97, 98.5),
+    k('2026-10-08', 98.5, 96, 101),
+    k('2026-10-09', 101, 99, 104),
+    k('2026-10-12', 104, 100, 105),
+    k('2026-10-13', 105, 104, 107.8),
+    k('2026-10-14', 60, 50, 60), // NACH T — darf nichts ändern
   ];
 
-  it('T nicht strikt vor heute ⇒ offen (auch wenn die Kerze schon da ist)', () => {
+  it('Lookahead: T nicht strikt vor heute ⇒ offen', () => {
     expect(bewerteSockelAusstieg(a, kerzen, '2026-10-13')).toEqual({ stand: 'offen' });
   });
 
-  it('Halten bis T: +10 % gegen den Ausstieg, die Kerze nach T zählt nicht', () => {
-    const b = bewerteSockelAusstieg(a, kerzen, '2026-10-15');
-    expect(b).toEqual({ stand: 'bewertet', haltenPct: 10, deltaPct: 10, notbremse: false });
+  it('ohne Rückkauf: Halten bis Schluss T (+10 %), Gebühren heben sich auf; robust zahlt Halten Reibung', () => {
+    expect(bewerteSockelAusstieg(a, kerzen, '2026-10-15')).toEqual({
+      stand: 'bewertet', deltaPct: 10, deltaRobustPct: 10 - SOCKEL_REIBUNG_PCT, notbremse: false,
+    });
   });
 
-  it('Notbremse im Pfad (Tief ≤ 75 % des Einstands) ⇒ Halten endet bei der Bremse', () => {
-    const crash = kerzen.map((k) => (k.date === '2026-10-09' ? { ...k, low: 70 } : k));
+  it('mit Rückkauf: gemessen am Rückkaufpreis, Halten spart zwei Gebühren (+ Reibung robust)', () => {
+    const b = bewerteSockelAusstieg({ ...a, tagT: '2026-10-07', rueckkaufPreis: 99 }, kerzen, '2026-10-15');
+    expect(b.stand).toBe('bewertet');
+    const d = (b as { deltaPct: number; deltaRobustPct: number });
+    expect(d.deltaPct).toBeGreaterThan((99 / 98 - 1) * 100);
+    expect(d.deltaRobustPct).toBeCloseTo(d.deltaPct + SOCKEL_REIBUNG_PCT, 4);
+  });
+
+  it('F1: Notbremse im Pfad mit Kurslücke füllt zum Eröffnungskurs, nicht zum Bremskurs', () => {
+    const crash = kerzen.map((x) => (x.date === '2026-10-09' ? k('2026-10-09', 60, 55, 58) : x));
     const b = bewerteSockelAusstieg(a, crash, '2026-10-15');
     expect(b).toMatchObject({ stand: 'bewertet', notbremse: true });
-    expect((b as { haltenPct: number }).haltenPct).toBeCloseTo((75 / 98 - 1) * 100, 3);
+    expect((b as { deltaPct: number }).deltaPct).toBeCloseTo((60 / 98 - 1) * 100, 3);
   });
 
-  it('Rückkauf am Messtag: Halten spart einen Roundtrip', () => {
-    const b = bewerteSockelAusstieg({ ...a, rueckkauf: true }, kerzen, '2026-10-15');
-    expect(b.stand).toBe('bewertet');
-    expect((b as { deltaPct: number }).deltaPct).toBeGreaterThan(10);
+  it('F1: Gap am Ausstiegstag — der Stop füllte schon unter der Bremse ⇒ beide draußen, Delta 0', () => {
+    const b = bewerteSockelAusstieg({ ...a, exitPreis: 70 }, kerzen, '2026-10-15');
+    expect(b).toEqual({ stand: 'bewertet', deltaPct: 0, deltaRobustPct: 0, notbremse: true });
   });
 
-  it('keine Kerze nach dem Ausstiegstag ⇒ ohne_kurse, nie eine Zahl aus dem Nichts', () => {
-    expect(bewerteSockelAusstieg(a, kerzen.slice(0, 1), '2026-10-15')).toEqual({ stand: 'ohne_kurse' });
+  it('V7: erste Kerze zu weit nach dem Ausstieg ⇒ ohne_kurse (der Absturz fehlt)', () => {
+    expect(bewerteSockelAusstieg(a, kerzen.filter((x) => x.date >= '2026-10-12'), '2026-10-15')).toEqual({ stand: 'ohne_kurse' });
+    expect(bewerteSockelAusstieg(a, [], '2026-10-15')).toEqual({ stand: 'ohne_kurse' });
   });
 });
 
@@ -95,31 +135,53 @@ describe('Aggregat und Entscheidungsregel', () => {
     expect(isoWoche('2026-01-01')).toBe('2026-W01');
   });
 
-  it('gespiegelte Konten zählen als EINE Symbol-Woche', () => {
-    const a = (sym: string, tag: string): SockelAusstieg => ({ symbol: sym, exitTag: tag, exitPreis: 98, einstand: 100, tagT: '2026-10-13', rueckkauf: false });
-    const b = (d: number) => ({ stand: 'bewertet' as const, haltenPct: d, deltaPct: d, notbremse: false });
+  it('gespiegelte Konten zählen als EINE Symbol-Woche; offen/ohne Kurse/unklar getrennt', () => {
+    const a = (sym: string, tag: string): SockelAusstieg => ({
+      symbol: sym, exitAt: `${tag}T15:00:00.000Z`, exitTag: tag, exitPreis: 98, einstand: 100, tagT: '2026-10-13', rueckkaufPreis: null,
+    });
+    const b = (d: number) => ({ stand: 'bewertet' as const, deltaPct: d, deltaRobustPct: d - 0.5, notbremse: false });
     const s = sockelKontrafaktStand([
       { a: a('AXTI', '2026-10-07'), b: b(4) },
       { a: a('AXTI', '2026-10-08'), b: b(2) }, // gleiche Woche ⇒ Mittel 3
       { a: a('SNDK', '2026-10-07'), b: b(-1) },
       { a: a('SNDK', '2026-10-13'), b: { stand: 'offen' } },
-    ]);
-    expect(s).toMatchObject({ n: 2, nTrades: 3, offen: 1, ohneKurse: 0, mittelPct: 1, entscheidung: 'zu_wenig' });
+      { a: a('ERAS', '2026-10-13'), b: { stand: 'ohne_kurse' } },
+    ], 2, AB);
+    expect(s).toMatchObject({ ab: AB, n: 2, kalenderwochen: 1, nTrades: 3, offen: 1, ohneKurse: 1, unklar: 2, mittelPct: 1, mittelRobustPct: 0.5, entscheidung: 'zu_wenig' });
   });
 
-  it('Regel: unter 20 Wochen keine Aussage; Intervall über/unter/um 0', () => {
-    expect(sockelEntscheidung(SOCKEL_MIN_WOCHEN - 1, [1, 2])).toBe('zu_wenig');
-    expect(sockelEntscheidung(SOCKEL_MIN_WOCHEN, [0.1, 2])).toBe('ohne_marken');
-    expect(sockelEntscheidung(SOCKEL_MIN_WOCHEN, [-2, -0.1])).toBe('marken_behalten');
-    expect(sockelEntscheidung(SOCKEL_MIN_WOCHEN, [-1, 1])).toBe('unentschieden');
+  it('Regel: Mindestmengen, Survivorship-Sperre, und beide Rechnungen müssen übereinstimmen', () => {
+    const N = SOCKEL_MIN_WOCHEN;
+    const W = SOCKEL_MIN_KALENDERWOCHEN;
+    expect(sockelEntscheidung(N - 1, W, 0, [1, 2], [1, 2])).toBe('zu_wenig');
+    expect(sockelEntscheidung(N, W - 1, 0, [1, 2], [1, 2])).toBe('zu_wenig');
+    expect(sockelEntscheidung(N, W, 0.11, [1, 2], [1, 2])).toBe('zu_wenig');
+    expect(sockelEntscheidung(N, W, 0, [0.1, 2], [0.2, 2])).toBe('ohne_marken');
+    expect(sockelEntscheidung(N, W, 0, [-2, -0.1], [-2, -0.3])).toBe('marken_behalten');
+    expect(sockelEntscheidung(N, W, 0, [-1, 1], [-1, 1])).toBe('unentschieden');
+    // ohne Reibung „ohne Marken", mit Reibung nicht mehr ⇒ unentschieden
+    expect(sockelEntscheidung(N, W, 0, [0.1, 2], [-0.4, 1.5])).toBe('unentschieden');
   });
 
-  it('Bootstrap ist deterministisch und liegt um den Mittelwert', () => {
-    const w = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-    const k1 = bootstrap80(w)!;
-    expect(bootstrap80(w)).toEqual(k1);
+  it('V3: Block-Bootstrap zieht ganze Wochen — deterministisch, um den Mittelwert', () => {
+    const bloecke = [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]];
+    const k1 = blockBootstrap80(bloecke)!;
+    expect(blockBootstrap80(bloecke)).toEqual(k1);
     expect(k1[0]).toBeLessThan(5.5);
     expect(k1[1]).toBeGreaterThan(5.5);
-    expect(bootstrap80([3])).toBeNull();
+    expect(blockBootstrap80([[3, 4]])).toBeNull();
+  });
+
+  it('V3: jede gezogene Woche geht mit ALLEN ihren Symbol-Wochen ein, nicht nur mit einer', () => {
+    // Jede Woche hat Mittel 5 — wer nur den ersten Wert zieht, landet bei 0.
+    expect(blockBootstrap80([[0, 10], [0, 10], [0, 10], [0, 10]])).toEqual([5, 5]);
+  });
+
+  it('V3: ein gemeinsamer Wochenschock macht das Intervall breiter als unabhängige Fälle', () => {
+    // 4 Wochen × 5 Symbole; jede Woche ein eigener Schock — die Werte innerhalb sind fast gleich.
+    const bloecke = [[-3, -3.1, -2.9, -3, -3], [2, 2.1, 1.9, 2, 2], [-1, -1, -1.1, -0.9, -1], [3, 3, 3.1, 2.9, 3]];
+    const block = blockBootstrap80(bloecke)!;
+    const flach = blockBootstrap80(bloecke.flat().map((v) => [v]))!;
+    expect(block[1] - block[0]).toBeGreaterThan(flach[1] - flach[0]);
   });
 });

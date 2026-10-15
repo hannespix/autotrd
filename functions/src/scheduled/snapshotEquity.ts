@@ -66,6 +66,7 @@ import {
   sockelKontrafaktStand,
   type SockelAusstieg,
   type SockelTradeRoh,
+  type Tageskerze,
 } from '../../../shared/src/index.js';
 import { absagenAufraeumen } from '../core/absagen.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
@@ -86,6 +87,11 @@ const BENCH_SYMBOL = '^GSPC';
 const EQUITY_WINDOW = 120;
 /** Jüngste Trades für WinRate/Attribution (geschlossene werden rausgefiltert). */
 const TRADES_WINDOW = 500;
+
+/** Sockel-Gegenrechnung (Task 30, Red-Team R5): Kursabrufe begrenzt und befristet. */
+const SOCKEL_KURS_PARALLEL = 6;
+const SOCKEL_KURS_ABRUF_MS = 8_000;
+const SOCKEL_KURS_BUDGET_MS = 40_000;
 
 function r2(v: number): number {
   return Math.round(v * 100) / 100;
@@ -259,6 +265,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   // ALLER Konten — bewertet wird erst nach der Schleife, je Symbol EIN
   // Kursabruf.
   const sockelFaelle: SockelAusstieg[] = [];
+  let sockelUnklar = 0;
   // MU3 „Bewährte Einstellungen": Über die Schleife hinweg den Besten nach
   // ENGINE-Attribution suchen — und, solange keiner die Belege erfüllt, den
   // besten Anwärter samt Klartext, was ihm noch fehlt (die Karte zeigt das).
@@ -409,6 +416,8 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
               side: seite,
               at,
               price: preis,
+              rawPrice: t.get('rawPrice') as number | undefined,
+              brokerFillPrice: t.get('brokerFillPrice') as number | undefined,
               entryPrice: t.get('entryPrice') as number | undefined,
               riskExit: t.get('riskExit') as string | undefined,
               quelle: quelleDoc,
@@ -488,7 +497,11 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
           }
         }
       }
-      sockelFaelle.push(...sockelAusstiege(sockelRoh));
+      {
+        const s = sockelAusstiege(sockelRoh);
+        sockelFaelle.push(...s.faelle);
+        sockelUnklar += s.unklar;
+      }
       const ts = tradeStats(closed);
       const attr = attribution(closed);
       // MT1: Woran sterben die Trades, und wie viel davon frisst die Reibung?
@@ -713,28 +726,6 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   // ausschließlich in `users/{uid}/stats/main` und war von außen unsichtbar;
   // am 27.07. musste ein Mensch sie mit dem Taschenrechner zurückrechnen.
   const health = aggregateTradingHealth(beitraege);
-  // Task 30: Gegenrechnung „Sockel ohne Prozent-Marken" — reine Messung.
-  // Lookahead-Gate in bewerteSockelAusstieg (Messtag strikt vor heute).
-  // Je Symbol ein Kursabruf, abgefangen: Ein Ausfall darf den Tageslauf
-  // nicht kosten, die Fälle zählen dann als ohne_kurse.
-  let sockelStopKontrafakt: ReturnType<typeof sockelKontrafaktStand> | null = null;
-  try {
-    const heute = etTagVon(now.toISOString()) ?? date;
-    const kerzen = new Map<string, Array<{ date: string; low: number; close: number }>>();
-    for (const sym of new Set(sockelFaelle.filter((f) => f.tagT < heute).map((f) => f.symbol))) {
-      try {
-        const s = await getMarketSnapshot(sym, '3mo');
-        kerzen.set(sym, s.bars.map((b) => ({ date: b.date, low: b.low, close: b.close })));
-      } catch (err) {
-        logger.warn(`Sockel-Gegenrechnung: keine Kurse für ${sym}`, err);
-      }
-    }
-    sockelStopKontrafakt = sockelKontrafaktStand(
-      sockelFaelle.map((a) => ({ a, b: bewerteSockelAusstieg(a, kerzen.get(a.symbol) ?? [], heute) })),
-    );
-  } catch (err) {
-    logger.warn('Sockel-Gegenrechnung fehlgeschlagen', err);
-  }
   await db.doc('meta/health').set(
     {
       equitySnapshot: {
@@ -751,12 +742,53 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         // Wovon `exits7t` das Fenster ist — ohne den Stempel wäre die Zahl
         // im Dokument nicht interpretierbar.
         exits7tSeit: fensterSeit,
-        // Nur Prozente und Zähler — keine Beträge, keine Symbole.
-        ...(sockelStopKontrafakt ? { sockelStopKontrafakt } : {}),
       },
     },
     { merge: true },
   );
+
+  // ── Task 30: Gegenrechnung „Sockel ohne Prozent-Marken" ──────────────────
+  // Reine Messung. NACH dem Health-Schreiben (Red-Team R5): Ein hängender
+  // Kursabruf darf weder die Tageskennzahlen noch MU3 kosten. Abrufe
+  // begrenzt parallel, je Abruf und insgesamt mit Zeitlimit; was fehlt,
+  // zählt als ohne_kurse — und zu viele davon sperren die Entscheidung.
+  try {
+    const heute = etTagVon(now.toISOString()) ?? date;
+    const kerzen = new Map<string, Tageskerze[]>();
+    const symbole = [...new Set(sockelFaelle.filter((f) => f.tagT < heute).map((f) => f.symbol))];
+    const frist = Date.now() + SOCKEL_KURS_BUDGET_MS;
+    const mitFrist = <T,>(p: Promise<T>, ms: number): Promise<T> =>
+      Promise.race([p, new Promise<T>((_, nein) => setTimeout(() => nein(new Error('Zeitlimit')), ms))]);
+    for (let i = 0; i < symbole.length && Date.now() < frist; i += SOCKEL_KURS_PARALLEL) {
+      await Promise.all(symbole.slice(i, i + SOCKEL_KURS_PARALLEL).map(async (sym) => {
+        try {
+          const s = await mitFrist(getMarketSnapshot(sym, '3mo'), SOCKEL_KURS_ABRUF_MS);
+          kerzen.set(sym, s.bars.map((b) => ({ date: b.date, open: b.open, low: b.low, close: b.close })));
+        } catch (err) {
+          logger.warn(`Sockel-Gegenrechnung: keine Kurse für ${sym}`, err);
+        }
+      }));
+    }
+    const sockelStopKontrafakt = sockelKontrafaktStand(
+      sockelFaelle.map((a) => ({ a, b: bewerteSockelAusstieg(a, kerzen.get(a.symbol) ?? [], heute) })),
+      sockelUnklar,
+    );
+    // Laufender Stand: nur Prozente und Zähler — keine Beträge, keine Symbole.
+    await db.doc('meta/health').set({ trading: { sockelStopKontrafakt } }, { merge: true });
+    // V4: Das ERSTE Urteil jenseits von „zu_wenig" wird eingefroren —
+    // `create` scheitert, wenn es schon steht. Kein tägliches Nachprüfen,
+    // bis die Zahl passt.
+    if (sockelStopKontrafakt.entscheidung !== 'zu_wenig') {
+      await db
+        .doc('meta/sockelStopUrteil')
+        .create({ ...sockelStopKontrafakt, eingefrorenAm: now.toISOString() })
+        .catch((err: unknown) => {
+          if ((err as { code?: number }).code !== 6) logger.warn('Sockel-Urteil nicht eingefroren', err);
+        });
+    }
+  } catch (err) {
+    logger.warn('Sockel-Gegenrechnung fehlgeschlagen', err);
+  }
 
   // ── MU3 „Bewährte Einstellungen" (Owner-Idee 06.08.) ──────────────────────
   // Der Tagesstand ERSETZT das Dokument bewusst komplett (kein merge): Ein
