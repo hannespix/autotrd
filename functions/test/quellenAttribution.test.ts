@@ -23,13 +23,16 @@ const anzahl = (nadel: string): number => snapshot.split(nadel).length - 1;
 
 describe('Quellen-Attribution — Anschluss-Wächter', () => {
   it('die Herkunft kommt aus source, bucket, riskExit und sync des Schluss-Trades', () => {
-    expect(anzahl('quelle: tradeQuelle({')).toBe(1);
+    // Seit Task 30 einmal je Dokument berechnet und vom Schluss-Trade wie von
+    // der Sockel-Gegenrechnung genutzt — weiterhin genau EINE Lesart.
+    expect(anzahl('const quelleDoc = tradeQuelle({')).toBe(1);
+    expect(anzahl('tradeQuelle({')).toBe(1);
     expect(anzahl("source: t.get('source'),")).toBe(1);
     expect(anzahl("bucket: t.get('bucket'),")).toBe(1);
     expect(anzahl("sync: t.get('sync'),")).toBe(1);
     // und zwar INNERHALB des pnl-Blocks: nur geschlossene Trades tragen die Herkunft
     const block = snapshot.slice(snapshot.indexOf('closed.push({'), snapshot.indexOf('const ts = tradeStats(closed);'));
-    expect(block).toContain('quelle: tradeQuelle({');
+    expect(block).toContain('quelle: quelleDoc,');
   });
 
   it('der Steckbrief steht am Schluss-Trade — von der Position übernommen (Verkauf UND Cover)', () => {

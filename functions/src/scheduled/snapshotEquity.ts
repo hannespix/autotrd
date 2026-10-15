@@ -60,11 +60,18 @@ import {
   type ErkenntnisFakten,
   type Position,
   type SchattenKlasse,
+  bewerteSockelAusstieg,
+  etTagVon,
+  sockelAusstiege,
+  sockelKontrafaktStand,
+  type SockelAusstieg,
+  type SockelTradeRoh,
+  type Tageskerze,
 } from '../../../shared/src/index.js';
 import { absagenAufraeumen } from '../core/absagen.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { accrueMarginInterest } from '../core/broker.js';
-import { getQuickQuote } from '../core/marketData.js';
+import { getMarketSnapshot, getQuickQuote } from '../core/marketData.js';
 
 /**
  * Vergleichsindex der Benchmark-Linie (Owner 18.08.).
@@ -80,6 +87,11 @@ const BENCH_SYMBOL = '^GSPC';
 const EQUITY_WINDOW = 120;
 /** Jüngste Trades für WinRate/Attribution (geschlossene werden rausgefiltert). */
 const TRADES_WINDOW = 500;
+
+/** Sockel-Gegenrechnung (Task 30, Red-Team R5): Kursabrufe begrenzt und befristet. */
+const SOCKEL_KURS_PARALLEL = 6;
+const SOCKEL_KURS_ABRUF_MS = 8_000;
+const SOCKEL_KURS_BUDGET_MS = 40_000;
 
 function r2(v: number): number {
   return Math.round(v * 100) / 100;
@@ -249,6 +261,11 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   // damit alle Konten und das Aggregat dasselbe Fenster meinen.
   const fensterSeit = new Date(now.getTime() - EXIT_FENSTER_TAGE * 24 * 60 * 60 * 1000).toISOString();
   const beitraege: AccountContribution[] = [];
+  // Gegenrechnung Sockel-Stops (Task 30): Ausstiege an Prozent-Marken
+  // ALLER Konten — bewertet wird erst nach der Schleife, je Symbol EIN
+  // Kursabruf.
+  const sockelFaelle: SockelAusstieg[] = [];
+  let sockelUnklar = 0;
   // MU3 „Bewährte Einstellungen": Über die Schleife hinweg den Besten nach
   // ENGINE-Attribution suchen — und, solange keiner die Belege erfüllt, den
   // besten Anwärter samt Klartext, was ihm noch fehlt (die Karte zeigt das).
@@ -372,7 +389,41 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
       // Einstellungen adeln, mit denen er nichts zu tun hatte.
       const engineTrades: EngineTrade[] = [];
       const fills: BrokerFill[] = [];
+      const sockelRoh: SockelTradeRoh[] = [];
       for (const t of tradesSnap.docs) {
+        // Einstiegsweg EINMAL je Dokument (Task 17/18) — aus Feldern, die das
+        // Dokument ohnehin trägt, kein zusätzlicher Read. `bucket` steht am
+        // Schluss-Trade (von der Position übernommen), `sync` markiert
+        // adoptBroker. Genutzt vom Schluss-Trade und von der Sockel-
+        // Gegenrechnung (Task 30) — eine Herkunft, nicht zwei Lesarten.
+        const quelleDoc = tradeQuelle({
+          source: t.get('source'),
+          bucket: t.get('bucket'),
+          riskExit: t.get('riskExit') as string | undefined,
+          sync: t.get('sync'),
+          quelle: t.get('quelle'),
+        });
+        {
+          // Task 30: jede Sockel-Buchung (Kauf wie Verkauf) — Käufe markieren
+          // den nächsten Sockel-Lauf, Verkäufe an Prozent-Marken sind die Fälle.
+          const sym = t.get('symbol') as string | undefined;
+          const seite = t.get('side') as string | undefined;
+          const at = t.get('executedAt') as string | undefined;
+          const preis = t.get('price') as number | undefined;
+          if (sym && (seite === 'buy' || seite === 'sell') && typeof at === 'string' && typeof preis === 'number' && quelleDoc === 'sockel') {
+            sockelRoh.push({
+              symbol: sym,
+              side: seite,
+              at,
+              price: preis,
+              rawPrice: t.get('rawPrice') as number | undefined,
+              brokerFillPrice: t.get('brokerFillPrice') as number | undefined,
+              entryPrice: t.get('entryPrice') as number | undefined,
+              riskExit: t.get('riskExit') as string | undefined,
+              quelle: quelleDoc,
+            });
+          }
+        }
         const pnl = t.get('pnl') as number | undefined;
         const symbol = t.get('symbol') as string | undefined;
         /* Reibungs-Messung VOR dem pnl-Filter (19.08.): `pnl` tragen nur
@@ -434,16 +485,8 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
             pnl,
             assetClass: classify(symbol),
             ...(riskExit ? { riskExit } : {}),
-            // Einstiegsweg (Task 17): aus Feldern, die das Dokument ohnehin
-            // trägt — kein zusätzlicher Read. `bucket` steht am Schluss-Trade
-            // (von der Position übernommen), `sync` markiert adoptBroker.
-            quelle: tradeQuelle({
-              source: t.get('source'),
-              bucket: t.get('bucket'),
-              riskExit,
-              sync: t.get('sync'),
-              quelle: t.get('quelle'),
-            }),
+            // Einstiegsweg (Task 17) — oben einmal je Dokument berechnet.
+            quelle: quelleDoc,
             // Schlusszeitpunkt mitgeben — ohne ihn gibt es keine
             // zeitgefensterte Exit-Sicht (Task 115).
             ...(typeof at === 'string' ? { at } : {}),
@@ -453,6 +496,11 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
             engineTrades.push({ pnl, at, ...volumen });
           }
         }
+      }
+      {
+        const s = sockelAusstiege(sockelRoh);
+        sockelFaelle.push(...s.faelle);
+        sockelUnklar += s.unklar;
       }
       const ts = tradeStats(closed);
       const attr = attribution(closed);
@@ -698,6 +746,49 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
     },
     { merge: true },
   );
+
+  // ── Task 30: Gegenrechnung „Sockel ohne Prozent-Marken" ──────────────────
+  // Reine Messung. NACH dem Health-Schreiben (Red-Team R5): Ein hängender
+  // Kursabruf darf weder die Tageskennzahlen noch MU3 kosten. Abrufe
+  // begrenzt parallel, je Abruf und insgesamt mit Zeitlimit; was fehlt,
+  // zählt als ohne_kurse — und zu viele davon sperren die Entscheidung.
+  try {
+    const heute = etTagVon(now.toISOString()) ?? date;
+    const kerzen = new Map<string, Tageskerze[]>();
+    const symbole = [...new Set(sockelFaelle.filter((f) => f.tagT < heute).map((f) => f.symbol))];
+    const frist = Date.now() + SOCKEL_KURS_BUDGET_MS;
+    const mitFrist = <T,>(p: Promise<T>, ms: number): Promise<T> =>
+      Promise.race([p, new Promise<T>((_, nein) => setTimeout(() => nein(new Error('Zeitlimit')), ms))]);
+    for (let i = 0; i < symbole.length && Date.now() < frist; i += SOCKEL_KURS_PARALLEL) {
+      await Promise.all(symbole.slice(i, i + SOCKEL_KURS_PARALLEL).map(async (sym) => {
+        try {
+          const s = await mitFrist(getMarketSnapshot(sym, '3mo'), SOCKEL_KURS_ABRUF_MS);
+          kerzen.set(sym, s.bars.map((b) => ({ date: b.date, open: b.open, low: b.low, close: b.close })));
+        } catch (err) {
+          logger.warn(`Sockel-Gegenrechnung: keine Kurse für ${sym}`, err);
+        }
+      }));
+    }
+    const sockelStopKontrafakt = sockelKontrafaktStand(
+      sockelFaelle.map((a) => ({ a, b: bewerteSockelAusstieg(a, kerzen.get(a.symbol) ?? [], heute) })),
+      sockelUnklar,
+    );
+    // Laufender Stand: nur Prozente und Zähler — keine Beträge, keine Symbole.
+    await db.doc('meta/health').set({ trading: { sockelStopKontrafakt } }, { merge: true });
+    // V4: Das ERSTE Urteil jenseits von „zu_wenig" wird eingefroren —
+    // `create` scheitert, wenn es schon steht. Kein tägliches Nachprüfen,
+    // bis die Zahl passt.
+    if (sockelStopKontrafakt.entscheidung !== 'zu_wenig') {
+      await db
+        .doc('meta/sockelStopUrteil')
+        .create({ ...sockelStopKontrafakt, eingefrorenAm: now.toISOString() })
+        .catch((err: unknown) => {
+          if ((err as { code?: number }).code !== 6) logger.warn('Sockel-Urteil nicht eingefroren', err);
+        });
+    }
+  } catch (err) {
+    logger.warn('Sockel-Gegenrechnung fehlgeschlagen', err);
+  }
 
   // ── MU3 „Bewährte Einstellungen" (Owner-Idee 06.08.) ──────────────────────
   // Der Tagesstand ERSETZT das Dokument bewusst komplett (kein merge): Ein
