@@ -60,11 +60,17 @@ import {
   type ErkenntnisFakten,
   type Position,
   type SchattenKlasse,
+  bewerteSockelAusstieg,
+  etTagVon,
+  sockelAusstiege,
+  sockelKontrafaktStand,
+  type SockelAusstieg,
+  type SockelTradeRoh,
 } from '../../../shared/src/index.js';
 import { absagenAufraeumen } from '../core/absagen.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { accrueMarginInterest } from '../core/broker.js';
-import { getQuickQuote } from '../core/marketData.js';
+import { getMarketSnapshot, getQuickQuote } from '../core/marketData.js';
 
 /**
  * Vergleichsindex der Benchmark-Linie (Owner 18.08.).
@@ -249,6 +255,10 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   // damit alle Konten und das Aggregat dasselbe Fenster meinen.
   const fensterSeit = new Date(now.getTime() - EXIT_FENSTER_TAGE * 24 * 60 * 60 * 1000).toISOString();
   const beitraege: AccountContribution[] = [];
+  // Gegenrechnung Sockel-Stops (Task 30): Ausstiege an Prozent-Marken
+  // ALLER Konten — bewertet wird erst nach der Schleife, je Symbol EIN
+  // Kursabruf.
+  const sockelFaelle: SockelAusstieg[] = [];
   // MU3 „Bewährte Einstellungen": Über die Schleife hinweg den Besten nach
   // ENGINE-Attribution suchen — und, solange keiner die Belege erfüllt, den
   // besten Anwärter samt Klartext, was ihm noch fehlt (die Karte zeigt das).
@@ -372,7 +382,39 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
       // Einstellungen adeln, mit denen er nichts zu tun hatte.
       const engineTrades: EngineTrade[] = [];
       const fills: BrokerFill[] = [];
+      const sockelRoh: SockelTradeRoh[] = [];
       for (const t of tradesSnap.docs) {
+        // Einstiegsweg EINMAL je Dokument (Task 17/18) — aus Feldern, die das
+        // Dokument ohnehin trägt, kein zusätzlicher Read. `bucket` steht am
+        // Schluss-Trade (von der Position übernommen), `sync` markiert
+        // adoptBroker. Genutzt vom Schluss-Trade und von der Sockel-
+        // Gegenrechnung (Task 30) — eine Herkunft, nicht zwei Lesarten.
+        const quelleDoc = tradeQuelle({
+          source: t.get('source'),
+          bucket: t.get('bucket'),
+          riskExit: t.get('riskExit') as string | undefined,
+          sync: t.get('sync'),
+          quelle: t.get('quelle'),
+        });
+        {
+          // Task 30: jede Sockel-Buchung (Kauf wie Verkauf) — Käufe markieren
+          // den nächsten Sockel-Lauf, Verkäufe an Prozent-Marken sind die Fälle.
+          const sym = t.get('symbol') as string | undefined;
+          const seite = t.get('side') as string | undefined;
+          const at = t.get('executedAt') as string | undefined;
+          const preis = t.get('price') as number | undefined;
+          if (sym && (seite === 'buy' || seite === 'sell') && typeof at === 'string' && typeof preis === 'number' && quelleDoc === 'sockel') {
+            sockelRoh.push({
+              symbol: sym,
+              side: seite,
+              at,
+              price: preis,
+              entryPrice: t.get('entryPrice') as number | undefined,
+              riskExit: t.get('riskExit') as string | undefined,
+              quelle: quelleDoc,
+            });
+          }
+        }
         const pnl = t.get('pnl') as number | undefined;
         const symbol = t.get('symbol') as string | undefined;
         /* Reibungs-Messung VOR dem pnl-Filter (19.08.): `pnl` tragen nur
@@ -434,16 +476,8 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
             pnl,
             assetClass: classify(symbol),
             ...(riskExit ? { riskExit } : {}),
-            // Einstiegsweg (Task 17): aus Feldern, die das Dokument ohnehin
-            // trägt — kein zusätzlicher Read. `bucket` steht am Schluss-Trade
-            // (von der Position übernommen), `sync` markiert adoptBroker.
-            quelle: tradeQuelle({
-              source: t.get('source'),
-              bucket: t.get('bucket'),
-              riskExit,
-              sync: t.get('sync'),
-              quelle: t.get('quelle'),
-            }),
+            // Einstiegsweg (Task 17) — oben einmal je Dokument berechnet.
+            quelle: quelleDoc,
             // Schlusszeitpunkt mitgeben — ohne ihn gibt es keine
             // zeitgefensterte Exit-Sicht (Task 115).
             ...(typeof at === 'string' ? { at } : {}),
@@ -454,6 +488,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
           }
         }
       }
+      sockelFaelle.push(...sockelAusstiege(sockelRoh));
       const ts = tradeStats(closed);
       const attr = attribution(closed);
       // MT1: Woran sterben die Trades, und wie viel davon frisst die Reibung?
@@ -678,6 +713,28 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   // ausschließlich in `users/{uid}/stats/main` und war von außen unsichtbar;
   // am 27.07. musste ein Mensch sie mit dem Taschenrechner zurückrechnen.
   const health = aggregateTradingHealth(beitraege);
+  // Task 30: Gegenrechnung „Sockel ohne Prozent-Marken" — reine Messung.
+  // Lookahead-Gate in bewerteSockelAusstieg (Messtag strikt vor heute).
+  // Je Symbol ein Kursabruf, abgefangen: Ein Ausfall darf den Tageslauf
+  // nicht kosten, die Fälle zählen dann als ohne_kurse.
+  let sockelStopKontrafakt: ReturnType<typeof sockelKontrafaktStand> | null = null;
+  try {
+    const heute = etTagVon(now.toISOString()) ?? date;
+    const kerzen = new Map<string, Array<{ date: string; low: number; close: number }>>();
+    for (const sym of new Set(sockelFaelle.filter((f) => f.tagT < heute).map((f) => f.symbol))) {
+      try {
+        const s = await getMarketSnapshot(sym, '3mo');
+        kerzen.set(sym, s.bars.map((b) => ({ date: b.date, low: b.low, close: b.close })));
+      } catch (err) {
+        logger.warn(`Sockel-Gegenrechnung: keine Kurse für ${sym}`, err);
+      }
+    }
+    sockelStopKontrafakt = sockelKontrafaktStand(
+      sockelFaelle.map((a) => ({ a, b: bewerteSockelAusstieg(a, kerzen.get(a.symbol) ?? [], heute) })),
+    );
+  } catch (err) {
+    logger.warn('Sockel-Gegenrechnung fehlgeschlagen', err);
+  }
   await db.doc('meta/health').set(
     {
       equitySnapshot: {
@@ -694,6 +751,8 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         // Wovon `exits7t` das Fenster ist — ohne den Stempel wäre die Zahl
         // im Dokument nicht interpretierbar.
         exits7tSeit: fensterSeit,
+        // Nur Prozente und Zähler — keine Beträge, keine Symbole.
+        ...(sockelStopKontrafakt ? { sockelStopKontrafakt } : {}),
       },
     },
     { merge: true },

@@ -68,3 +68,4 @@ export * from './kennzahlen.js';
 export * from './profil.js';
 export * from './fundamentalSchatten.js';
 export * from './pdt.js';
+export * from './sockelKontrafakt.js';
