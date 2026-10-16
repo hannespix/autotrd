@@ -712,6 +712,17 @@ export function sockelPruefPosition<P extends Pick<Position, 'avgEntry' | 'side'
   return { ...pos, stopLoss: sockelNotbremseLevel(pos.avgEntry, pos.side ?? null), takeProfit: null };
 }
 
+/** Backoff des Puls-Nachzugs der Sockel-Broker-Order (Red-Team 16.10.). */
+export const SOCKEL_SCHUTZ_PAUSE_MIN = 30;
+
+/** Darf der Puls die Sockel-Broker-Order jetzt (wieder) umsetzen? */
+export function sockelSchutzVersuchFaellig(letzter: string | null | undefined, now: Date): boolean {
+  if (typeof letzter !== 'string') return true;
+  const t = Date.parse(letzter);
+  if (!Number.isFinite(t)) return true;
+  return now.getTime() - t >= SOCKEL_SCHUTZ_PAUSE_MIN * 60_000;
+}
+
 /**
  * Risiko-Hülle einer Position: Sockel ⇒ nur Notbremse, sonst die
  * klassen-aufgelösten Engine-Marken. EINE Weiche für Kauf, Aufstockung,
@@ -1115,6 +1126,13 @@ export interface Position {
   broker?: boolean;
   /** Order-Kennung des ÖFFNENDEN Fills beim Broker — Brücke ins Depot. */
   brokerOrderId?: string;
+  /**
+   * Letzter Versuch des Minuten-Pulses, die Broker-Order eines Sockels auf
+   * die Notbremse umzusetzen (Task 29, ISO). Nur Backoff-Stempel: Scheitert
+   * die Anlage dauerhaft, versucht der Puls es höchstens alle
+   * `SOCKEL_SCHUTZ_PAUSE_MIN` Minuten statt jede Minute. Fehlend = nie.
+   */
+  sockelSchutzVersuch?: string;
   /**
    * Schutz-Stop beim BROKER (Bracket Stufe 1, 06.08.).
    *

@@ -55,6 +55,7 @@ import {
   sockelNotbremseLevel,
   sockelPruefPosition,
   sockelRisk,
+  sockelSchutzVersuchFaellig,
   type Position,
   type Strategy,
 } from '../../../shared/src/index.js';
@@ -310,20 +311,28 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
         // deshalb für die PRÜFUNG ersetzt, nicht nur nachgezogen: Auch eine
         // Position, deren Nachzug gerade scheitert, schließt nie mehr an
         // der alten Marke.
+        // Auch im Momentum-Modus: Dort überspringt der Sockel-Lauf das Konto
+        // (momentumRun), ein verwaister Sockel hätte sonst gar keinen Ausstieg.
         const sockel = pos.core === true;
         if (sockel) {
           const nachzug = sockelNachzugNoetig(pos);
           if (nachzug.level) {
-            // `update`, nicht `set(merge)`: Wurde die Position seit dem
-            // Lesen geschlossen, scheitert update — set legte ein
-            // Geister-Dokument nur mit Stop/Ziel an.
+            // `update` mit Vorbedingung, nicht `set(merge)`: Wurde die
+            // Position seit dem Lesen geschlossen oder neu geschrieben,
+            // scheitert update — set legte ein Geister-Dokument an bzw.
+            // träfe eine inzwischen fremde Position.
             await doc.ref
-              .update({ stopLoss: sockelNotbremseLevel(pos.avgEntry, pos.side ?? null), takeProfit: null })
+              .update({ stopLoss: sockelNotbremseLevel(pos.avgEntry, pos.side ?? null), takeProfit: null }, { lastUpdateTime: doc.updateTime })
               .catch((err: unknown) => logger.warn(`Sockel-Level ${userDoc.id} ${pos.symbol}`, err));
           }
-          if (nachzug.broker) {
+          if (nachzug.broker && sockelSchutzVersuchFaellig(pos.sockelSchutzVersuch, now)) {
             // Die −2-%-Order beim Broker auf die Notbremse umsetzen:
-            // schutzAnlegen storniert die alte und legt die neue an.
+            // schutzAnlegen storniert die alte und legt die neue an (bei
+            // „nicht stornierbar" = schon gefüllt: KEINE neue). Der Stempel
+            // davor bremst Dauerfehler auf einen Versuch je 30 Minuten.
+            await doc.ref
+              .update({ sockelSchutzVersuch: now.toISOString() })
+              .catch((err: unknown) => logger.warn(`Sockel-Versuch ${userDoc.id} ${pos.symbol}`, err));
             const v = await verbindungFuerSchutz();
             if (v) await schutzAnlegen(v, userDoc.id, pos.symbol, sockelRisk(), cls, `puls-${now.toISOString().slice(0, 16)}Z-sockel`);
           }
@@ -331,7 +340,7 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
         const pruefPos = sockelPruefPosition(pos);
         const reason = zwangsschluss.has(pos.symbol)
           ? 'margin_call'
-          : clamped.engine.mode === 'momentum'
+          : clamped.engine.mode === 'momentum' && !sockel
             ? null
             : riskExitReason(pruefPos, preis, {
                 risk: sockel ? sockelRisk() : resolveRisk(clamped.engine, cls),

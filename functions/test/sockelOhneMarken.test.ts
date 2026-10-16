@@ -24,6 +24,7 @@ import {
   sockelNotbremseLevel,
   sockelPruefPosition,
   sockelRisk,
+  sockelSchutzVersuchFaellig,
   type Position,
 } from '../../shared/src/index.js';
 import { doppelkaufGesperrt, riskExitReason } from '../src/core/broker.js';
@@ -34,6 +35,7 @@ const broker = lies('../src/core/broker.ts');
 const puls = lies('../src/scheduled/riskPulse.ts');
 const schutz = lies('../src/core/schutzStop.ts');
 const fillSync = lies('../src/scheduled/fillSync.ts');
+const adopt = lies('../src/callable/adoptBroker.ts');
 
 const altSockel = (over: Partial<Position> = {}): Position => ({
   symbol: 'AXTI',
@@ -70,6 +72,14 @@ describe('Verhalten im Puls — Altbestand mit −2-%-Level', () => {
     expect(pruefe(altSockel(), 74.9)).toBe('stop_loss');
   });
 
+  it('Grenze genau bei 75 und Short-Seite gespiegelt (125)', () => {
+    expect(pruefe(altSockel(), 75)).toBe('stop_loss');
+    const kurz = altSockel({ side: 'short', stopLoss: 102, takeProfit: 96, highWater: undefined, lowWater: 90 });
+    expect(pruefe(kurz, 103)).toBeNull(); // altes Short-Level 102 greift nicht mehr
+    expect(pruefe(kurz, 124.9)).toBeNull();
+    expect(pruefe(kurz, 125.1)).toBe('stop_loss');
+  });
+
   it('Nicht-Sockel-Positionen bleiben exakt wie bisher', () => {
     const aktiv = altSockel({ core: false, highWater: 100 });
     expect(sockelPruefPosition(aktiv)).toBe(aktiv);
@@ -100,6 +110,14 @@ describe('Die Weiche (shared)', () => {
     expect(lv).toMatchObject({ stop: 75, target: null, trail: null, trailWartet: false, stopKi: false });
   });
 
+  it('Backoff: Broker-Nachzug höchstens alle 30 Minuten', () => {
+    const jetzt = new Date('2026-10-16T15:00:00Z');
+    expect(sockelSchutzVersuchFaellig(undefined, jetzt)).toBe(true);
+    expect(sockelSchutzVersuchFaellig('kaputt', jetzt)).toBe(true);
+    expect(sockelSchutzVersuchFaellig('2026-10-16T14:31:00Z', jetzt)).toBe(false);
+    expect(sockelSchutzVersuchFaellig('2026-10-16T14:30:00Z', jetzt)).toBe(true);
+  });
+
   it('Task 31: eine nachgebuchte Sockel-Teilausführung wird nicht mehr als Doppelkauf abgewiesen', () => {
     const req = { source: 'engine' as const, side: 'buy' as const, aufstockung: true };
     expect(doppelkaufGesperrt(req, { core: true }, false)).toBe(true); // ohne Kennung: abgewiesen
@@ -126,10 +144,26 @@ describe('Verdrahtung — jede Stelle über die Weiche', () => {
     expect(puls).toContain('risk: sockel ? sockelRisk() : resolveRisk(clamped.engine, cls),');
     expect(puls).toContain('riskExitReason(pruefPos, preis, {');
     expect(puls).toContain('const nachzug = sockelNachzugNoetig(pos);');
-    expect(puls).toContain('.update({ stopLoss: sockelNotbremseLevel(pos.avgEntry, pos.side ?? null), takeProfit: null })');
+    expect(puls).toContain('.update({ stopLoss: sockelNotbremseLevel(pos.avgEntry, pos.side ?? null), takeProfit: null }, {');
     expect(puls).toContain('if (nachzug.level) {');
-    expect(puls).toContain('if (nachzug.broker) {');
     expect(puls).toContain("if (v) await schutzAnlegen(v, userDoc.id, pos.symbol, sockelRisk(), cls, `puls-${now.toISOString().slice(0, 16)}Z-sockel`);");
+  });
+
+  it('Puls: Vorbedingung, Backoff-Stempel und Notbremse auch im Momentum-Modus', () => {
+    expect(puls).toContain('takeProfit: null }, { lastUpdateTime: doc.updateTime })');
+    expect(puls).toContain('if (nachzug.broker && sockelSchutzVersuchFaellig(pos.sockelSchutzVersuch, now)) {');
+    expect(puls).toContain('.update({ sockelSchutzVersuch: now.toISOString() })');
+    expect(puls).toContain(": clamped.engine.mode === 'momentum' && !sockel");
+  });
+
+  it('Broker-Schutz: „nicht stornierbar" (schon gefüllt) legt KEINE neue Order an', () => {
+    expect(schutz).toContain("if (storno === 'nicht_stornierbar') {");
+  });
+
+  it('Übernahme (adoptBroker): Sockel-Kennung und Notbremse überleben', () => {
+    expect(adopt).toContain("const sockel = alt ? alt.core === true : quelle === 'sockel' && !short;");
+    expect(adopt).toContain('const risk = risikoFuer(strategy.engine, cls, sockel);');
+    expect(adopt).toContain('...(sockel ? { core: true } : {}),');
   });
 
   it('Task 31: alle drei Nachbuchungswege stempeln core: true für Sockel-Fills', () => {

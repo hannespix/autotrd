@@ -410,12 +410,20 @@ export async function schutzAnlegen(
     if (pos.broker !== true) return;
 
     if (pos.schutz?.orderId) {
-      await alpacaOrderStornieren(
+      const storno = await alpacaOrderStornieren(
         verbindung.mode,
         pos.schutz.orderId,
         verbindung.schluessel,
         fetchImpl,
       ).catch(() => 'weg' as const);
+      // 422 heißt fast immer: Die alte Order ist schon GEFÜLLT, die Stücke
+      // sind weg (Red-Team 16.10.). Eine neue Verkaufs-Stop-Order über die
+      // volle Menge wäre dann ungedeckt — bei Alpaca ein GTC-Leerverkauf,
+      // den niemand mehr storniert. Nichts anlegen; fillSync bucht den Fill.
+      if (storno === 'nicht_stornierbar') {
+        logger.warn(`schutzAnlegen ${uid} ${symbol}: alte Schutz-Order nicht stornierbar (vermutlich gefüllt) — keine neue`);
+        return;
+      }
     }
 
     // Sockel (Task 29, Owner 16.10.): Die Broker-Order spiegelt NUR die
