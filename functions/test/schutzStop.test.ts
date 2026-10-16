@@ -19,6 +19,7 @@ import {
   planeSchutzStop,
   rundeAufSchritt,
   rundeStopPreis,
+  schutzAnlegen,
   schutzAufheben,
   schutzStopPreis,
   sollSchutzErsetzen,
@@ -520,5 +521,28 @@ describe('pflegeSchutz legt ein fehlendes Netz an', () => {
     await pflegeSchutz(VERBINDUNG, 'u1', 'AAPL', rest, RISK, 'stocks_us', 'lauf1', fetchImpl);
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(holt).not.toHaveBeenCalled();
+  });
+});
+
+describe('schutzAnlegen (Sockel-Nachzug, Task 29 — Red-Team 16.10.)', () => {
+  it('alte Order „nicht stornierbar" (schon gefüllt) ⇒ KEINE neue Verkaufs-Order', async () => {
+    holt.mockResolvedValue(posSnap({ ...POS, core: true, schutz: { orderId: 'alt1', stopPreis: 98, qty: 10 } }));
+    const f = folge({ ok: false, status: 422, body: { message: 'order is not cancelable' } });
+    await schutzAnlegen(VERBINDUNG, 'u1', 'AAPL', RISK, 'stocks_us', 'puls1', f as never);
+    expect(f).toHaveBeenCalledTimes(1); // nur der Storno-Versuch, kein POST
+    expect(setzt).not.toHaveBeenCalled();
+  });
+
+  it('Sockel: neue Order liegt an der Notbremse (75), egal welche Hülle der Aufrufer reicht', async () => {
+    holt.mockResolvedValue(posSnap({ ...POS, core: true, schutz: { orderId: 'alt1', stopPreis: 98, qty: 10 } }));
+    const f = folge(
+      { ok: false, status: 404, body: { message: 'not found' } },
+      { body: { id: 'neu3', status: 'accepted', client_order_id: 'x' } },
+    );
+    await schutzAnlegen(VERBINDUNG, 'u1', 'AAPL', RISK, 'stocks_us', 'puls1', f as never);
+    const post = JSON.parse(String((f.mock.calls[1]?.[1] as { body?: string } | undefined)?.body ?? '{}')) as { stop_price?: string | number };
+    expect(Number(post.stop_price)).toBe(75);
+    const letzter = setzt.mock.calls.at(-1)?.[0] as { schutz?: { orderId: string; stopPreis: number } };
+    expect(letzter?.schutz).toMatchObject({ orderId: 'neu3', stopPreis: 75 });
   });
 });

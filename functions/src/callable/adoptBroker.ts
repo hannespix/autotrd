@@ -49,7 +49,7 @@ import {
   currencyForSymbol,
   feePartsForClass,
   istNoOpUebernahme,
-  resolveRisk,
+  risikoFuer,
   type Position,
   type Strategy,
 } from '../../../shared/src/index.js';
@@ -426,12 +426,19 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     if (!(p.qty > 0) || !(p.einstand > 0)) continue; // kein Raten bei kaputten Daten
     if (!buchSymbole.has(p.symbol)) neuePositionen += 1;
     const cls = classify(p.symbol);
-    const risk = resolveRisk(strategy.engine, cls);
     const short = p.seite === 'short';
     const avg = p.einstand;
     const schutz = schutzJeSymbol.get(p.symbol);
     const alt = bisherige.get(p.symbol);
     const quelle = alt?.quelle ?? quelleAusLauf(einstiegJeSymbol.get(`${short ? 'sell' : 'buy'}|${p.symbol}`));
+    /* Sockel-Kennung überlebt die Übernahme (Task 29/31, Red-Team 16.10.):
+     * Ohne sie wäre jeder Sockel danach eine aktive Position — der Scan
+     * schlösse sie am Signal oder am 2-%-Stop. Eine NEUE Position ist
+     * Sockel, wenn ihre eröffnende Order aus dem Sockel-Lauf stammt. Ein
+     * Altbestand ohne `core` bleibt aktiv: Seine `quelle` kann aus einer
+     * Sockel-Aufstockung geerbt sein und beweist keinen Besitz. */
+    const sockel = alt ? alt.core === true : quelle === 'sockel' && !short;
+    const risk = risikoFuer(strategy.engine, cls, sockel);
     const position: Position = {
       symbol: p.symbol,
       qty: p.qty,
@@ -441,6 +448,7 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
       // Einstiegsweg überlebt die Übernahme; eine NEUE Position bekommt ihn
       // aus der Lauf-Kennung ihrer frühesten eröffnenden Order (Task 18).
       ...(quelle ? { quelle } : {}),
+      ...(sockel ? { core: true } : {}),
       ...(typeof alt?.teilPnl === 'number' && Number.isFinite(alt.teilPnl)
         ? { teilPnl: alt.teilPnl }
         : {}),

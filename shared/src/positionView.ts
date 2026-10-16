@@ -15,7 +15,7 @@
  * meldet das ehrlich als „adaptiv" statt eine Linie zu erfinden.
  */
 
-import type { Position, RiskConfig } from './strategy.js';
+import { sockelNotbremseLevel, type Position, type RiskConfig } from './strategy.js';
 
 export interface PositionLevels {
   /** Einstandskurs (Bezugslinie). */
@@ -46,6 +46,23 @@ export interface PositionLevels {
 export function positionLevels(p: Position, risk: RiskConfig): PositionLevels {
   const entry = p.avgEntry;
   const short = p.side === 'short';
+
+  /* Sockel (Owner-Entscheidung 16.10., Task 29): nur die Notbremse, kein
+   * Ziel, kein Trailing — und gespeicherte Altlevel zählen nicht, genau wie
+   * im Puls. Sonst zeigte die Tabelle „Stop in 2 %" für eine Position, die
+   * erst bei −25 % schließt. */
+  if (p.core === true) {
+    return {
+      entry,
+      stop: sockelNotbremseLevel(entry, p.side ?? null),
+      stopKi: false,
+      stopAtr: false,
+      trail: null,
+      trailWartet: false,
+      target: null,
+      targetAtr: false,
+    };
+  }
 
   const stopAtr = (risk.atrStopMult ?? 0) > 0;
   const regulaer =

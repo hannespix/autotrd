@@ -47,7 +47,7 @@
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
-import { usSessionClass, type Position, type RiskConfig } from '../../../shared/src/index.js';
+import { sockelRisk, usSessionClass, type Position, type RiskConfig } from '../../../shared/src/index.js';
 import {
   type AlpacaOrderStand,
   alpacaOrderAbfragen,
@@ -410,15 +410,27 @@ export async function schutzAnlegen(
     if (pos.broker !== true) return;
 
     if (pos.schutz?.orderId) {
-      await alpacaOrderStornieren(
+      const storno = await alpacaOrderStornieren(
         verbindung.mode,
         pos.schutz.orderId,
         verbindung.schluessel,
         fetchImpl,
       ).catch(() => 'weg' as const);
+      // 422 heißt fast immer: Die alte Order ist schon GEFÜLLT, die Stücke
+      // sind weg (Red-Team 16.10.). Eine neue Verkaufs-Stop-Order über die
+      // volle Menge wäre dann ungedeckt — bei Alpaca ein GTC-Leerverkauf,
+      // den niemand mehr storniert. Nichts anlegen; fillSync bucht den Fill.
+      if (storno === 'nicht_stornierbar') {
+        logger.warn(`schutzAnlegen ${uid} ${symbol}: alte Schutz-Order nicht stornierbar (vermutlich gefüllt) — keine neue`);
+        return;
+      }
     }
 
-    const plan = planeSchutzStop(lageAusPosition(pos), risk, klasse, await schutzAsset(verbindung, symbol, klasse, fetchImpl));
+    // Sockel (Task 29, Owner 16.10.): Die Broker-Order spiegelt NUR die
+    // Notbremse — egal, welche Hülle der Aufrufer reicht. Sonst stünde bei
+    // Alpaca weiter ein −2-%-Stop, und ein Puls-Fix allein wäre wirkungslos.
+    const wirksam = pos.core === true ? sockelRisk() : risk;
+    const plan = planeSchutzStop(lageAusPosition(pos), wirksam, klasse, await schutzAsset(verbindung, symbol, klasse, fetchImpl));
     if (!plan.anlegen) {
       if (pos.schutz) await posRef(uid, symbol).set({ schutz: null }, { merge: true });
       logger.debug(`schutzAnlegen ${uid} ${symbol}: kein Broker-Stop (${plan.grund})`);
@@ -600,6 +612,8 @@ export async function pflegeSchutz(
   laufId: string,
   fetchImpl: FetchLike = fetch,
 ): Promise<SchutzBefund> {
+  // Sockel: nur die Notbremse (Task 29) — dieselbe Weiche wie in schutzAnlegen.
+  if (pos.core === true) risk = sockelRisk();
   const schutz = pos.schutz;
   if (!schutz?.orderId) {
     /* Kein Netz da — anlegen (19.08.).

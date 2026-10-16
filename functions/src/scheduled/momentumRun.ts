@@ -856,7 +856,7 @@ async function rebalanceMomentumUsers(
  *     aktive Engine hält, rührt diese Funktion nicht an; sonst verkaufte
  *     der Sockel Positionen, für die er nie bezahlt hat.
  *  3. **Dieselben Tore wie überall**: Paper-Modus, Freischaltung,
- *     Risiko-Hülle, Monats-Takt. Bei geschlossenem Marktfilter (SMA200)
+ *     Risiko-Hülle, Wochen-Takt. Bei geschlossenem Marktfilter (SMA200)
  *     ist das Ziel leer und der Sockel geht in Cash.
  */
 async function rebalanceCoreSleeve(
@@ -911,7 +911,7 @@ async function rebalanceCoreSleeve(
          * (Red-Team-Befund 5, 20.08.): Vorher sprang der Lauf hier per
          * continue raus, BEVOR er verkaufen konnte. Die core-Positionen
          * verloren damit Rebalancing und Marktfilter-Exit (riskPulse hält
-         * nur die Stops) und zählten in der Kapital-Kachel weiter als
+         * nur die Notbremse −25 %) und zählten in der Kapital-Kachel weiter als
          * „Sockel" — ein aktiv aussehender Sockel, den niemand führt.
          * Nur Verkäufe (nie durch Einstiegs-Tore blockiert), täglich bis
          * leer, kein Wochentakt-Gate: Wer 0 wählt, meint jetzt. */

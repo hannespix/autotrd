@@ -276,6 +276,8 @@ export async function fillSyncKonto(
         // Einstiegsweg aus der Lauf-Kennung der ERÖFFNENDEN Order (Task 18):
         // mom-/core-/man- sind eindeutig, ein Scan-Zeitstempel nicht.
         ...(!schliesst && quelleAusLauf(order.clientOrderId) ? { quelle: quelleAusLauf(order.clientOrderId)! } : {}),
+        // Task 31: Ein eröffnender Sockel-Fill bleibt Sockel (core: true).
+        ...(!schliesst && quelleAusLauf(order.clientOrderId) === 'sockel' ? { core: true } : {}),
         ...(schliesst
           ? { restStorniert: endzustand, riskExit: 'fill_sync' }
           : { aufstockung: true, ...(o.side === 'sell' ? { openShort: true } : {}) }),

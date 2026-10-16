@@ -51,10 +51,17 @@ import {
   liquidationPlan,
   positionValue,
   resolveRisk,
+  sockelNachzugNoetig,
+  sockelNotbremseLevel,
+  sockelPruefPosition,
+  sockelRisk,
+  sockelSchutzVersuchFaellig,
   type Position,
   type Strategy,
 } from '../../../shared/src/index.js';
 import { executeTrade, riskExitReason } from '../core/broker.js';
+import { brokerVerbindung, type BrokerVerbindung } from '../core/orderRouting.js';
+import { schutzAnlegen } from '../core/schutzStop.js';
 import { mayTrade } from '../core/access.js';
 import { clampStrategyRisk } from '../core/rulesTrading.js';
 import { getSparkBatch } from '../core/marketData.js';
@@ -204,6 +211,16 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
       const clamped = clampStrategyRisk(structuredClone(roh));
 
       const posSnap = await userDoc.ref.collection('positions').get();
+      // Broker-Verbindung nur bei Bedarf (Sockel-Nachzug) — einmal je Konto.
+      let verbindungGeholt = false;
+      let verbindung: BrokerVerbindung | null = null;
+      const verbindungFuerSchutz = async (): Promise<BrokerVerbindung | null> => {
+        if (!verbindungGeholt) {
+          verbindungGeholt = true;
+          verbindung = await brokerVerbindung(userDoc.id).catch(() => null);
+        }
+        return verbindung;
+      };
 
       // ── Nachschussgrenze (Hebel, Owner-Wunsch 28.07.) ─────────────────
       //
@@ -287,12 +304,46 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
         // Prozent-Stop würde sie an genau den Bewegungen ausstoppen, über
         // die hinweg sie ihre Rendite verdient. Der Margin-Call bleibt, weil
         // er keine Strategie-Entscheidung ist, sondern eine Solvenzgrenze.
+        //
+        // SOCKEL (Owner-Entscheidung 16.10., Task 29): nur die Notbremse
+        // bei −25 % ab Einstand — kein Ziel, kein Trailing. Gespeicherte
+        // Altlevel (−2 %/+4 %) haben in `riskExitReason` Vorrang und werden
+        // deshalb für die PRÜFUNG ersetzt, nicht nur nachgezogen: Auch eine
+        // Position, deren Nachzug gerade scheitert, schließt nie mehr an
+        // der alten Marke.
+        // Auch im Momentum-Modus: Dort überspringt der Sockel-Lauf das Konto
+        // (momentumRun), ein verwaister Sockel hätte sonst gar keinen Ausstieg.
+        const sockel = pos.core === true;
+        if (sockel) {
+          const nachzug = sockelNachzugNoetig(pos);
+          if (nachzug.level) {
+            // `update` mit Vorbedingung, nicht `set(merge)`: Wurde die
+            // Position seit dem Lesen geschlossen oder neu geschrieben,
+            // scheitert update — set legte ein Geister-Dokument an bzw.
+            // träfe eine inzwischen fremde Position.
+            await doc.ref
+              .update({ stopLoss: sockelNotbremseLevel(pos.avgEntry, pos.side ?? null), takeProfit: null }, { lastUpdateTime: doc.updateTime })
+              .catch((err: unknown) => logger.warn(`Sockel-Level ${userDoc.id} ${pos.symbol}`, err));
+          }
+          if (nachzug.broker && sockelSchutzVersuchFaellig(pos.sockelSchutzVersuch, now)) {
+            // Die −2-%-Order beim Broker auf die Notbremse umsetzen:
+            // schutzAnlegen storniert die alte und legt die neue an (bei
+            // „nicht stornierbar" = schon gefüllt: KEINE neue). Der Stempel
+            // davor bremst Dauerfehler auf einen Versuch je 30 Minuten.
+            await doc.ref
+              .update({ sockelSchutzVersuch: now.toISOString() })
+              .catch((err: unknown) => logger.warn(`Sockel-Versuch ${userDoc.id} ${pos.symbol}`, err));
+            const v = await verbindungFuerSchutz();
+            if (v) await schutzAnlegen(v, userDoc.id, pos.symbol, sockelRisk(), cls, `puls-${now.toISOString().slice(0, 16)}Z-sockel`);
+          }
+        }
+        const pruefPos = sockelPruefPosition(pos);
         const reason = zwangsschluss.has(pos.symbol)
           ? 'margin_call'
-          : clamped.engine.mode === 'momentum'
+          : clamped.engine.mode === 'momentum' && !sockel
             ? null
-            : riskExitReason(pos, preis, {
-                risk: resolveRisk(clamped.engine, cls),
+            : riskExitReason(pruefPos, preis, {
+                risk: sockel ? sockelRisk() : resolveRisk(clamped.engine, cls),
                 now,
               });
         if (!reason) continue;
