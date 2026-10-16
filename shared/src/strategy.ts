@@ -123,7 +123,7 @@ export interface EngineConfig extends RiskConfig {
    * Trades). Kosten sind prozentual, also hilft keine größere Position —
    * nur weniger und größere Bewegungen. Genau das ist der Sockel.
    *
-   * Mechanik: `momentumRun` schichtet `equity × corePct/100` monatlich in
+   * Mechanik: `momentumRun` schichtet `equity × corePct/100` wöchentlich in
    * die Top-Momentum-Werte (SMA200-Marktfilter: im Abwärtsmarkt Cash) und
    * stempelt die Positionen mit `core: true`. Der 5-Minuten-Scan fasst
    * diese Positionen NICHT an — weder Exit noch Positionslimit. Was der
@@ -650,6 +650,77 @@ export function resolveRisk(engine: EngineConfig, assetClass?: string | null): R
   return out;
 }
 
+/* ── Sockel ohne Prozent-Marken (Owner-Entscheidung 16.10., Task 29) ─────
+ *
+ * Der Kern-Satellit hält Momentum-Führer über Wochen und schichtet
+ * wöchentlich um. Bis 16.10. schloss der Minuten-Puls seine Positionen
+ * trotzdem an den globalen Marken (2 % Stop, 4 % Ziel, 3 % Trailing) —
+ * gegen jede Zeile der Doku („kein Signal-Exit, kein Stop, kein
+ * Trailing") und gegen die Messung, die den Sockel begründet hat (sie lief
+ * OHNE Stops). Gemessen 08.–14.10.: 44 Sockel-Schlüsse, 29 davon am
+ * Stop-Loss, 0 am Rebalance — bei Werten mit 3–9 % Tagesschwankung löst
+ * ein 2-%-Stop am Rauschen aus und schneidet die Gewinner ab, von denen
+ * Momentum lebt.
+ *
+ * Was bleibt: wöchentliches Rebalancing, der Marktfilter (SMA200 ⇒ Cash),
+ * der Margin-Call und diese NOTBREMSE — 25 % unter Einstand, fest, ohne
+ * Ziel und ohne Trailing (= RISK_LIMITS.emergencyStopPct, dieselbe Zahl
+ * wie „Stop-Loss 0" bei der aktiven Engine). Sie gilt im Puls UND als
+ * Schutz-Order beim Broker. Ob die Entscheidung richtig war, misst
+ * `sockelKontrafakt` weiter (Task 30). */
+export const SOCKEL_NOTBREMSE_PCT = 25;
+
+/** Die Risiko-Hülle einer Sockel-Position: nur die Notbremse. */
+export function sockelRisk(): RiskConfig {
+  return { stopLossPct: SOCKEL_NOTBREMSE_PCT, takeProfitPct: 0, trailingStopPct: 0, atrStopMult: 0, atrTakeMult: 0, maxHoldDays: 0 };
+}
+
+/** Notbrems-Kurs einer Sockel-Position (Long: darunter, Short gespiegelt). */
+export function sockelNotbremseLevel(avgEntry: number, side?: 'long' | 'short' | null): number {
+  return side === 'short' ? avgEntry * (1 + SOCKEL_NOTBREMSE_PCT / 100) : avgEntry * (1 - SOCKEL_NOTBREMSE_PCT / 100);
+}
+
+/**
+ * Muss eine Sockel-Position nachgezogen werden (Task 29)? Pur, damit der
+ * Puls-Pfad testbar ist:
+ *  - `level`: gespeicherter Stop weicht von der Notbremse ab oder ein Ziel
+ *    steht noch drin (Altbestand vor dem 16.10.).
+ *  - `broker`: beim Broker liegt eine Schutz-Order ENGER als die Notbremse
+ *    (die alte −2-%-Order) — sie würde sonst weiter auslösen.
+ * Eine Order WEITER als die Notbremse bleibt unangetastet (Rundung).
+ */
+export function sockelNachzugNoetig(
+  pos: Pick<Position, 'avgEntry' | 'side' | 'stopLoss' | 'takeProfit' | 'broker' | 'schutz'>,
+): { level: boolean; broker: boolean } {
+  const soll = sockelNotbremseLevel(pos.avgEntry, pos.side ?? null);
+  const ist = typeof pos.stopLoss === 'number' && Number.isFinite(pos.stopLoss) ? pos.stopLoss : null;
+  const level = ist === null || Math.abs(ist - soll) > soll * 1e-6 || (pos.takeProfit !== null && pos.takeProfit !== undefined);
+  const s = pos.schutz?.stopPreis;
+  const broker = pos.broker === true && typeof s === 'number' && Number.isFinite(s)
+    && (pos.side === 'short' ? s < soll * 0.999 : s > soll * 1.001);
+  return { level, broker };
+}
+
+/**
+ * Die Position, wie der Puls sie PRÜFT: Bei einem Sockel ersetzt die
+ * Notbremse jedes gespeicherte Level, das Ziel entfällt. Gespeicherte
+ * Level haben in `riskExitReason` Vorrang — ohne diesen Ersatz schlösse
+ * ein Altbestand weiter an der −2-%-Marke. Andere Positionen unverändert.
+ */
+export function sockelPruefPosition<P extends Pick<Position, 'avgEntry' | 'side' | 'stopLoss' | 'takeProfit' | 'core'>>(pos: P): P {
+  if (pos.core !== true) return pos;
+  return { ...pos, stopLoss: sockelNotbremseLevel(pos.avgEntry, pos.side ?? null), takeProfit: null };
+}
+
+/**
+ * Risiko-Hülle einer Position: Sockel ⇒ nur Notbremse, sonst die
+ * klassen-aufgelösten Engine-Marken. EINE Weiche für Kauf, Aufstockung,
+ * Puls und Broker-Schutz — damit keine Stelle die alten Marken erbt.
+ */
+export function risikoFuer(engine: EngineConfig, assetClass: string | null | undefined, core: boolean): RiskConfig {
+  return core ? sockelRisk() : resolveRisk(engine, assetClass ?? null);
+}
+
 /**
  * Mindesthalte-Böden je Anlageklasse (Hebel 1c des Rund-um-die-Uhr-Umbaus,
  * Owner 15.08.).
@@ -987,8 +1058,9 @@ export interface Position {
    * Diese Kennzeichnung ist die Besitzgrenze zwischen den zwei Maschinen auf
    * EINEM Wallet: `true` heißt „gehört dem Momentum-Sockel". Der
    * 5-Minuten-Scan lässt solche Positionen vollständig in Ruhe — kein
-   * Signal-Exit, kein Stop, kein Trailing, und sie zählen nicht gegen
-   * `maxOpenPositions`. Sonst verkaufte der Scan beim nächsten Rauschen
+   * Signal-Exit, kein Ziel, kein Trailing, und sie zählen nicht gegen
+   * `maxOpenPositions`. Einziger Preis-Ausstieg ist die Notbremse im
+   * Minuten-Puls (−25 % ab Einstand, `sockelRisk`, Task 29). Sonst verkaufte der Scan beim nächsten Rauschen
    * genau das weg, was der Sockel ruhig halten soll.
    *
    * Fehlend = normale Position der aktiven Engine (Altbestand bleibt gültig).

@@ -46,7 +46,7 @@
  */
 
 import { classify } from './universe.js';
-import { roundtripFeeRateForClass } from './strategy.js';
+import { SOCKEL_NOTBREMSE_PCT, roundtripFeeRateForClass } from './strategy.js';
 
 /** Ausstiegsgründe, die sicher von den PROZENT-Marken stammen (Puls oder Broker-Order). */
 export const SOCKEL_MARKEN_EXITS: readonly string[] = [
@@ -59,8 +59,6 @@ export const SOCKEL_MARKEN_EXITS: readonly string[] = [
 /** Nachgebuchte Verkäufe — Marke ODER Rebalance, nicht unterscheidbar (V6). */
 export const SOCKEL_UNKLAR_EXITS: readonly string[] = ['fill_sync'];
 
-/** Notbremse der Variante (b): 25 % unter Einstand (= RISK_LIMITS.emergencyStopPct). */
-export const SOCKEL_NOTBREMSE_PCT = 25;
 
 /** Ohne früheren Lauf: Messpunkt = Ausstieg + so viele Kalendertage. */
 export const SOCKEL_ERSATZ_TAGE = 7;

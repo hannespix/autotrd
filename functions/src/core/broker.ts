@@ -29,6 +29,7 @@ import {
   laufMitWeg,
   quelleAusLauf,
   resolveRisk,
+  risikoFuer,
   riskBasedQty,
   sicheresKapital,
   sizeWithMargin,
@@ -1260,7 +1261,8 @@ export async function executeTrade(
       verbindung,
       req.uid,
       req.symbol,
-      resolveRisk(strategy.engine, klasse),
+      // Sockel: Broker-Order auf die Notbremse, nicht auf −2 % (Task 29).
+      risikoFuer(strategy.engine, klasse, req.core === true),
       klasse,
       lauf,
     );
@@ -1411,6 +1413,10 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
             source: 'engine',
             assetClass: classify(d.symbol),
             ...(quelleNach ? { quelle: quelleNach } : {}),
+            // Task 31: Ein nachgebuchter SOCKEL-Fill bleibt Sockel — ohne
+            // Kennung gehörte die Position dem Scan (Signal-Exit, Stops), und
+            // die Doppelkauf-Sperre wiese den Rest einer core-Position ab.
+            ...(eroeffnend && quelleNach === 'sockel' ? { core: true } : {}),
             ...(eroeffnend
               ? { aufstockung: true, ...(d.side === 'sell' ? { openShort: true } : {}) }
               : { restStorniert: endzustand, riskExit: 'exit_nachlauf' }),
@@ -1632,6 +1638,8 @@ export async function bucheUnverbuchteFills(
         source: 'engine',
         assetClass: classify(d.symbol),
         ...(quelleNach ? { quelle: quelleNach } : {}),
+        // Task 31: Sockel-Kauf bleibt Sockel (s. bucheOffeneOrders).
+        ...(quelleNach === 'sockel' && d.side === 'buy' ? { core: true } : {}),
         // Red-Team-Befund 25.08.: Ohne diese Zusicherung schließt
         // `schlussMenge` beim Nachbuchen IMMER die GANZE Position — bei
         // einem echten Teilfill (der Normalfall aus `pflegeSchutz`) eine
@@ -1854,14 +1862,19 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         const borrowed = roundCents(Math.max(0, cost - Math.max(0, balance)));
         const nQty = pos.qty + qty;
         const nAvg = Math.round(((pos.qty * pos.avgEntry + qty * eff) / nQty) * 10_000) / 10_000;
-        const risk = resolveRisk(strategy.engine, req.assetClass ?? classify(req.symbol));
+        // Sockel (Task 29, Owner 16.10.): nur die Notbremse auf den neuen
+        // Mischkurs, KEIN Ziel — sonst schriebe der Nachschub die alten
+        // 2/4-%-Marken wieder hinein.
+        const sockel = pos.core === true;
+        const risk = risikoFuer(strategy.engine, req.assetClass ?? classify(req.symbol), sockel);
         tx.set(posRef, {
           ...pos,
           qty: nQty,
           avgEntry: nAvg,
           stopLoss: risk.stopLossPct > 0 ? nAvg * (1 - risk.stopLossPct / 100) : (pos.stopLoss ?? null),
-          takeProfit:
-            risk.takeProfitPct > 0 ? nAvg * (1 + risk.takeProfitPct / 100) : (pos.takeProfit ?? null),
+          takeProfit: sockel
+            ? null
+            : risk.takeProfitPct > 0 ? nAvg * (1 + risk.takeProfitPct / 100) : (pos.takeProfit ?? null),
           highWater: Math.max(pos.highWater ?? nAvg, eff),
           // `broker: true` sagt „liegt real beim Broker" — das darf nur ein
           // echter Fill behaupten; die Paper-Aufstockung erbt den Stand der
@@ -1919,8 +1932,9 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
 
       // Level klassen-aufgelöst festschreiben (MA6): Krypto bekommt weitere
       // Stops als ein Index. Der Aufrufer reicht die Klasse durch; ohne
-      // Angabe gelten die globalen Werte.
-      const risk = resolveRisk(strategy.engine, req.assetClass ?? null);
+      // Angabe gelten die globalen Werte. Sockel-Käufe (Task 29): nur die
+      // Notbremse, kein Ziel.
+      const risk = risikoFuer(strategy.engine, req.assetClass ?? null, req.core === true);
       const position: Position = {
         symbol: req.symbol,
         qty,

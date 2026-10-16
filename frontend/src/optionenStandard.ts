@@ -127,7 +127,7 @@ export const STANDARD_TEXT_DE: Record<string, OptionText> = {
   },
   corePct: {
     kurz: 'So viel Prozent deines Geldes liegt ruhig in den stärksten Werten, statt aktiv gehandelt zu werden.',
-    wirkung: `Plus 10 heißt: 10 % mehr von deinem Geld ruht im Sockel (selten umgeschichtet, kaum Gebühren), 10 % weniger steht der aktiven Engine zur Verfügung. 0 = kein Sockel: Die vorhandenen Sockel-Positionen werden dann am Abend verkauft, mit Gebühren. Höchstens ${CORE_PCT_CAP}.`,
+    wirkung: `Plus 10 heißt: 10 % mehr von deinem Geld ruht im Sockel (selten umgeschichtet, kaum Gebühren, nur Notbremse bei −25 %), 10 % weniger steht der aktiven Engine zur Verfügung. 0 = kein Sockel: Die vorhandenen Sockel-Positionen werden dann am Abend verkauft, mit Gebühren. Höchstens ${CORE_PCT_CAP}.`,
   },
   leverage: {
     kurz: 'Ob das Depot mit geliehenem Geld handeln darf.',
@@ -230,7 +230,7 @@ export const STANDARD_TEXT_EN: Record<string, Partial<OptionText>> = {
   },
   corePct: {
     kurz: 'The share of your money that rests in the strongest symbols instead of being traded actively.',
-    wirkung: `Plus 10 means 10% more of your money rests in the core (rarely reshuffled, hardly any fees) and 10% less is available to the active engine. 0 = no core: the existing core positions are then sold in the evening, with fees. At most ${CORE_PCT_CAP}.`,
+    wirkung: `Plus 10 means 10% more of your money rests in the core (rarely reshuffled, hardly any fees, only an emergency brake at −25%) and 10% less is available to the active engine. 0 = no core: the existing core positions are then sold in the evening, with fees. At most ${CORE_PCT_CAP}.`,
   },
   leverage: {
     kurz: 'Whether the wallet may trade with borrowed money.',
