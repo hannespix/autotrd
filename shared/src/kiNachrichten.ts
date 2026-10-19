@@ -664,22 +664,6 @@ export function budgetNachricht(tag: string, verbrauchtUsd: number, limitUsd: nu
 
 /* ── Tagestrichter (Loop #138, 12.10.) ──────────────────────────────────── */
 
-/**
- * Was ein KI-Nachrichten-Lauf am Tag insgesamt durchgelassen hat — reine
- * Messung, keine Wirkung auf Urteile oder Handel.
- *
- * Anlass: An drei Handelstagen (08., 09., 12.10.) gab es 0 Scans mit
- * handlungsfähiger KI-Lage und 0 KI-Aktionen, obwohl 170 Urteile mit
- * Richtung offen waren. `meta/kiNachrichten` überschreibt seine Zähler alle
- * fünf Minuten; abends steht dort der letzte (leere) Lauf, und die Frage
- * „wo im Trichter bleiben die Meldungen hängen — Sichtung, Gegenprüfung oder
- * Handlungsfähigkeit?" ist aus den gespeicherten Zahlen nicht beantwortbar.
- *
- * Gleicher ET-Tag summiert, neuer Tag beginnt bei null; der vorige Tag
- * bleibt als `vortag` stehen, damit eine Kontrolle nach Mitternacht ihn noch
- * sieht. Nur Zähler — keine Symbole, keine Kosten, keine Kontozahl
- * (`meta/**` ist öffentlich).
- */
 /* ── Sichtungs-Profil (Loop #138, 19.10.) ───────────────────────────────
  *
  * Seit über einer Woche: 80–100 Sichtungen am Tag, 0 Gegenproben. Eine
@@ -695,12 +679,19 @@ export type KiStaerkeStufe = 'unter02' | 'unter04' | 'unter06' | 'unter08' | 'ab
 export function kiStaerkeStufe(s: number): KiStaerkeStufe {
   if (!(s >= 0.2)) return 'unter02';
   if (s < 0.4) return 'unter04';
-  if (s < 0.6) return 'unter06';
+  // Grenze = Prüf-Schwelle: `unter08`/`ab08` sind genau die Stärken, die
+  // eine Gegenprobe bekommen KÖNNTEN (die Namen gelten für 0,6).
+  if (s < PRUEF_SCHWELLE) return 'unter06';
   if (s < 0.8) return 'unter08';
   return 'ab08';
 }
 
-/** Warum ein Gegenprobe-Kandidat ohne Prüfung endete. */
+/**
+ * Warum ein Gegenprobe-Kandidat ohne Prüfung endete. `zu_alt` sammelt
+ * alles, was über mehrere Läufe nicht durchkam (Takt, Frist, Anbieter).
+ * Bilanz: `kandidaten` zählt am Tag der Sichtung, `geprueft`/`verfallen`
+ * am Tag des Ausgangs — je Tag geht die Rechnung darum nicht auf.
+ */
 export type KiVerfallGrund = 'zu_alt' | 'fehler' | 'budget' | 'unlesbar' | 'ablehnung';
 
 export interface KiSichtungsProfil {
@@ -708,6 +699,14 @@ export interface KiSichtungsProfil {
   urteile: number;
   /** Davon `eindeutig` (nach Parse: nie mit Richtung neutral). */
   eindeutig: number;
+  /**
+   * Richtung ALLER Urteile. Der Parse setzt `eindeutig` bei „neutral" auf
+   * false — ohne diese Zahl wäre „das Modell hält es für neutral" nicht von
+   * „das Modell hält es für nicht eindeutig" zu trennen (Red-Team 19.10.).
+   */
+  richtung: Partial<Record<KiRichtung, number>>;
+  /** Paare, die das Modell gar nicht beantwortet hat (Urteil „unlesbar"). */
+  fehlend: number;
   /** Davon in die Gegenprobe gegangen. */
   kandidaten: number;
   /** Stärke ALLER Urteile. */
@@ -719,14 +718,15 @@ export interface KiSichtungsProfil {
 }
 
 export function leeresSichtungsProfil(): KiSichtungsProfil {
-  return { urteile: 0, eindeutig: 0, kandidaten: 0, staerke: {}, staerkeEindeutig: {}, verfallen: {} };
+  return { urteile: 0, eindeutig: 0, richtung: {}, fehlend: 0, kandidaten: 0, staerke: {}, staerkeEindeutig: {}, verfallen: {} };
 }
 
 /** Urteile einer gesichteten Meldung ins Profil zählen (mutiert `p`). */
-export function sichtungsProfilZaehlen(p: KiSichtungsProfil, urteile: readonly SichtungsUrteil[], kandidaten: number): void {
+export function sichtungsProfilZaehlen(p: KiSichtungsProfil, urteile: readonly SichtungsUrteil[], kandidaten: number, fehlend = 0): void {
   for (const u of urteile) {
     const s = kiStaerkeStufe(u.staerke);
     p.urteile += 1;
+    p.richtung[u.richtung] = (p.richtung[u.richtung] ?? 0) + 1;
     p.staerke[s] = (p.staerke[s] ?? 0) + 1;
     if (u.eindeutig) {
       p.eindeutig += 1;
@@ -734,6 +734,7 @@ export function sichtungsProfilZaehlen(p: KiSichtungsProfil, urteile: readonly S
     }
   }
   p.kandidaten += kandidaten;
+  p.fehlend += fehlend;
 }
 
 function summeMap<K extends string>(a: unknown, b: Partial<Record<K, number>>): Partial<Record<K, number>> {
@@ -751,6 +752,8 @@ export function sichtungsProfilSumme(alt: Partial<KiSichtungsProfil> | null | un
   return {
     urteile: trichterZahl(alt?.urteile) + trichterZahl(lauf.urteile),
     eindeutig: trichterZahl(alt?.eindeutig) + trichterZahl(lauf.eindeutig),
+    richtung: summeMap(alt?.richtung, lauf.richtung),
+    fehlend: trichterZahl(alt?.fehlend) + trichterZahl(lauf.fehlend),
     kandidaten: trichterZahl(alt?.kandidaten) + trichterZahl(lauf.kandidaten),
     staerke: summeMap(alt?.staerke, lauf.staerke),
     staerkeEindeutig: summeMap(alt?.staerkeEindeutig, lauf.staerkeEindeutig),
@@ -758,6 +761,22 @@ export function sichtungsProfilSumme(alt: Partial<KiSichtungsProfil> | null | un
   };
 }
 
+/**
+ * Was ein KI-Nachrichten-Lauf am Tag insgesamt durchgelassen hat — reine
+ * Messung, keine Wirkung auf Urteile oder Handel.
+ *
+ * Anlass: An drei Handelstagen (08., 09., 12.10.) gab es 0 Scans mit
+ * handlungsfähiger KI-Lage und 0 KI-Aktionen, obwohl 170 Urteile mit
+ * Richtung offen waren. `meta/kiNachrichten` überschreibt seine Zähler alle
+ * fünf Minuten; abends steht dort der letzte (leere) Lauf, und die Frage
+ * „wo im Trichter bleiben die Meldungen hängen — Sichtung, Gegenprüfung oder
+ * Handlungsfähigkeit?" ist aus den gespeicherten Zahlen nicht beantwortbar.
+ *
+ * Gleicher ET-Tag summiert, neuer Tag beginnt bei null; der vorige Tag
+ * bleibt als `vortag` stehen, damit eine Kontrolle nach Mitternacht ihn noch
+ * sieht. Nur Zähler — keine Symbole, keine Kosten, keine Kontozahl
+ * (`meta/**` ist öffentlich).
+ */
 export interface KiTrichterTag {
   tag: string;
   laeufe: number;

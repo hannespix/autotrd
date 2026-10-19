@@ -792,7 +792,7 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
         const kandidaten = eigene.filter((u) => brauchtPruefung(u, relevant));
         const fehlend = m.symbole.filter((s) => relevant.has(s) && !eigene.some((u) => u.symbol === s));
         if (!(await sichtungAblegen(m, eigene, kandidaten, fehlend, meta, aufrufId))) continue;
-        sichtungsProfilZaehlen(e.profil!, eigene, kandidaten.length);
+        sichtungsProfilZaehlen(e.profil!, eigene, kandidaten.length, fehlend.length);
         e.gesichtet += 1;
         e.offen += kandidaten.length;
         wartend += kandidaten.length;

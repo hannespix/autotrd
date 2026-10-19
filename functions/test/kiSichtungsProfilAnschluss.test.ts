@@ -14,7 +14,7 @@ const lauf = readFileSync(join(hier, '../src/scheduled/kiNachrichten.ts'), 'utf8
 describe('KI-Sichtungs-Profil im Lauf', () => {
   it('jede gesichtete Meldung zählt erst NACH erfolgreichem Ablegen', () => {
     expect(lauf).toContain(
-      'if (!(await sichtungAblegen(m, eigene, kandidaten, fehlend, meta, aufrufId))) continue;\n        sichtungsProfilZaehlen(e.profil!, eigene, kandidaten.length);',
+      'if (!(await sichtungAblegen(m, eigene, kandidaten, fehlend, meta, aufrufId))) continue;\n        sichtungsProfilZaehlen(e.profil!, eigene, kandidaten.length, fehlend.length);',
     );
   });
 

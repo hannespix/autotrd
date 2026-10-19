@@ -56,10 +56,10 @@ describe('Sichtungs-Profil (Loop #138, 19.10.)', () => {
 
   it('zählt alle Urteile und getrennt die eindeutigen — so wird sichtbar, welche Bedingung sperrt', () => {
     const p = leeresSichtungsProfil();
-    sichtungsProfilZaehlen(p, [u(0.7, false), u(0.3, true), u(0.9, true), u(0.95, true)], 1);
+    sichtungsProfilZaehlen(p, [u(0.7, false), u(0.3, true), u(0.9, true), u(0.95, true), { ...u(0.8, false), richtung: 'neutral' }], 1, 2);
     expect(p).toEqual({
-      urteile: 4, eindeutig: 3, kandidaten: 1,
-      staerke: { unter08: 1, unter04: 1, ab08: 2 },
+      urteile: 5, eindeutig: 3, kandidaten: 1, fehlend: 2, richtung: { positiv: 4, neutral: 1 },
+      staerke: { unter08: 1, unter04: 1, ab08: 3 },
       staerkeEindeutig: { unter04: 1, ab08: 2 },
       verfallen: {},
     });
@@ -69,8 +69,8 @@ describe('Sichtungs-Profil (Loop #138, 19.10.)', () => {
     const a = leeresSichtungsProfil();
     sichtungsProfilZaehlen(a, [u(0.5, true)], 0);
     a.verfallen.zu_alt = 2;
-    const s = sichtungsProfilSumme({ urteile: 4, staerke: { unter06: 1 }, verfallen: { zu_alt: 1, budget: -3 } as never, eindeutig: 'x' as never }, a);
-    expect(s).toEqual({ urteile: 5, eindeutig: 1, kandidaten: 0, staerke: { unter06: 2 }, staerkeEindeutig: { unter06: 1 }, verfallen: { zu_alt: 3 } });
+    const s = sichtungsProfilSumme({ urteile: 4, fehlend: 2, staerke: { unter06: 1 }, verfallen: { zu_alt: 1, budget: -3 } as never, eindeutig: 'x' as never }, a);
+    expect(s).toEqual({ urteile: 5, eindeutig: 1, richtung: { positiv: 1 }, fehlend: 2, kandidaten: 0, staerke: { unter06: 2 }, staerkeEindeutig: { unter06: 1 }, verfallen: { zu_alt: 3 } });
     const t1 = kiTrichterTag(null, { gesichtet: 1, geprueft: 0, handlungsfaehig: 0, ausgelassen: {}, aufrufFehler: 0, budgetErreicht: false, profil: a }, '2026-10-19');
     const t2 = kiTrichterTag({ trichter: t1.trichter }, { gesichtet: 1, geprueft: 0, handlungsfaehig: 0, ausgelassen: {}, aufrufFehler: 0, budgetErreicht: false, profil: a }, '2026-10-19');
     expect(t2.trichter.profil).toMatchObject({ urteile: 2, eindeutig: 2, verfallen: { zu_alt: 4 } });

@@ -266,6 +266,24 @@ describe('Abdeckung und Ablage', () => {
     expect(stand['trichter']).toMatchObject({ tag: '2026-10-05', laeufe: 2, gesichtet: 1, geprueft: 1, handlungsfaehig: 1 });
     expect((stand['trichter'] as { ausgelassen: Record<string, number> }).ausgelassen['sammelmeldung']).toBeGreaterThanOrEqual(1);
     expect(stand['vortag']).toBeUndefined();
+    // Sichtungs-Profil (Loop #138, 19.10.): Lauf 1 sichtet ACME eindeutig
+    // und stark → Kandidat; Lauf 2 prüft ihn — nichts verfällt.
+    const profil = (stand['trichter'] as { profil: Record<string, unknown> }).profil;
+    expect(profil).toMatchObject({ urteile: 1, eindeutig: 1, kandidaten: 1, fehlend: 0, verfallen: {} });
+    const se = profil['staerkeEindeutig'] as Record<string, number>;
+    expect((se['unter08'] ?? 0) + (se['ab08'] ?? 0)).toBe(profil['kandidaten']);
+  });
+
+  it('Sichtungs-Profil: veralteter Kandidat zählt als verfallen (zu_alt), fehlende Paare als fehlend', async () => {
+    meldung('alp-1', { symbole: ['ACME', 'BETA'], symboleGenannt: 2 });
+    sichtungsAntwort = (a) => sichtung(paareAus(a.eingabe).filter((p) => p.symbol === 'ACME').map((p) => eintrag(p.id, p.symbol)));
+    await lauf();
+    let t = store.get('meta/kiNachrichten')!['trichter'] as { profil: { fehlend: number; kandidaten: number; verfallen: Record<string, number> } };
+    expect(t.profil).toMatchObject({ kandidaten: 1, fehlend: 1 });
+    uhrMs += 3 * 60 * 60_000; // weit über die Frist — der Kandidat ist zu alt
+    await lauf();
+    t = store.get('meta/kiNachrichten')!['trichter'] as typeof t;
+    expect(t.profil.verfallen).toMatchObject({ zu_alt: 1 });
   });
 
   it('Anzeige-Kopie (Task 22): je Konto nur zu EIGENEN Symbolen, nur Whitelist, nie in market/**', async () => {
