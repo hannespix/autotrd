@@ -90,6 +90,10 @@ import {
   zuAlt,
   type BudgetUrteil,
   type KiAuslassGrund,
+  type KiSichtungsProfil,
+  type KiVerfallGrund,
+  leeresSichtungsProfil,
+  sichtungsProfilZaehlen,
   type KiMeldung,
   type KiUsage,
   type Kurskontext,
@@ -334,6 +338,8 @@ export interface KiLaufErgebnis {
   ausgelassen: Partial<Record<KiAuslassGrund, number>>;
   budgetErreicht: boolean;
   aufrufFehler: number;
+  /** Sichtungs-Profil (Loop #138, 19.10.) — reine Messung. */
+  profil?: KiSichtungsProfil;
 }
 
 export interface KiLaufAbhaengigkeiten {
@@ -392,6 +398,12 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
   const standRef = db.doc('meta/kiNachrichten');
   const e: KiLaufErgebnis = {
     grund: null, konten: 0, gesichtet: 0, geprueft: 0, handlungsfaehig: 0, offen: 0, ausgelassen: {}, budgetErreicht: false, aufrufFehler: 0,
+    profil: leeresSichtungsProfil(),
+  };
+  /** Verfallene Gegenprobe-Kandidaten zählen (Messung, Loop #138 19.10.). */
+  const verfallen = (g: KiVerfallGrund): void => {
+    const v = e.profil!.verfallen;
+    v[g] = (v[g] ?? 0) + 1;
   };
   const schluessel = (process.env.ANTHROPIC_API_KEY ?? '').trim();
   const aufruf = abh.aufruf ?? (schluessel ? anthropicAufruf(schluessel) : null);
@@ -577,6 +589,7 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
         await db.doc(`kiOffen/${urteilId(k.newsId, k.symbol)}`).delete().catch(() => undefined);
       } else if (zuAlt(k, laufBeginn)) {
         await urteilSchreiben(k, k.symbol, { sichtung: k.urteil, ...endUrteil(k.urteil, null, 'zu_alt') });
+        verfallen('zu_alt');
       } else {
         offen.push(k);
       }
@@ -602,6 +615,7 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
         const m = texte.get(k.newsId);
         if (!m) {
           await urteilSchreiben(k, k.symbol, { sichtung: k.urteil, ...endUrteil(k.urteil, null, 'fehler') });
+          verfallen('fehler');
           return;
         }
         const kontext: Kurskontext = { gesehen: m.kurseGesehen?.[k.symbol] ?? null, aktuell: aktuelle[k.symbol] ?? null };
@@ -637,6 +651,7 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
           },
         });
         if (p) e.geprueft += 1;
+        if (ohne) verfallen(ohne);
         if (u.handlungsfaehig) e.handlungsfaehig += 1;
       }));
       for (const a of ausgaenge) {
@@ -650,6 +665,7 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
       if (budgetAbgewiesen.length > 0 && (await meldenWennErschoepft(worstPruefung))) {
         for (const k of budgetAbgewiesen) {
           await urteilSchreiben(k, k.symbol, { sichtung: k.urteil, ...endUrteil(k.urteil, null, 'budget') });
+          verfallen('budget');
           e.offen -= 1;
         }
       }
@@ -776,6 +792,7 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
         const kandidaten = eigene.filter((u) => brauchtPruefung(u, relevant));
         const fehlend = m.symbole.filter((s) => relevant.has(s) && !eigene.some((u) => u.symbol === s));
         if (!(await sichtungAblegen(m, eigene, kandidaten, fehlend, meta, aufrufId))) continue;
+        sichtungsProfilZaehlen(e.profil!, eigene, kandidaten.length);
         e.gesichtet += 1;
         e.offen += kandidaten.length;
         wartend += kandidaten.length;

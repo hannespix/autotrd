@@ -680,6 +680,84 @@ export function budgetNachricht(tag: string, verbrauchtUsd: number, limitUsd: nu
  * sieht. Nur Zähler — keine Symbole, keine Kosten, keine Kontozahl
  * (`meta/**` ist öffentlich).
  */
+/* ── Sichtungs-Profil (Loop #138, 19.10.) ───────────────────────────────
+ *
+ * Seit über einer Woche: 80–100 Sichtungen am Tag, 0 Gegenproben. Eine
+ * Meldung geht nur weiter, wenn die Sichtung sie `eindeutig` UND mit
+ * `staerke ≥ PRUEF_SCHWELLE` einstuft — welche der beiden Bedingungen
+ * scheitert, war nicht messbar. Ebenso unsichtbar: Kandidaten, die in der
+ * Gegenprobe still verfallen (zu alt, Budget, unlesbar), schreiben zwar ein
+ * Urteil, erhöhen aber keinen Zähler. Reine Messung, nur Anzahlen. */
+
+/** Stärke-Stufen in 0,2er-Schritten; `ab08` enthält 1,0. */
+export type KiStaerkeStufe = 'unter02' | 'unter04' | 'unter06' | 'unter08' | 'ab08';
+
+export function kiStaerkeStufe(s: number): KiStaerkeStufe {
+  if (!(s >= 0.2)) return 'unter02';
+  if (s < 0.4) return 'unter04';
+  if (s < 0.6) return 'unter06';
+  if (s < 0.8) return 'unter08';
+  return 'ab08';
+}
+
+/** Warum ein Gegenprobe-Kandidat ohne Prüfung endete. */
+export type KiVerfallGrund = 'zu_alt' | 'fehler' | 'budget' | 'unlesbar' | 'ablehnung';
+
+export interface KiSichtungsProfil {
+  /** Symbol-Urteile der Sichtung insgesamt. */
+  urteile: number;
+  /** Davon `eindeutig` (nach Parse: nie mit Richtung neutral). */
+  eindeutig: number;
+  /** Davon in die Gegenprobe gegangen. */
+  kandidaten: number;
+  /** Stärke ALLER Urteile. */
+  staerke: Partial<Record<KiStaerkeStufe, number>>;
+  /** Stärke nur der eindeutigen — zeigt, ob die Schwelle oder `eindeutig` sperrt. */
+  staerkeEindeutig: Partial<Record<KiStaerkeStufe, number>>;
+  /** Kandidaten, die ohne Prüfung endeten. */
+  verfallen: Partial<Record<KiVerfallGrund, number>>;
+}
+
+export function leeresSichtungsProfil(): KiSichtungsProfil {
+  return { urteile: 0, eindeutig: 0, kandidaten: 0, staerke: {}, staerkeEindeutig: {}, verfallen: {} };
+}
+
+/** Urteile einer gesichteten Meldung ins Profil zählen (mutiert `p`). */
+export function sichtungsProfilZaehlen(p: KiSichtungsProfil, urteile: readonly SichtungsUrteil[], kandidaten: number): void {
+  for (const u of urteile) {
+    const s = kiStaerkeStufe(u.staerke);
+    p.urteile += 1;
+    p.staerke[s] = (p.staerke[s] ?? 0) + 1;
+    if (u.eindeutig) {
+      p.eindeutig += 1;
+      p.staerkeEindeutig[s] = (p.staerkeEindeutig[s] ?? 0) + 1;
+    }
+  }
+  p.kandidaten += kandidaten;
+}
+
+function summeMap<K extends string>(a: unknown, b: Partial<Record<K, number>>): Partial<Record<K, number>> {
+  const alt = (a && typeof a === 'object' ? a : {}) as Record<string, unknown>;
+  const out: Partial<Record<K, number>> = {};
+  for (const k of new Set([...Object.keys(alt), ...Object.keys(b)])) {
+    const n = trichterZahl(alt[k]) + trichterZahl(b[k as K]);
+    if (n > 0) out[k as K] = n;
+  }
+  return out;
+}
+
+/** Tages-Summe; ein kaputter Altstand zählt als leer, nie als Fehler. */
+export function sichtungsProfilSumme(alt: Partial<KiSichtungsProfil> | null | undefined, lauf: KiSichtungsProfil): KiSichtungsProfil {
+  return {
+    urteile: trichterZahl(alt?.urteile) + trichterZahl(lauf.urteile),
+    eindeutig: trichterZahl(alt?.eindeutig) + trichterZahl(lauf.eindeutig),
+    kandidaten: trichterZahl(alt?.kandidaten) + trichterZahl(lauf.kandidaten),
+    staerke: summeMap(alt?.staerke, lauf.staerke),
+    staerkeEindeutig: summeMap(alt?.staerkeEindeutig, lauf.staerkeEindeutig),
+    verfallen: summeMap(alt?.verfallen, lauf.verfallen),
+  };
+}
+
 export interface KiTrichterTag {
   tag: string;
   laeufe: number;
@@ -689,6 +767,8 @@ export interface KiTrichterTag {
   ausgelassen: Partial<Record<KiAuslassGrund, number>>;
   aufrufFehler: number;
   budgetErreicht: boolean;
+  /** Sichtungs-Profil des Tages (seit 19.10.; fehlt in älteren Ständen). */
+  profil?: KiSichtungsProfil;
 }
 
 export interface KiTrichterLauf {
@@ -698,6 +778,7 @@ export interface KiTrichterLauf {
   ausgelassen: Partial<Record<KiAuslassGrund, number>>;
   aufrufFehler: number;
   budgetErreicht: boolean;
+  profil?: KiSichtungsProfil | undefined;
 }
 
 const trichterZahl = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
@@ -726,6 +807,7 @@ export function kiTrichterTag(
       ausgelassen,
       aufrufFehler: trichterZahl(basis?.aufrufFehler) + trichterZahl(lauf.aufrufFehler),
       budgetErreicht: (basis?.budgetErreicht === true) || lauf.budgetErreicht,
+      profil: sichtungsProfilSumme(basis?.profil, lauf.profil ?? leeresSichtungsProfil()),
     },
     // Tageswechsel: der alte Tag wird zum Vortag; am selben Tag bleibt der Vortag stehen.
     vortag: gleich ? null : alt,
