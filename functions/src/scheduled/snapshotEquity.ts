@@ -33,7 +33,10 @@ import {
   pruefeKandidat,
   costProfile,
   exitBreakdown,
+  exitAtrProfil,
+  exitAtrProfilSumme,
   exitBreakdownSeit,
+  type ExitAtrProfil,
   EXIT_FENSTER_TAGE,
   dailyReturns,
   drawdown,
@@ -266,6 +269,15 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   // Kursabruf.
   const sockelFaelle: SockelAusstieg[] = [];
   let sockelUnklar = 0;
+  /* Task 32 (Messung zuerst, Red-Team 16.10. Befund 3): Sockel-Positionen,
+   * die VOR #566 ohne `core` nachgebucht wurden, gelten weiter als aktiv
+   * (2-%-Stop, Doppelkauf-Sperre). Hier nur ZÄHLEN — `quelle === 'sockel'`
+   * beweist keinen Besitz (sie kann aus einer Sockel-Aufstockung einer
+   * aktiven Position geerbt sein), repariert wird erst nach Einzelprüfung. */
+  const sockelKennung = { mitKern: 0, ohneKennung: 0, konten: 0 };
+  // Ausstiege je Klasse × Einstiegsweg × Tagesschwankung beim Einstieg
+  // (Loop #138, 19.10.) — nur Anzahlen, über alle Konten summiert.
+  const exitAtrTeile: ExitAtrProfil[] = [];
   // MU3 „Bewährte Einstellungen": Über die Schleife hinweg den Besten nach
   // ENGINE-Attribution suchen — und, solange keiner die Belege erfüllt, den
   // besten Anwärter samt Klartext, was ihm noch fehlt (die Karte zeigt das).
@@ -315,11 +327,16 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
       // die Investitionsquote unten braucht die Aufteilung, und dieser Loop
       // bewertet ohnehin jede Position genau einmal.
       let sockelWert = 0;
+      const sockelOhneKennung: string[] = [];
       for (const { id, pos } of stand.positionen) {
         const wert = positionValue(pos, await lastPrice(pos.symbol ?? id));
         positionsValue += wert;
         if (pos.core === true) sockelWert += wert;
+        if (pos.core === true) sockelKennung.mitKern += 1;
+        else if (pos.quelle === 'sockel') sockelOhneKennung.push(pos.symbol ?? id);
       }
+      sockelKennung.ohneKennung += sockelOhneKennung.length;
+      if (sockelOhneKennung.length > 0) sockelKennung.konten += 1;
       positionsValue = r2(positionsValue);
       sockelWert = r2(sockelWert);
       const equity = r2(balance + positionsValue);
@@ -480,6 +497,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
            * trades7t = 0. Der Wächter in exitFensterMessung pinnt den
            * Feldnamen jetzt gegen die Schreibstelle. */
           const at = t.get('executedAt') as string | undefined;
+          const einstiegAtrPct = t.get('einstiegAtrPct') as number | undefined;
           closed.push({
             symbol,
             pnl,
@@ -490,6 +508,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
             // Schlusszeitpunkt mitgeben — ohne ihn gibt es keine
             // zeitgefensterte Exit-Sicht (Task 115).
             ...(typeof at === 'string' ? { at } : {}),
+            ...(typeof einstiegAtrPct === 'number' ? { einstiegAtrPct } : {}),
             ...volumen,
           });
           if (t.get('source') === 'engine' && typeof at === 'string') {
@@ -517,6 +536,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
       // Rebalance — wie der Scan es vorsieht — oder an den Prozent-Marken
       // des Minuten-Pulses? Reine Messung, dieselbe Funktion wie oben.
       const exits7tSockel = exitBreakdownSeit(closed.filter((t) => t.quelle === 'sockel'), fensterSeit);
+      exitAtrTeile.push(exitAtrProfil(closed, fensterSeit));
       // Quellen NUR im 7-Tage-Fenster (Task 18, Red-Team M3): Die kumulative
       // Sicht mischt Altbestand ohne Steckbrief mit heutiger Drift — erst das
       // Fenster sagt, ob die Lücke noch entsteht oder nur noch nachhallt.
@@ -648,6 +668,9 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         exits7t,
         exits7tSeit: fensterSeit,
         exits7tSockel,
+        // Task 32: welche Positionen dieses Kontos die Sockel-Quelle tragen,
+        // aber keine Kennung — privat, als Liste für die Einzelprüfung.
+        sockelOhneKennung,
         costs,
         // Gemessene Ausführungs-Reibung (19.08.) — Entscheidungskurs gegen
         // echten Broker-Fill, je Klasse, Einstieg und Ausstieg getrennt.
@@ -742,10 +765,22 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         // Wovon `exits7t` das Fenster ist — ohne den Stempel wäre die Zahl
         // im Dokument nicht interpretierbar.
         exits7tSeit: fensterSeit,
+        // Task 32: nur Anzahlen, keine Symbole oder Konten-Kennungen.
+        sockelKennung,
       },
     },
     { merge: true },
   );
+
+  // Klasse × Einstiegsweg × Ausstiegsgrund × ATR-Stufe, 7 Tage (Loop #138,
+  // 19.10.). `update` mit Feldpfad, NICHT set(merge): merge mischt
+  // verschachtelte Maps, eine gestern gehandelte, heute fehlende Klasse
+  // bliebe sonst als Leiche im Fenster stehen. Eigener Schreibvorgang, damit
+  // ein Fehler hier die Tageskennzahlen oben nicht kostet.
+  await db
+    .doc('meta/health')
+    .update({ 'trading.exits7tAtr': exitAtrProfilSumme(exitAtrTeile) })
+    .catch((err: unknown) => logger.warn('exits7tAtr nicht geschrieben', err));
 
   // ── Task 30: Gegenrechnung „Sockel ohne Prozent-Marken" ──────────────────
   // Reine Messung. NACH dem Health-Schreiben (Red-Team R5): Ein hängender

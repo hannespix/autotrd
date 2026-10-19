@@ -1087,6 +1087,12 @@ export interface Position {
    */
   quelle?: string;
   /**
+   * Tages-ATR in % des Kurses beim Einstieg (Messung, Loop #138 19.10.).
+   * Reines Etikett — keine Regel liest es. Beantwortet, ob die Stops bei
+   * schwankungsstarken Werten am Rauschen auslösen (Task 25).
+   */
+  einstiegAtrPct?: number;
+  /**
    * Bereits realisierter P&L aus TEILschlüssen dieser Position (23.08.).
    *
    * Nötig, seit ein Teilfill des Broker-Schutz-Stops die Position verkleinert
@@ -1258,6 +1264,12 @@ export interface Trade {
    * dieses Feld.
    */
   peakPrice?: number;
+  /**
+   * Tages-ATR in % des Kurses beim Einstieg (Messung, Loop #138 19.10.).
+   * Reines Etikett — keine Regel liest es. Beantwortet, ob die Stops bei
+   * schwankungsstarken Werten am Rauschen auslösen (Task 25).
+   */
+  einstiegAtrPct?: number;
   /* ── Teilschluss (23.08.) ─────────────────────────────────────────────── */
   /**
    * Dieser schließende Trade hat die Position VERKLEINERT, nicht geschlossen.

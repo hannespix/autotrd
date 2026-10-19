@@ -2118,6 +2118,7 @@ async function executeUserTrades(
                 source: 'engine',
                 assetClass: classify(symbol),
                 stopDistancePct: stopAbstand(symbol, data.atrPct),
+                einstiegAtrPct: data.atrPct,
                 // Regelbaum liefert ja/nein statt Vote-Karte — eigener Steckbrief
                 bucket: bucketKey({ assetClass: classify(symbol), timeframe: tf, signature: 'regelbaum', side: 'long', regime }),
                 // Hebel 2: Im Seitwärts-Regime halbe Größe — auch für
@@ -2200,6 +2201,7 @@ async function executeUserTrades(
                 assetClass: classify(symbol),
                 openShort: true,
                 stopDistancePct: stopAbstand(symbol, data.atrPct),
+                einstiegAtrPct: data.atrPct,
                 bucket: bucketKey({ assetClass: classify(symbol), timeframe: tf, signature: 'regelbaum', side: 'short', regime }),
                 // Hebel 2: Seitwärts ⇒ halbe Größe, wie beim Regelbaum-Long.
                 sizeFactor: regimeGroessenFaktor(regime),
@@ -2505,6 +2507,7 @@ async function executeUserTrades(
               source: 'engine',
               assetClass: classify(symbol),
               stopDistancePct: stopAbstand(symbol, data.atrPct),
+              einstiegAtrPct: data.atrPct,
               bucket,
               sizeFactor,
               ...(budget ? { margin: budget } : {}),
@@ -2635,6 +2638,7 @@ async function executeUserTrades(
               assetClass: classify(symbol),
               openShort: true,
               stopDistancePct: stopAbstand(symbol, data.atrPct),
+              einstiegAtrPct: data.atrPct,
               bucket,
               sizeFactor,
               ...(budget ? { margin: budget } : {}),
