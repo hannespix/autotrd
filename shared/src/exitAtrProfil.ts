@@ -17,11 +17,22 @@
 /** Obergrenzen der ATR-Stufen in Prozent (Tages-ATR / Kurs). */
 export const ATR_STUFEN_GRENZEN = [1, 2, 3, 5] as const;
 
-export type AtrStufe = 'unter1' | '1bis2' | '2bis3' | '3bis5' | 'ab5' | 'ohne';
+export type AtrStufe = 'unter1' | '1bis2' | '2bis3' | '3bis5' | 'ab5' | 'ohne' | 'alt';
 
-/** Stufe einer Einstiegs-Schwankung; fehlend/kaputt ⇒ `ohne` (Altbestand). */
-export function atrStufe(atrPct: number | null | undefined): AtrStufe {
-  if (typeof atrPct !== 'number' || !Number.isFinite(atrPct) || atrPct <= 0) return 'ohne';
+/**
+ * Ab hier stempelt der Scan (Deploy am Abend des 19.10.). Ein Trade ohne
+ * Stempel, dessen Position VORHER eröffnet wurde, ist Altbestand (`alt`) —
+ * nicht dasselbe wie `ohne` (späte Nachbuchung, ATR fehlte). Ohne die
+ * Trennung wäre `ohne` in den ersten Wochen eine Mischung aus vier
+ * Ursachen (Red-Team 19.10.).
+ */
+export const ATR_STEMPEL_AB = '2026-10-20T00:00:00.000Z';
+
+/** Stufe einer Einstiegs-Schwankung; fehlend ⇒ `alt` (vor Stempelstart) oder `ohne`. */
+export function atrStufe(atrPct: number | null | undefined, acquiredAt?: string | null): AtrStufe {
+  if (typeof atrPct !== 'number' || !Number.isFinite(atrPct) || atrPct <= 0) {
+    return typeof acquiredAt === 'string' && acquiredAt < ATR_STEMPEL_AB ? 'alt' : 'ohne';
+  }
   if (atrPct < 1) return 'unter1';
   if (atrPct < 2) return '1bis2';
   if (atrPct < 3) return '2bis3';
@@ -47,6 +58,8 @@ export interface ExitAtrTrade {
   quelle?: string | null | undefined;
   riskExit?: string | null | undefined;
   einstiegAtrPct?: number | null | undefined;
+  /** Eröffnung der Position (`acquiredAt` am Schluss-Trade) — trennt `alt` von `ohne`. */
+  acquiredAt?: string | null | undefined;
 }
 
 /**
@@ -60,11 +73,13 @@ export function exitAtrProfil(trades: readonly ExitAtrTrade[], seitIso: string):
     if (!Number.isFinite(t.pnl)) continue;
     const klasse = t.assetClass || 'unbekannt';
     const quelle = t.quelle || 'unbekannt';
-    const grund = t.riskExit || 'signal';
+    // Punkte im Schlüssel wie in `exitBreakdown` ersetzen — beide Sichten
+    // müssen dieselben Gründe tragen, sonst laufen sie beim Abgleich auseinander.
+    const grund = (t.riskExit || 'signal').replace(/\./g, '_');
     const zelle = ((out[klasse] ??= {})[quelle] ??= {})[grund] ??= { n: 0, wins: 0, stufen: {} };
     zelle.n += 1;
     if (t.pnl > 0) zelle.wins += 1;
-    const s = atrStufe(t.einstiegAtrPct);
+    const s = atrStufe(t.einstiegAtrPct, t.acquiredAt);
     zelle.stufen[s] = (zelle.stufen[s] ?? 0) + 1;
   }
   return out;
@@ -88,4 +103,20 @@ export function exitAtrProfilSumme(teile: readonly ExitAtrProfil[]): ExitAtrProf
     }
   }
   return out;
+}
+
+/**
+ * Was öffentlich steht: das Profil MIT seinem eigenen Fenster und
+ * Zeitstempel. Scheitert das Schreiben einmal, sähe ein gestriges Profil
+ * unter dem heutigen `exits7tSeit` sonst wie ein aktuelles aus.
+ */
+export interface ExitAtrStand {
+  seit: string;
+  at: string;
+  stempelAb: string;
+  profil: ExitAtrProfil;
+}
+
+export function exitAtrStand(teile: readonly ExitAtrProfil[], seit: string, at: string): ExitAtrStand {
+  return { seit, at, stempelAb: ATR_STEMPEL_AB, profil: exitAtrProfilSumme(teile) };
 }

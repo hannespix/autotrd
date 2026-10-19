@@ -437,6 +437,13 @@ export interface TradeResult {
   trade?: Trade & { id: string };
 }
 
+/** Einstiegs-ATR nur stempeln, wenn er eine echte positive Zahl ist. */
+export function atrStempel(v: number | null | undefined): { einstiegAtrPct?: number } {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0
+    ? { einstiegAtrPct: Math.round(v * 1000) / 1000 }
+    : {};
+}
+
 /**
  * Anschaffungsbezug für einen SCHLIESSENDEN Trade (04.08.).
  *
@@ -447,13 +454,6 @@ export interface TradeResult {
  * solange Nachkauf verboten und jeder Verkauf ganz ist. Genau diese beiden
  * Bedingungen fallen, sobald es Teilverkäufe gibt.
  */
-/** Einstiegs-ATR nur stempeln, wenn er eine echte positive Zahl ist. */
-function atrStempel(v: number | null | undefined): { einstiegAtrPct?: number } {
-  return typeof v === 'number' && Number.isFinite(v) && v > 0
-    ? { einstiegAtrPct: Math.round(v * 1000) / 1000 }
-    : {};
-}
-
 function anschaffung(pos: Position, jetzt: string): Partial<Trade> {
   const auf = Date.parse(pos.openedAt);
   const zu = Date.parse(jetzt);

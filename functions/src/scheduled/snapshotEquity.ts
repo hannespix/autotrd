@@ -34,7 +34,7 @@ import {
   costProfile,
   exitBreakdown,
   exitAtrProfil,
-  exitAtrProfilSumme,
+  exitAtrStand,
   exitBreakdownSeit,
   type ExitAtrProfil,
   EXIT_FENSTER_TAGE,
@@ -273,7 +273,9 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
    * die VOR #566 ohne `core` nachgebucht wurden, gelten weiter als aktiv
    * (2-%-Stop, Doppelkauf-Sperre). Hier nur ZÄHLEN — `quelle === 'sockel'`
    * beweist keinen Besitz (sie kann aus einer Sockel-Aufstockung einer
-   * aktiven Position geerbt sein), repariert wird erst nach Einzelprüfung. */
+   * aktiven Position geerbt sein), repariert wird erst nach Einzelprüfung.
+   * `ohneKennung` ist eine UNTERGRENZE: Positionen ohne `quelle`-Feld (vor
+   * Task 18) fallen heraus. */
   const sockelKennung = { mitKern: 0, ohneKennung: 0, konten: 0 };
   // Ausstiege je Klasse × Einstiegsweg × Tagesschwankung beim Einstieg
   // (Loop #138, 19.10.) — nur Anzahlen, über alle Konten summiert.
@@ -498,6 +500,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
            * Feldnamen jetzt gegen die Schreibstelle. */
           const at = t.get('executedAt') as string | undefined;
           const einstiegAtrPct = t.get('einstiegAtrPct') as number | undefined;
+          const acquiredAt = t.get('acquiredAt') as string | undefined;
           closed.push({
             symbol,
             pnl,
@@ -509,6 +512,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
             // zeitgefensterte Exit-Sicht (Task 115).
             ...(typeof at === 'string' ? { at } : {}),
             ...(typeof einstiegAtrPct === 'number' ? { einstiegAtrPct } : {}),
+            ...(typeof acquiredAt === 'string' ? { acquiredAt } : {}),
             ...volumen,
           });
           if (t.get('source') === 'engine' && typeof at === 'string') {
@@ -779,7 +783,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   // ein Fehler hier die Tageskennzahlen oben nicht kostet.
   await db
     .doc('meta/health')
-    .update({ 'trading.exits7tAtr': exitAtrProfilSumme(exitAtrTeile) })
+    .update({ 'trading.exits7tAtr': exitAtrStand(exitAtrTeile, fensterSeit, now.toISOString()) })
     .catch((err: unknown) => logger.warn('exits7tAtr nicht geschrieben', err));
 
   // ── Task 30: Gegenrechnung „Sockel ohne Prozent-Marken" ──────────────────

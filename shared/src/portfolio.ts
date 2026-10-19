@@ -116,6 +116,8 @@ export interface ClosedTrade {
   at?: string | null;
   /** Tages-ATR % beim Einstieg (seit 19.10. am Schluss-Trade) — nur Messung. */
   einstiegAtrPct?: number | null;
+  /** Eröffnungszeitpunkt der Position (`acquiredAt` am Schluss-Trade). */
+  acquiredAt?: string | null;
   /**
    * Einstiegsweg (Task 17): konfluenz · regelbaum · momentum · sockel ·
    * ki_probe · hand · sync · unbekannt — aus `tradeQuelle()`. Fehlend

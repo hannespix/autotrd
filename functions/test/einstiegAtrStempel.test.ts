@@ -8,12 +8,14 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { atrStempel } from '../src/core/broker.js';
 
 const hier = dirname(fileURLToPath(import.meta.url));
 const lies = (rel: string): string => readFileSync(join(hier, rel), 'utf8');
 const broker = lies('../src/core/broker.ts');
 const scan = lies('../src/scheduled/scanMarket.ts');
 const snapshot = lies('../src/scheduled/snapshotEquity.ts');
+const adopt = lies('../src/callable/adoptBroker.ts');
 
 const zaehle = (text: string, nadel: string): number => text.split(nadel).length - 1;
 
@@ -35,7 +37,24 @@ describe('Einstiegs-ATR: Stempel und Messung', () => {
     expect(snapshot).toContain("const einstiegAtrPct = t.get('einstiegAtrPct') as number | undefined;");
     expect(snapshot).toContain("...(typeof einstiegAtrPct === 'number' ? { einstiegAtrPct } : {}),");
     expect(snapshot).toContain('exitAtrTeile.push(exitAtrProfil(closed, fensterSeit));');
-    expect(snapshot).toContain(".update({ 'trading.exits7tAtr': exitAtrProfilSumme(exitAtrTeile) })");
-    expect(snapshot).not.toContain('exits7tAtr: exitAtrProfilSumme');
+    expect(snapshot).toContain(".update({ 'trading.exits7tAtr': exitAtrStand(exitAtrTeile, fensterSeit, now.toISOString()) })");
+    expect(snapshot).not.toContain('exits7tAtr: exitAtr');
+    expect(snapshot).toContain("...(typeof acquiredAt === 'string' ? { acquiredAt } : {}),");
+  });
+});
+
+describe('atrStempel (Verhalten)', () => {
+  it('nur echte positive Zahlen, auf 3 Stellen gerundet — sonst kein Feld (kein undefined an Firestore)', () => {
+    expect(atrStempel(2.34567)).toEqual({ einstiegAtrPct: 2.346 });
+    expect(atrStempel(undefined)).toEqual({});
+    expect(atrStempel(null)).toEqual({});
+    expect(atrStempel(0)).toEqual({});
+    expect(atrStempel(-1)).toEqual({});
+    expect(atrStempel(Number.NaN)).toEqual({});
+    expect(Object.keys(atrStempel(undefined))).toHaveLength(0);
+  });
+
+  it('Übernahme (adoptBroker) behält den Stempel der Messreihe', () => {
+    expect(adopt).toContain('? { einstiegAtrPct: alt.einstiegAtrPct }');
   });
 });

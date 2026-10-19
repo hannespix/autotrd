@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { atrStufe, exitAtrProfil, exitAtrProfilSumme, type ExitAtrTrade } from '../src/exitAtrProfil.js';
+import { ATR_STEMPEL_AB, atrStufe, exitAtrProfil, exitAtrProfilSumme, exitAtrStand, type ExitAtrTrade } from '../src/exitAtrProfil.js';
 
 const SEIT = '2026-10-12T21:15:00.000Z';
 
@@ -66,5 +66,24 @@ describe('exitAtrProfilSumme', () => {
     expect(s['crypto']?.['konfluenz']?.['trailing_stop']).toEqual({ n: 1, wins: 1, stufen: { ohne: 1 } });
     expect(JSON.stringify(a)).toBe(vorher);
     expect(exitAtrProfilSumme([])).toEqual({});
+  });
+});
+
+describe('Altbestand und Schlüssel (Red-Team 19.10.)', () => {
+  it('ohne Stempel: vor Stempelstart eröffnet ⇒ alt, danach ⇒ ohne; mit Stempel zählt der Wert', () => {
+    expect(atrStufe(undefined, '2026-10-15T14:00:00Z')).toBe('alt');
+    expect(atrStufe(undefined, ATR_STEMPEL_AB)).toBe('ohne');
+    expect(atrStufe(undefined, null)).toBe('ohne');
+    expect(atrStufe(4, '2026-10-15T14:00:00Z')).toBe('3bis5');
+  });
+
+  it('Punkte im Ausstiegsgrund wie in exitBreakdown ersetzt', () => {
+    const p = exitAtrProfil([{ pnl: -1, at: SEIT, assetClass: 'stocks_us', quelle: 'konfluenz', riskExit: 'ki.stop' }], SEIT);
+    expect(Object.keys(p['stocks_us']?.['konfluenz'] ?? {})).toEqual(['ki_stop']);
+  });
+
+  it('Stand trägt Fenster, Zeitpunkt und Stempelstart', () => {
+    const s = exitAtrStand([], SEIT, '2026-10-19T21:15:00Z');
+    expect(s).toEqual({ seit: SEIT, at: '2026-10-19T21:15:00Z', stempelAb: ATR_STEMPEL_AB, profil: {} });
   });
 });

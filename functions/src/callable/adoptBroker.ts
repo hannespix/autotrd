@@ -449,6 +449,12 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
       // aus der Lauf-Kennung ihrer frühesten eröffnenden Order (Task 18).
       ...(quelle ? { quelle } : {}),
       ...(sockel ? { core: true } : {}),
+      // Messung (Loop #138, 19.10.): Einstiegs-ATR ist wie `quelle` ein
+      // Etikett der Messreihe, kein Bestand — sonst würde jede Übernahme
+      // genau die Broker-Konten in die Stufe „ohne" schieben.
+      ...(typeof alt?.einstiegAtrPct === 'number' && Number.isFinite(alt.einstiegAtrPct)
+        ? { einstiegAtrPct: alt.einstiegAtrPct }
+        : {}),
       ...(typeof alt?.teilPnl === 'number' && Number.isFinite(alt.teilPnl)
         ? { teilPnl: alt.teilPnl }
         : {}),
