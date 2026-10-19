@@ -437,6 +437,13 @@ export interface TradeResult {
   trade?: Trade & { id: string };
 }
 
+/** Einstiegs-ATR nur stempeln, wenn er eine echte positive Zahl ist. */
+export function atrStempel(v: number | null | undefined): { einstiegAtrPct?: number } {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0
+    ? { einstiegAtrPct: Math.round(v * 1000) / 1000 }
+    : {};
+}
+
 /**
  * Anschaffungsbezug für einen SCHLIESSENDEN Trade (04.08.).
  *
@@ -481,6 +488,7 @@ function anschaffung(pos: Position, jetzt: string): Partial<Trade> {
   return {
     entryPrice: pos.avgEntry,
     acquiredAt: pos.openedAt,
+    ...atrStempel(pos.einstiegAtrPct),
     ...(peak !== null ? { peakPrice: peak } : {}),
     ...(Number.isFinite(auf) && Number.isFinite(zu)
       ? { holdingDays: Math.round(((zu - auf) / 86_400_000) * 100) / 100 }
@@ -660,6 +668,8 @@ export interface TradeRequest {
    * sie später GESTOPPT wird.
    */
   stopDistancePct?: number;
+  /** Tages-ATR % beim Einstieg — nur Messung (Position.einstiegAtrPct). */
+  einstiegAtrPct?: number | null | undefined;
 }
 
 /**
@@ -1946,6 +1956,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         ...(req.bucket ? { bucket: req.bucket } : {}),
         ...(req.core ? { core: true } : {}),
         ...(einstieg ? { quelle: einstieg } : {}),
+        ...atrStempel(req.einstiegAtrPct),
         // Beim Broker wirklich vorhanden? Entscheidet spaeter ueber Routing
         // des Exits und ueber den Abgleich (siehe Position.broker).
         ...(req.brokerOrderId ? { broker: true, brokerOrderId: req.brokerOrderId } : {}),
@@ -2016,6 +2027,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         lowWater: eff, // Startpunkt des Short-Trailings
         ...(req.bucket ? { bucket: req.bucket } : {}),
         ...(einstieg ? { quelle: einstieg } : {}),
+        ...atrStempel(req.einstiegAtrPct),
         ...(req.brokerOrderId ? { broker: true, brokerOrderId: req.brokerOrderId } : {}),
       };
       const trade: Trade & { short: boolean } = {
