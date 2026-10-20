@@ -48,7 +48,7 @@ import {
   type Strategy,
   type UmkehrAusstiegGrund,
 } from '../../../shared/src/index.js';
-import { executeTrade, resolveBrokerMode } from '../core/broker.js';
+import { executeTrade, kapitalDeckel, resolveBrokerMode } from '../core/broker.js';
 import { kontoTore, symbolSperreAusVermerk } from '../core/kontoTore.js';
 import { mayTrade } from '../core/access.js';
 import { clampStrategyRisk, corePct } from '../core/rulesTrading.js';
@@ -160,7 +160,10 @@ export function kontoPlan(
   let frei = maxPositionen - (eigene.length - verkaufen.length);
   const offen = signale.filter((s) => !positionen.has(s.symbol) && erlaubt(s.symbol));
   const reihe = umkehrAuswahl(offen.map((s) => ({ symbol: s.symbol, rsi: s.rsi })), offen.length);
-  const depot = [...positionen.keys()].filter((s) => !verkauft.has(s));
+  // Klumpen-Limit innerhalb der UMKEHR (Red-Team-Nachprüfung): Sockel und
+  // Altbestand mitzuzählen hätte bei drei Sockel-Aktien jede Umkehr-Aktie
+  // gesperrt. Doppelte Symbole verhindert `positionen.has` oben ohnehin.
+  const depot = eigene.map(([s]) => s).filter((s) => !verkauft.has(s));
   const kaufen: PlanKauf[] = [];
   for (const k of reihe) {
     if (frei <= 0) break;
@@ -241,7 +244,10 @@ export async function umstellungEinmal(now: Date): Promise<number> {
     const roh = u.get('settings.strategy') as Strategy | undefined;
     if (!roh || !isStrategy(roh)) continue;
     if ((roh.engine.mode ?? 'confluence') !== 'confluence') continue;
-    if (resolveBrokerMode(roh) !== 'paper') continue;
+    // Den EINGESTELLTEN Modus prüfen, nicht den wirksamen: Ohne
+    // ALLOW_LIVE löst `resolveBrokerMode` auch ein Live-Konto zu 'paper' auf
+    // (Red-Team-Nachprüfung) — umgestellt würde es trotzdem.
+    if (roh.broker.mode === 'live' || resolveBrokerMode(roh) !== 'paper') continue;
     await u.ref.update({ 'settings.strategy.engine.mode': 'umkehr' });
     n += 1;
   }
@@ -289,6 +295,12 @@ function ausstiegeAus(pos: ReadonlyMap<string, Position>, kerzen: ReadonlyMap<st
   return out;
 }
 
+export class KeineKurse extends Error {
+  constructor() {
+    super('keine Kurse');
+  }
+}
+
 /**
  * Einen Plan für ein Konto ausführen: erst Verkäufe (nie durch Einstiegs-
  * Tore blockiert; ohne frischen Kurs übersprungen — Red-Team M3: ein
@@ -313,6 +325,9 @@ async function fuehreAus(
     const q = quotes.get(s);
     return q && q.price > 0 ? q.price : null;
   };
+  // Kursquelle ausgefallen (leere Antwort statt Fehler): nichts handeln und
+  // das dem Aufrufer sagen — sonst gälte der Plan als erledigt.
+  if (quotes.size === 0 && (verkaufen.length > 0 || kaufen.length > 0)) throw new KeineKurse();
 
   // 1) Verkäufe
   for (const v of verkaufen) {
@@ -334,8 +349,11 @@ async function fuehreAus(
   // 2) Käufe
   if (einstiegGesperrt || kaufen.length === 0) return { kaeufe, verkaeufe };
   // Kontostand FRISCH nach den Verkäufen — der Snapshot von oben kennt die Erlöse nicht.
-  const bargeld = ((await k.ref.get()).get('wallet.paperBalance') as number | undefined) ?? 0;
-  let equity = bargeld;
+  const frisch = await k.ref.get();
+  const buchCash = (frisch.get('wallet.paperBalance') as number | undefined) ?? 0;
+  // Broker-Konten: das sichere Bargeld (kleiner aus Buch und Broker-Abgleich).
+  const bargeld = kapitalDeckel(frisch.get('risk.abgleich'), buchCash, now.toISOString());
+  let equity = buchCash;
   for (const [sym, p] of alle) equity += positionValue(p, preis(sym));
   const belegt = [...alle.values()].filter((p) => umkehrBesitz(p)).length;
   const frei = umkehrParameterFuer(null).maxPositionen - belegt;
@@ -404,11 +422,17 @@ export async function runUmkehrAbend(now = new Date()): Promise<{ konten: number
   let geplant = 0;
   for (const k of konten) {
     try {
+      const planRef = k.ref.collection('meta').doc('umkehrPlan');
+      const alt = (await planRef.get()).data() as UmkehrPlan | undefined;
+      // Derselbe Kerzentag ist schon gehandelt (Deploy-Anstoß vor 16:00 ET
+      // rechnet auf gestrigen Kerzen): nicht mit ausgefuehrtAm = null
+      // überschreiben, sonst handelte der nächste Morgen ihn ein zweites Mal.
+      if (alt?.tag === tag && alt.ausgefuehrtAm) continue;
       const { clamped } = toreFuer(k, now);
       const pos = gehalten.get(k.id) ?? new Map<string, Position>();
       const plan = kontoPlan(pos, signale, ausstiegeAus(pos, kerzen, boerse), umkehrParameterFuer(null).maxPositionen, klasseErlaubt(clamped));
       const voll: UmkehrPlan = { tag, erstelltAt: now.toISOString(), ...plan, ausgefuehrtAm: null };
-      await k.ref.collection('meta').doc('umkehrPlan').set(voll);
+      await planRef.set(voll);
       geplant += 1;
     } catch (err) {
       logger.warn(`Umkehr-Abendlauf: Konto ${k.id} übersprungen`, err);
@@ -470,6 +494,10 @@ export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: numbe
       verkaeufe += r.verkaeufe;
       bearbeitet += 1;
     } catch (err) {
+      if (err instanceof KeineKurse) {
+        // Nichts gehandelt — Stempel zurück, der nächste Lauf darf den Plan noch ausführen.
+        await k.ref.collection('meta').doc('umkehrPlan').set({ ausgefuehrtAm: null }, { merge: true }).catch(() => undefined);
+      }
       logger.warn(`Umkehr-Morgenlauf: Konto ${k.id} übersprungen`, err);
     }
   }
@@ -515,6 +543,9 @@ export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: numbe
       verkaeufe += r.verkaeufe;
       bearbeitet += 1;
     } catch (err) {
+      if (err instanceof KeineKurse) {
+        await k.ref.collection('meta').doc('umkehrKrypto').set({ tag: null }, { merge: true }).catch(() => undefined);
+      }
       logger.warn(`Umkehr-Kryptolauf: Konto ${k.id} übersprungen`, err);
     }
   }

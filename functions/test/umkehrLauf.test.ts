@@ -74,6 +74,13 @@ describe('Plan je Konto', () => {
     ];
     const p = kontoPlan(new Map(), tech, new Map(), 10);
     expect(p.kaufen.map((k) => k.symbol)).toEqual(['XLK', 'SMH', 'SOXX', 'SPY']); // höchstens 3 aus dem Sektor-Block
+    // Sockel und Altbestand zählen NICHT mit (Nachprüfung): drei Sockel-ETFs sperren den Block nicht.
+    const sockel = new Map<string, Position>([
+      ['IBB', pos({ symbol: 'IBB', core: true, quelle: 'sockel' })],
+      ['ICLN', pos({ symbol: 'ICLN', core: true, quelle: 'sockel' })],
+      ['TAN', pos({ symbol: 'TAN', quelle: 'konfluenz' })],
+    ]);
+    expect(kontoPlan(sockel, tech, new Map(), 10).kaufen.map((k) => k.symbol)).toEqual(['XLK', 'SMH', 'SOXX', 'SPY']);
     const ohneSektoren = kontoPlan(new Map(), tech, new Map(), 10, (s) => !['XLK', 'SMH', 'SOXX', 'XLF'].includes(s));
     expect(ohneSektoren.kaufen.map((k) => k.symbol)).toEqual(['SPY']);
   });
@@ -214,13 +221,19 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
     expect(lauf).toContain("schedule: '10 0 * * *', timeZone: 'UTC'");
     expect(lauf).toContain("if ((await stand.get()).get('tag') === tag) continue;");
     expect(lauf).toContain("const boerse = (s: string): boolean => !istKrypto(s);");
+    // Nachprüfung: Kursausfall stempelt nicht, Abend überschreibt keinen gehandelten Tag,
+    // Bargeld-Deckel mit Broker-Abgleich.
+    expect(lauf).toContain('if (quotes.size === 0 && (verkaufen.length > 0 || kaufen.length > 0)) throw new KeineKurse();');
+    expect(lauf).toContain("await k.ref.collection('meta').doc('umkehrPlan').set({ ausgefuehrtAm: null }, { merge: true })");
+    expect(lauf).toContain('if (alt?.tag === tag && alt.ausgefuehrtAm) continue;');
+    expect(lauf).toContain("const bargeld = kapitalDeckel(frisch.get('risk.abgleich'), buchCash, now.toISOString());");
     expect(lauf).toContain("if ((await boersenOffen(now.getTime())) === false) {");
   });
 
   it('Umstellung: einmalig, nur Konfluenz-Konten; neue Konten starten mit Umkehr; Speichern stellt nicht zurück', () => {
     expect(lauf).toContain("if ((await merker.get()).get('fertig') === true) return 0;");
     expect(lauf).toContain("if ((roh.engine.mode ?? 'confluence') !== 'confluence') continue;");
-    expect(lauf).toContain("if (resolveBrokerMode(roh) !== 'paper') continue;"); // nie ein Echtgeld-Konto still umstellen
+    expect(lauf).toContain("if (roh.broker.mode === 'live' || resolveBrokerMode(roh) !== 'paper') continue;"); // nie ein Echtgeld-Konto still umstellen
     expect(profil).toContain("basis.engine.mode = 'umkehr';");
     expect(dashboard).toContain("mode: basis.engine.mode ?? 'umkehr',");
     expect(dashboard).not.toContain("      mode: 'confluence',");
@@ -229,5 +242,13 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
   it('Läufe exportiert und beim Deploy angestoßen', () => {
     expect(index).toContain("export { umkehrAbend, umkehrKrypto, umkehrMorgen } from './scheduled/umkehrLauf.js';");
     expect(workflow).toContain('momentumrun,umkehrabend,kibericht');
+  });
+});
+
+describe('ohlcDaily speichert keinen bereinigten Kurs (veraltet rückwirkend)', () => {
+  it('chunkBarsByYear lässt adjClose weg', async () => {
+    const { chunkBarsByYear } = await import('../src/core/marketData.js');
+    const m = chunkBarsByYear([{ date: '2026-10-20', open: 1, high: 2, low: 0.5, close: 1.5, volume: 9, adjClose: 1.4 }]);
+    expect(m.get('2026')?.['2026-10-20']).toEqual({ open: 1, high: 2, low: 0.5, close: 1.5, volume: 9 });
   });
 });
