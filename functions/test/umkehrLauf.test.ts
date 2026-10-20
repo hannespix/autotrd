@@ -15,9 +15,12 @@ import type { Position } from '../../shared/src/index.js';
 import { umkehrBesitz } from '../../shared/src/index.js';
 import {
   PLAN_MAX_ALTER_TAGE,
+  UMKEHR_AUSGESCHLOSSEN,
+  kaufAuftraege,
   kerzenFuerSignal,
   kerzenTag,
   kontoPlan,
+  regelSchluesse,
   planFrisch,
   sitzungVorbei,
   umkehrStueck,
@@ -56,7 +59,23 @@ describe('Plan je Konto', () => {
     expect(kontoPlan(halten, signale, new Map(), 10).kaufen).toEqual([]);
     const p = kontoPlan(halten, signale, new Map([['U3', 'umkehr_erholt' as const]]), 10);
     expect(p.verkaufen).toEqual([{ symbol: 'U3', grund: 'umkehr_erholt' }]);
-    expect(p.kaufen.map((k) => k.symbol)).toEqual(['AAPL']);
+    // AAPL hätte den tiefsten RSI, aber der Block US-Einzelaktien ist mit
+    // U0…U9 schon voll — der eine freie Platz geht an XLF (Sektor-Block).
+    expect(p.kaufen.map((k) => k.symbol)).toEqual(['XLF']);
+  });
+
+  it('Klumpen-Limit über das ganze Depot und abgeschaltete Klassen (Red-Team M6)', () => {
+    const tech = [
+      { symbol: 'XLK', rsi: 1, schluss: 1 },
+      { symbol: 'SMH', rsi: 2, schluss: 1 },
+      { symbol: 'SOXX', rsi: 3, schluss: 1 },
+      { symbol: 'XLF', rsi: 4, schluss: 1 },
+      { symbol: 'SPY', rsi: 5, schluss: 1 },
+    ];
+    const p = kontoPlan(new Map(), tech, new Map(), 10);
+    expect(p.kaufen.map((k) => k.symbol)).toEqual(['XLK', 'SMH', 'SOXX', 'SPY']); // höchstens 3 aus dem Sektor-Block
+    const ohneSektoren = kontoPlan(new Map(), tech, new Map(), 10, (s) => !['XLK', 'SMH', 'SOXX', 'XLF'].includes(s));
+    expect(ohneSektoren.kaufen.map((k) => k.symbol)).toEqual(['SPY']);
   });
 
   it('Ausstiegssignal für fremde Positionen wird ignoriert (Besitzgrenze)', () => {
@@ -66,6 +85,46 @@ describe('Plan je Konto', () => {
     expect(umkehrBesitz({ core: true, quelle: 'umkehr' })).toBe(false);
     expect(umkehrBesitz({ quelle: 'umkehr' })).toBe(true);
     expect(umkehrBesitz({ quelle: 'konfluenz' })).toBe(false);
+  });
+});
+
+describe('Kaufaufträge: Bargeld-Deckel (Red-Team M2)', () => {
+  const k = (symbol: string, rsi = 1) => ({ symbol, rsi, schluss: 1 });
+  const px = (s: string): number | null => ({ XLF: 50, SPY: 500, XLE: 100 } as Record<string, number>)[s] ?? null;
+
+  it('je Platz der Zielwert, aber nie mehr als das freie Bargeld (mit Puffer)', () => {
+    const a = kaufAuftraege([k('XLF'), k('SPY'), k('XLE')], px, 12_000, 10_000, 10);
+    expect(a).toEqual([
+      { symbol: 'XLF', qty: 200, preis: 50 }, // 10.000 Zielwert
+      { symbol: 'SPY', qty: 3, preis: 500 }, // Rest 2.000 × 0,98 = 1.960 → 3 Stück
+      { symbol: 'XLE', qty: 4, preis: 100 }, // Rest 500 × 0,98 = 490 → 4 Stück
+    ]);
+  });
+
+  it('ohne Kurs oder ohne freien Platz kein Auftrag', () => {
+    expect(kaufAuftraege([k('UNBEKANNT'), k('XLF')], px, 1e6, 1_000, 10).map((x) => x.symbol)).toEqual(['XLF']);
+    expect(kaufAuftraege([k('XLF'), k('XLE')], px, 1e6, 1_000, 1)).toHaveLength(1);
+    expect(kaufAuftraege([k('XLF')], px, 1e6, 1_000, 0)).toEqual([]);
+    expect(kaufAuftraege([k('XLF')], px, Number.NaN, 1_000, 5)).toEqual([]);
+  });
+});
+
+describe('Kurse für die Regel (Red-Team M4)', () => {
+  const b = (close: number, adjClose?: number) => ({ date: 'x', open: close, high: close, low: close, close, volume: 0, ...(adjClose !== undefined ? { adjClose } : {}) });
+  it('bereinigt, wenn jede Kerze ihn trägt — sonst durchgehend roh', () => {
+    expect(regelSchluesse([b(10, 9), b(11, 10)])).toEqual([9, 10]);
+    expect(regelSchluesse([b(10, 9), b(11)])).toEqual([10, 11]);
+    expect(regelSchluesse([])).toEqual([]);
+  });
+  it('Universum ohne Fast-Bargeld- und Futures-ETFs, getrennt nach Börse und Krypto', () => {
+    const alle = umkehrUniversum();
+    const ausgeschlossen = ['BIL', 'SHY', 'AGG', 'LQD', 'TIP', 'USO', 'UNG'];
+    expect([...UMKEHR_AUSGESCHLOSSEN].sort()).toEqual([...ausgeschlossen].sort());
+    for (const s of ausgeschlossen) expect(alle).not.toContain(s);
+    expect(alle).toContain('TLT'); // lange Anleihen schwanken genug und waren in der Rückrechnung
+    expect(umkehrUniversum('krypto').every((s) => s.endsWith('-USD'))).toBe(true);
+    expect(umkehrUniversum('boerse').some((s) => s.endsWith('-USD'))).toBe(false);
+    expect(umkehrUniversum('boerse').length + umkehrUniversum('krypto').length).toBe(alle.length);
   });
 });
 
@@ -145,23 +204,30 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
   it('Lauf: Käufe gestempelt (quelle + Steckbrief + Lauf-Kennung), Verkäufe nie hinter Einstiegs-Toren', () => {
     expect(lauf).toContain("quelle: 'umkehr',");
     expect(lauf).toContain("signature: 'umkehr'");
-    expect(lauf).toContain('const laufId = `umk-${plan.tag}`;');
-    expect(lauf).toContain('if (!tore.einstieg) {');
+    expect(lauf).toContain('plan.verkaufen, plan.kaufen, `umk-${plan.tag}`, now);');
+    expect(lauf).toContain('if (einstiegGesperrt || kaufen.length === 0) return { kaeufe, verkaeufe };');
     expect(lauf.indexOf('// 1) Verkäufe')).toBeLessThan(lauf.indexOf('// 2) Käufe'));
-    expect(lauf).toContain('if (plan.ausgefuehrtAm === heute) continue;');
+    // Jeder Plan genau einmal (M1), Verkauf nie zum erfundenen Kurs (M3).
+    expect(lauf).toContain('      if (plan.ausgefuehrtAm) continue;');
+    expect(lauf).toContain('    if (px === null) continue;\n    const r = await executeTrade(\n      { uid: k.id, symbol: v.symbol, side: \'sell\'');
+    // Krypto: eigener Tageslauf direkt nach dem UTC-Tagesschluss (H1), je Tag einmal.
+    expect(lauf).toContain("schedule: '10 0 * * *', timeZone: 'UTC'");
+    expect(lauf).toContain("if ((await stand.get()).get('tag') === tag) continue;");
+    expect(lauf).toContain("const boerse = (s: string): boolean => !istKrypto(s);");
     expect(lauf).toContain("if ((await boersenOffen(now.getTime())) === false) {");
   });
 
   it('Umstellung: einmalig, nur Konfluenz-Konten; neue Konten starten mit Umkehr; Speichern stellt nicht zurück', () => {
     expect(lauf).toContain("if ((await merker.get()).get('fertig') === true) return 0;");
-    expect(lauf).toContain("if (mode !== 'confluence') continue;");
+    expect(lauf).toContain("if ((roh.engine.mode ?? 'confluence') !== 'confluence') continue;");
+    expect(lauf).toContain("if (resolveBrokerMode(roh) !== 'paper') continue;"); // nie ein Echtgeld-Konto still umstellen
     expect(profil).toContain("basis.engine.mode = 'umkehr';");
     expect(dashboard).toContain("mode: basis.engine.mode ?? 'umkehr',");
     expect(dashboard).not.toContain("      mode: 'confluence',");
   });
 
   it('Läufe exportiert und beim Deploy angestoßen', () => {
-    expect(index).toContain("export { umkehrAbend, umkehrMorgen } from './scheduled/umkehrLauf.js';");
+    expect(index).toContain("export { umkehrAbend, umkehrKrypto, umkehrMorgen } from './scheduled/umkehrLauf.js';");
     expect(workflow).toContain('momentumrun,umkehrabend,kibericht');
   });
 });

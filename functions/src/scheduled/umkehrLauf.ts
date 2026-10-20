@@ -2,21 +2,25 @@
  * KURZFRIST-UMKEHR (RSI-2) — Tagesläufe der aktiven Engine (Task 34,
  * Owner-Entscheidung 20.10.: „Alle auf RSI-2", Krypto inklusive).
  *
- * Zwei Läufe, wie beim Momentum-Sockel (Befund 05.10.: Orders bei
- * geschlossener Börse werden storniert):
+ * Drei Läufe, damit jede Klasse dieselbe Zeitlogik hat wie die Rückrechnung
+ * (Signal am Schluss t, Kauf zur Eröffnung t+1, erste Ausstiegsprüfung am
+ * Schluss t+1):
  *
- *  - ABENDLAUF 16:45 ET (Mo–Fr): Tageskerzen holen, Signale auf den
- *    ABGESCHLOSSENEN Kerzen rechnen, je Konto einen Plan schreiben
- *    (`users/{uid}/meta/umkehrPlan`: was morgen gekauft und verkauft wird).
- *    Kein Handel. Beim ersten Lauf stellt er die Konten auf den neuen
- *    Modus um (Owner-Entscheidung), danach nie wieder.
- *  - MORGENLAUF 09:35 ET (Mo–Fr): den Plan zur Eröffnung ausführen —
- *    erst Verkäufe, dann Käufe in die freien Plätze. Nur bei offener
- *    Börse; an Feiertagen bleibt der Plan bis zum nächsten Handelstag.
+ *  - ABENDLAUF 16:45 ET (Mo–Fr), Aktien/ETFs: Tageskerzen holen, Signale
+ *    auf den ABGESCHLOSSENEN Kerzen rechnen, je Konto einen Plan schreiben
+ *    (`users/{uid}/meta/umkehrPlan`). Kein Handel. Beim ersten Lauf stellt
+ *    er die Paper-Konten auf den neuen Modus um (Owner-Entscheidung).
+ *  - MORGENLAUF 09:35 ET (Mo–Fr): den Plan zur Eröffnung ausführen — erst
+ *    Verkäufe, dann Käufe in die freien Plätze. Nur bei offener Börse, jeder
+ *    Plan genau EINMAL.
+ *  - KRYPTOLAUF 00:10 UTC (täglich): Die Krypto-Tageskerze ist ein UTC-Tag.
+ *    Direkt nach ihrem Schluss rechnen und sofort handeln — Krypto handelt
+ *    rund um die Uhr. Ein Abend-/Morgen-Paar wie bei Aktien läge 1,5 Tage
+ *    neben der Rückrechnung und am Wochenende gar nicht (Red-Team H1).
  *
  * Was NICHT hier passiert: die Notbremse (−15 %, Krypto −25 %) prüft der
- * Minuten-Puls (riskPulse, `umkehrRisk`), Fill-Nachbuchungen macht der
- * 5-Minuten-Scan weiter — er eröffnet für diese Wallets nur nichts mehr.
+ * Minuten-Puls (`umkehrRisk`), Fill-Nachbuchungen macht der 5-Minuten-Scan
+ * weiter — er eröffnet für diese Wallets nur nichts mehr.
  *
  * Die Regel selbst ist pur in shared/src/umkehr.ts und dort gegen die
  * Python-Rückrechnung gepinnt (Parität Tag für Tag).
@@ -28,13 +32,15 @@ import {
   abgeschlosseneKerzen,
   bucketKey,
   classify,
+  clusterHasRoom,
   handelstageSeit,
   isStrategy,
+  klemmeGewicht,
   positionValue,
   tradableSymbols,
   umkehrAusstieg,
-  umkehrBesitz,
   umkehrAuswahl,
+  umkehrBesitz,
   umkehrEinstieg,
   umkehrParameterFuer,
   umkehrPositionsWert,
@@ -52,11 +58,29 @@ import { boersenOffen } from '../core/marktUhr.js';
 /** Klassen, die die Umkehr handelt — die handelbaren Katalog-Klassen. */
 export const UMKEHR_KLASSEN = ['etf_regions', 'etf_sectors', 'etf_thematic', 'rates_bonds', 'stocks_us', 'crypto'] as const;
 
+/**
+ * Bewusst NICHT gehandelt (Red-Team M5): Geldmarkt-/Kurzläufer-Anleihen
+ * (BIL, SHY) und breite Anleihe-Körbe (AGG, LQD, TIP) schwanken so wenig,
+ * dass ihr RSI-2 bei Kleinstbewegungen auf nahe 0 fällt — sie gewännen die
+ * Rangliste „tiefster RSI zuerst" und belegten Plätze mit fast null
+ * Erwartung, aber voller Gebühr. Rohstoff-Futures-ETFs (USO, UNG) tragen
+ * Roll-Verluste, die keine Tageskerze zeigt. Keiner davon war in der
+ * Rückrechnung.
+ */
+export const UMKEHR_AUSGESCHLOSSEN: ReadonlySet<string> = new Set(['BIL', 'SHY', 'AGG', 'LQD', 'TIP', 'USO', 'UNG']);
+
 /** Ab diesem Alter gilt ein Plan als zu alt (lange Feiertage + Wochenende). */
 export const PLAN_MAX_ALTER_TAGE = 4;
 
-export function umkehrUniversum(): string[] {
-  return [...new Set(UMKEHR_KLASSEN.flatMap((k) => tradableSymbols(k)))].sort();
+/** Bargeld-Puffer: Ein Kauf nutzt höchstens diesen Anteil des freien Bargelds (Kursabweichung bis zum Fill). */
+export const BARGELD_ANTEIL = 0.98;
+
+const istKrypto = (s: string): boolean => classify(s) === 'crypto';
+
+export function umkehrUniversum(teil: 'alle' | 'krypto' | 'boerse' = 'alle'): string[] {
+  const alle = [...new Set(UMKEHR_KLASSEN.flatMap((k) => tradableSymbols(k)))].filter((s) => !UMKEHR_AUSGESCHLOSSEN.has(s));
+  const t = teil === 'krypto' ? alle.filter(istKrypto) : teil === 'boerse' ? alle.filter((s) => !istKrypto(s)) : alle;
+  return t.sort();
 }
 
 const tagIn = (zeitzone: string, ms: number): string =>
@@ -80,12 +104,24 @@ export function sitzungVorbei(jetztMs: number): boolean {
  * Welche Kerzen gelten als abgeschlossen? Aktien/ETFs: die heutige erst
  * nach 16:00 ET — der planmäßige Abendlauf (16:45) behält sie, ein
  * Anstoß beim Deploy während der Sitzung schneidet sie ab. Krypto: Die
- * Kerze ist ein UTC-Tag und am Abend ET noch offen.
+ * Kerze ist ein UTC-Tag; die laufende fällt immer weg (der Kryptolauf um
+ * 00:10 UTC rechnet also auf dem gerade geschlossenen Tag).
  */
 export function kerzenFuerSignal(klasse: string, bars: readonly DailyBar[], jetztMs: number): DailyBar[] {
   return klasse === 'crypto'
     ? abgeschlosseneKerzen(bars, kerzenTag('crypto', jetztMs), false)
     : abgeschlosseneKerzen(bars, kerzenTag('stocks_us', jetztMs), sitzungVorbei(jetztMs));
+}
+
+/**
+ * Schlusskurse für die Regel: dividendenbereinigt, wie die Rückrechnung
+ * (Red-Team M4) — aber nur, wenn JEDE Kerze den bereinigten Wert trägt.
+ * Eine gemischte Reihe wäre an der Nahtstelle ein Kurssprung.
+ */
+export function regelSchluesse(bars: readonly DailyBar[]): number[] {
+  return bars.length > 0 && bars.every((b) => typeof b.adjClose === 'number')
+    ? bars.map((b) => b.adjClose!)
+    : bars.map((b) => b.close);
 }
 
 export interface PlanKauf { symbol: string; rsi: number; schluss: number }
@@ -102,13 +138,17 @@ export interface UmkehrPlan {
 /**
  * Plan eines Kontos aus den Signalen (pur): Verkäufe für eigene
  * Umkehr-Positionen mit Ausstiegssignal, Käufe in die freien Plätze —
- * nie ein Symbol, das das Konto schon hält (Sockel, Altbestand, Umkehr).
+ * nie ein Symbol, das das Konto schon hält (Sockel, Altbestand, Umkehr),
+ * nie in eine abgeschaltete Klasse (`erlaubt`) und nie mehr als
+ * MAX_PER_CLUSTER Positionen eines Korrelationsblocks über das GANZE Depot
+ * (Red-Team M6: im Ausverkauf feuern QQQ, XLK, SMH, NVDA … gemeinsam).
  */
 export function kontoPlan(
   positionen: ReadonlyMap<string, Position>,
   signale: ReadonlyArray<PlanKauf>,
   ausstiege: ReadonlyMap<string, UmkehrAusstiegGrund>,
   maxPositionen: number,
+  erlaubt: (symbol: string) => boolean = () => true,
 ): { kaufen: PlanKauf[]; verkaufen: PlanVerkauf[] } {
   const eigene = [...positionen.entries()].filter(([, p]) => umkehrBesitz(p));
   const verkaufen: PlanVerkauf[] = [];
@@ -116,11 +156,62 @@ export function kontoPlan(
     const grund = ausstiege.get(sym);
     if (grund) verkaufen.push({ symbol: sym, grund });
   }
-  const frei = maxPositionen - (eigene.length - verkaufen.length);
-  const offen = signale.filter((s) => !positionen.has(s.symbol));
-  const gewaehlt = new Set(umkehrAuswahl(offen.map((s) => ({ symbol: s.symbol, rsi: s.rsi })), frei).map((k) => k.symbol));
-  const kaufen = offen.filter((s) => gewaehlt.has(s.symbol)).sort((a, b) => a.rsi - b.rsi || (a.symbol < b.symbol ? -1 : 1));
+  const verkauft = new Set(verkaufen.map((v) => v.symbol));
+  let frei = maxPositionen - (eigene.length - verkaufen.length);
+  const offen = signale.filter((s) => !positionen.has(s.symbol) && erlaubt(s.symbol));
+  const reihe = umkehrAuswahl(offen.map((s) => ({ symbol: s.symbol, rsi: s.rsi })), offen.length);
+  const depot = [...positionen.keys()].filter((s) => !verkauft.has(s));
+  const kaufen: PlanKauf[] = [];
+  for (const k of reihe) {
+    if (frei <= 0) break;
+    if (!clusterHasRoom(depot, k.symbol)) continue;
+    kaufen.push(offen.find((s) => s.symbol === k.symbol)!);
+    depot.push(k.symbol);
+    frei -= 1;
+  }
   return { kaufen, verkaufen };
+}
+
+/** Stückzahl: ganze Stücke bei Aktien/ETFs, Krypto auf 6 Stellen. */
+export function umkehrStueck(wert: number, preis: number, klasse: string): number {
+  if (!(wert > 0) || !(preis > 0)) return 0;
+  const roh = wert / preis;
+  return klasse === 'crypto' ? Math.floor(roh * 1e6) / 1e6 : Math.floor(roh);
+}
+
+export interface KaufAuftrag { symbol: string; qty: number; preis: number }
+
+/**
+ * Kaufaufträge aus dem Plan (pur): je Platz der Zielwert, aber nie mehr
+ * als das freie Bargeld (Red-Team M2: Mit fester Stückzahl gibt es beim
+ * Broker keinen Kapital-Deckel — die Order füllte auf Kredit). Das Bargeld
+ * wird je Auftrag verbraucht, als füllten alle.
+ */
+export function kaufAuftraege(
+  kaufen: ReadonlyArray<PlanKauf>,
+  preis: (symbol: string) => number | null,
+  bargeld: number,
+  zielWert: number,
+  freiePlaetze: number,
+): KaufAuftrag[] {
+  const out: KaufAuftrag[] = [];
+  let rest = Number.isFinite(bargeld) ? bargeld : 0;
+  for (const k of kaufen) {
+    if (out.length >= freiePlaetze) break;
+    const px = preis(k.symbol);
+    if (px === null || !(px > 0)) continue;
+    const qty = umkehrStueck(Math.min(zielWert, rest * BARGELD_ANTEIL), px, classify(k.symbol));
+    if (!(qty > 0)) continue;
+    out.push({ symbol: k.symbol, qty, preis: px });
+    rest -= qty * px;
+  }
+  return out;
+}
+
+export function planFrisch(plan: UmkehrPlan | undefined, now: Date): plan is UmkehrPlan {
+  if (!plan || typeof plan.tag !== 'string' || typeof plan.erstelltAt !== 'string') return false;
+  const alter = now.getTime() - Date.parse(plan.erstelltAt);
+  return Number.isFinite(alter) && alter >= 0 && alter <= PLAN_MAX_ALTER_TAGE * 86_400_000;
 }
 
 /** Konten, die die Umkehr handeln (Paper, freigeschaltet, laufend). */
@@ -134,9 +225,11 @@ async function umkehrKonten(): Promise<FirebaseFirestore.QueryDocumentSnapshot[]
 }
 
 /**
- * Einmalige Umstellung (Owner 20.10.: „Alle auf RSI-2"). Stellt jedes
- * Konto mit Konfluenz-Modus um; der Merker verhindert, dass ein späteres
- * bewusstes Zurückschalten im Einstellungs-Dialog überschrieben wird.
+ * Einmalige Umstellung (Owner 20.10.: „Alle auf RSI-2"). Nur PAPER-Konten
+ * im Konfluenz-Modus: Ein Echtgeld-Konto bekommt eine neue Strategie nie
+ * still. Der Merker verhindert, dass ein späteres bewusstes Zurückschalten
+ * überschrieben wird; bricht der Lauf mittendrin ab, holt der nächste den
+ * Rest nach (der Merker steht erst am Ende).
  */
 export async function umstellungEinmal(now: Date): Promise<number> {
   const db = getFirestore();
@@ -147,66 +240,173 @@ export async function umstellungEinmal(now: Date): Promise<number> {
   for (const u of users.docs) {
     const roh = u.get('settings.strategy') as Strategy | undefined;
     if (!roh || !isStrategy(roh)) continue;
-    const mode = roh.engine.mode ?? 'confluence';
-    if (mode !== 'confluence') continue;
+    if ((roh.engine.mode ?? 'confluence') !== 'confluence') continue;
+    if (resolveBrokerMode(roh) !== 'paper') continue;
     await u.ref.update({ 'settings.strategy.engine.mode': 'umkehr' });
     n += 1;
   }
   await merker.set({ fertig: true, at: now.toISOString(), umgestellt: n }, { merge: true });
-  logger.info(`Umkehr-Umstellung: ${n} Konto/Konten auf RSI-2 umgestellt`);
+  logger.info(`Umkehr-Umstellung: ${n} Paper-Konto/Konten auf RSI-2 umgestellt`);
   return n;
 }
 
-/* ── Abendlauf ──────────────────────────────────────────────────────────── */
+/** Klasse vom Auto-Regler bzw. Owner abgeschaltet? Dann kauft auch die Umkehr dort nicht. */
+const klasseErlaubt = (clamped: Strategy) => (symbol: string): boolean =>
+  klemmeGewicht(clamped.engine.classWeights?.[classify(symbol)]) > 0;
+
+async function ladeKerzen(symbole: readonly string[], now: Date): Promise<Map<string, DailyBar[]>> {
+  const kerzen = new Map<string, DailyBar[]>();
+  const ergebnisse = await mitGrenze(symbole.map((s) => () => getMarketSnapshot(s, '1y')), 8);
+  ergebnisse.forEach((r, i) => {
+    if (r.status === 'fulfilled') kerzen.set(symbole[i]!, kerzenFuerSignal(classify(symbole[i]!), r.value.bars, now.getTime()));
+  });
+  return kerzen;
+}
+
+function signaleAus(kerzen: ReadonlyMap<string, DailyBar[]>, symbole: readonly string[]): PlanKauf[] {
+  const out: PlanKauf[] = [];
+  for (const s of symbole) {
+    const k = kerzen.get(s);
+    if (!k) continue;
+    const e = umkehrEinstieg(regelSchluesse(k), umkehrParameterFuer(classify(s)));
+    if (e.signal && e.rsi !== null && e.schluss !== null) out.push({ symbol: s, rsi: Math.round(e.rsi * 100) / 100, schluss: e.schluss });
+  }
+  return out;
+}
+
+/** Ausstiegssignale der eigenen Umkehr-Positionen einer Teilmenge (Börse oder Krypto). */
+function ausstiegeAus(pos: ReadonlyMap<string, Position>, kerzen: ReadonlyMap<string, DailyBar[]>, teil: (s: string) => boolean): Map<string, UmkehrAusstiegGrund> {
+  const out = new Map<string, UmkehrAusstiegGrund>();
+  for (const [sym, p] of pos) {
+    if (!umkehrBesitz(p) || !teil(sym)) continue;
+    const bars = kerzen.get(sym);
+    if (!bars) continue; // ohne Kurse kein Urteil — die Notbremse bleibt scharf
+    const klasse = classify(sym);
+    const tage = handelstageSeit(kerzenTag(klasse, Date.parse(p.openedAt)), bars.map((b) => b.date));
+    const g = umkehrAusstieg(regelSchluesse(bars), tage, umkehrParameterFuer(klasse));
+    if (g) out.set(sym, g);
+  }
+  return out;
+}
+
+/**
+ * Einen Plan für ein Konto ausführen: erst Verkäufe (nie durch Einstiegs-
+ * Tore blockiert; ohne frischen Kurs übersprungen — Red-Team M3: ein
+ * Verkauf zum Einstand wäre ein erfundener Kurs), dann Käufe in die
+ * freien Plätze, gedeckelt durch das Bargeld NACH den Verkäufen.
+ */
+async function fuehreAus(
+  k: FirebaseFirestore.QueryDocumentSnapshot,
+  clamped: Strategy,
+  einstiegGesperrt: boolean,
+  verkaufen: ReadonlyArray<PlanVerkauf>,
+  kaufen: ReadonlyArray<PlanKauf>,
+  laufId: string,
+  now: Date,
+): Promise<{ kaeufe: number; verkaeufe: number }> {
+  let kaeufe = 0;
+  let verkaeufe = 0;
+  const posSnap = await k.ref.collection('positions').get();
+  const alle = new Map(posSnap.docs.map((d) => [d.id, d.data() as Position]));
+  const quotes = await getSparkBatch([...new Set([...alle.keys(), ...kaufen.map((x) => x.symbol), ...verkaufen.map((x) => x.symbol)])]);
+  const preis = (s: string): number | null => {
+    const q = quotes.get(s);
+    return q && q.price > 0 ? q.price : null;
+  };
+
+  // 1) Verkäufe
+  for (const v of verkaufen) {
+    const p = alle.get(v.symbol);
+    if (!p || !umkehrBesitz(p)) continue;
+    const px = preis(v.symbol);
+    if (px === null) continue;
+    const r = await executeTrade(
+      { uid: k.id, symbol: v.symbol, side: 'sell', price: px, source: 'engine', riskExit: v.grund, assetClass: classify(v.symbol) },
+      clamped,
+      laufId,
+    );
+    if (r.executed) {
+      verkaeufe += 1;
+      if (r.trade?.teilSchluss !== true) alle.delete(v.symbol);
+    }
+  }
+
+  // 2) Käufe
+  if (einstiegGesperrt || kaufen.length === 0) return { kaeufe, verkaeufe };
+  // Kontostand FRISCH nach den Verkäufen — der Snapshot von oben kennt die Erlöse nicht.
+  const bargeld = ((await k.ref.get()).get('wallet.paperBalance') as number | undefined) ?? 0;
+  let equity = bargeld;
+  for (const [sym, p] of alle) equity += positionValue(p, preis(sym));
+  const belegt = [...alle.values()].filter((p) => umkehrBesitz(p)).length;
+  const frei = umkehrParameterFuer(null).maxPositionen - belegt;
+  const auftraege = kaufAuftraege(
+    kaufen.filter((x) => !alle.has(x.symbol) && !symbolSperreAusVermerk(k.get('risk.abgleich'), x.symbol, now)),
+    preis,
+    bargeld,
+    umkehrPositionsWert(equity, corePct(clamped)),
+    frei,
+  );
+  for (const a of auftraege) {
+    const klasse = classify(a.symbol);
+    const r = await executeTrade(
+      {
+        uid: k.id,
+        symbol: a.symbol,
+        side: 'buy',
+        price: a.preis,
+        qty: a.qty,
+        source: 'engine',
+        assetClass: klasse,
+        quelle: 'umkehr',
+        bucket: bucketKey({ assetClass: klasse, timeframe: 'daily', signature: 'umkehr', side: 'long' }),
+        signalContext: { typ: 'umkehr' },
+      },
+      clamped,
+      laufId,
+    );
+    if (r.executed) kaeufe += 1;
+  }
+  return { kaeufe, verkaeufe };
+}
+
+function toreFuer(k: FirebaseFirestore.QueryDocumentSnapshot, now: Date): { clamped: Strategy; handel: string | null; einstieg: string | null } {
+  const roh = k.get('settings.strategy') as Strategy;
+  const clamped = clampStrategyRisk(structuredClone(roh));
+  const t = kontoTore(k, clamped, now);
+  // PDT gilt nicht: Die Umkehr hält über Nacht, ein Kauf plant keinen Daytrade.
+  return { clamped, handel: t.handel, einstieg: t.einstieg === 'pdt_schutz' ? null : t.einstieg };
+}
+
+/* ── Abendlauf (Börse) ──────────────────────────────────────────────────── */
 
 export async function runUmkehrAbend(now = new Date()): Promise<{ konten: number; signale: number; symbole: number; fehlend: number }> {
   const db = getFirestore();
   await umstellungEinmal(now).catch((err: unknown) => logger.warn('Umkehr-Umstellung gescheitert', err));
   const konten = await umkehrKonten();
+  const boerse = (s: string): boolean => !istKrypto(s);
 
-  // Universum plus alles, was Umkehr-Konten halten (auch wenn es aus dem
-  // Katalog gefallen ist — eine offene Position braucht ihr Ausstiegssignal).
   const gehalten = new Map<string, Map<string, Position>>();
   const extra = new Set<string>();
   for (const k of konten) {
     const ps = await k.ref.collection('positions').get();
     const m = new Map(ps.docs.map((d) => [d.id, d.data() as Position]));
     gehalten.set(k.id, m);
-    for (const [sym, p] of m) if (umkehrBesitz(p)) extra.add(sym);
+    for (const [sym, p] of m) if (umkehrBesitz(p) && boerse(sym)) extra.add(sym);
   }
-  const symbole = [...new Set([...umkehrUniversum(), ...extra])];
-  const kerzen = new Map<string, DailyBar[]>();
-  const ergebnisse = await mitGrenze(symbole.map((s) => () => getMarketSnapshot(s, '1y')), 8);
-  ergebnisse.forEach((r, i) => {
-    if (r.status === 'fulfilled') kerzen.set(symbole[i]!, kerzenFuerSignal(classify(symbole[i]!), r.value.bars, now.getTime()));
-  });
+  const universum = umkehrUniversum('boerse');
+  const symbole = [...new Set([...universum, ...extra])];
+  const kerzen = await ladeKerzen(symbole, now);
   const fehlend = symbole.length - kerzen.size;
-
-  const signale: PlanKauf[] = [];
-  for (const s of umkehrUniversum()) {
-    const k = kerzen.get(s);
-    if (!k) continue;
-    const e = umkehrEinstieg(k.map((b) => b.close), umkehrParameterFuer(classify(s)));
-    if (e.signal && e.rsi !== null && e.schluss !== null) signale.push({ symbol: s, rsi: Math.round(e.rsi * 100) / 100, schluss: e.schluss });
-  }
+  const signale = signaleAus(kerzen, universum);
   // Plan-Kennung: letzter Aktien-Kerzentag (SPY) — an Feiertagen der Vortag.
   const tag = kerzen.get('SPY')?.at(-1)?.date ?? kerzenTag('stocks_us', now.getTime());
 
   let geplant = 0;
   for (const k of konten) {
     try {
+      const { clamped } = toreFuer(k, now);
       const pos = gehalten.get(k.id) ?? new Map<string, Position>();
-      const ausstiege = new Map<string, UmkehrAusstiegGrund>();
-      for (const [sym, p] of pos) {
-        if (!umkehrBesitz(p)) continue;
-        const bars = kerzen.get(sym);
-        if (!bars) continue; // ohne Kurse kein Urteil — die Notbremse bleibt scharf
-        const klasse = classify(sym);
-        const tage = handelstageSeit(kerzenTag(klasse, Date.parse(p.openedAt)), bars.map((b) => b.date));
-        const g = umkehrAusstieg(bars.map((b) => b.close), tage, umkehrParameterFuer(klasse));
-        if (g) ausstiege.set(sym, g);
-      }
-      const plan = kontoPlan(pos, signale, ausstiege, umkehrParameterFuer(null).maxPositionen);
+      const plan = kontoPlan(pos, signale, ausstiegeAus(pos, kerzen, boerse), umkehrParameterFuer(null).maxPositionen, klasseErlaubt(clamped));
       const voll: UmkehrPlan = { tag, erstelltAt: now.toISOString(), ...plan, ausgefuehrtAm: null };
       await k.ref.collection('meta').doc('umkehrPlan').set(voll);
       geplant += 1;
@@ -235,20 +435,7 @@ export async function runUmkehrAbend(now = new Date()): Promise<{ konten: number
   return { konten: geplant, signale: signale.length, symbole: symbole.length, fehlend };
 }
 
-/* ── Morgenlauf ─────────────────────────────────────────────────────────── */
-
-export function planFrisch(plan: UmkehrPlan | undefined, now: Date): plan is UmkehrPlan {
-  if (!plan || typeof plan.tag !== 'string' || typeof plan.erstelltAt !== 'string') return false;
-  const alter = now.getTime() - Date.parse(plan.erstelltAt);
-  return Number.isFinite(alter) && alter >= 0 && alter <= PLAN_MAX_ALTER_TAGE * 86_400_000;
-}
-
-/** Stückzahl: ganze Stücke bei Aktien/ETFs, Krypto auf 6 Stellen. */
-export function umkehrStueck(wert: number, preis: number, klasse: string): number {
-  if (!(wert > 0) || !(preis > 0)) return 0;
-  const roh = wert / preis;
-  return klasse === 'crypto' ? Math.floor(roh * 1e6) / 1e6 : Math.floor(roh);
-}
+/* ── Morgenlauf (Börse) ─────────────────────────────────────────────────── */
 
 export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: number; kaeufe: number; verkaeufe: number; grund?: string }> {
   const db = getFirestore();
@@ -257,92 +444,30 @@ export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: numbe
     return { konten: 0, kaeufe: 0, verkaeufe: 0, grund: 'boerse_zu' };
   }
   const heute = kerzenTag('stocks_us', now.getTime());
-  const konten = await umkehrKonten();
   let kaeufe = 0;
   let verkaeufe = 0;
   let bearbeitet = 0;
-  for (const k of konten) {
+  for (const k of await umkehrKonten()) {
     try {
       const planRef = k.ref.collection('meta').doc('umkehrPlan');
       const plan = (await planRef.get()).data() as UmkehrPlan | undefined;
       if (!planFrisch(plan, now)) continue;
-      if (plan.ausgefuehrtAm === heute) continue; // schon gelaufen (Idempotenz)
-
-      const roh = k.get('settings.strategy') as Strategy;
-      const clamped = clampStrategyRisk(structuredClone(roh));
-      const toreRoh = kontoTore(k, clamped, now);
-      // PDT gilt nicht: Die Umkehr hält über Nacht, ein Kauf plant keinen Daytrade.
-      const tore = toreRoh.einstieg === 'pdt_schutz' ? { ...toreRoh, einstieg: null } : toreRoh;
+      // Jeder Plan genau EINMAL (Red-Team M1): Fällt ein Abendlauf aus, darf
+      // der gestrige Plan nicht ein zweites Mal kaufen — auf einem Signal,
+      // das 2–4 Tage alt ist, oder in eine gerade gebremste Position zurück.
+      if (plan.ausgefuehrtAm) continue;
+      const tore = toreFuer(k, now);
       if (tore.handel) {
         logger.info(`Umkehr-Morgenlauf ${k.id}: übersprungen — ${tore.handel}`);
         continue;
       }
-      const laufId = `umk-${plan.tag}`;
-      const posSnap = await k.ref.collection('positions').get();
-      const alle = new Map(posSnap.docs.map((d) => [d.id, d.data() as Position]));
-      const quotes = await getSparkBatch([...new Set([...alle.keys(), ...plan.kaufen.map((x) => x.symbol), ...plan.verkaufen.map((x) => x.symbol)])]);
-      const preis = (s: string): number | null => {
-        const q = quotes.get(s);
-        return q && q.price > 0 ? q.price : null;
-      };
-
-      // 1) Verkäufe — nie durch Einstiegs-Tore blockiert.
-      for (const v of plan.verkaufen) {
-        const p = alle.get(v.symbol);
-        if (!p || !umkehrBesitz(p)) continue;
-        const px = preis(v.symbol) ?? p.avgEntry;
-        const r = await executeTrade(
-          { uid: k.id, symbol: v.symbol, side: 'sell', price: px, source: 'engine', riskExit: v.grund, assetClass: classify(v.symbol) },
-          clamped,
-          laufId,
-        );
-        if (r.executed) {
-          verkaeufe += 1;
-          if (r.trade?.teilSchluss !== true) alle.delete(v.symbol);
-        }
-      }
-
-      // 2) Käufe in die freien Plätze.
-      if (!tore.einstieg) {
-        // Kontostand FRISCH nach den Verkäufen — der Snapshot von oben kennt
-        // die Erlöse noch nicht und unterschätzte die Positionsgröße.
-        let equity = ((await k.ref.get()).get('wallet.paperBalance') as number | undefined) ?? 0;
-        for (const [sym, p] of alle) equity += positionValue(p, preis(sym));
-        const wert = umkehrPositionsWert(equity, corePct(clamped));
-        let belegt = [...alle.values()].filter((p) => umkehrBesitz(p)).length;
-        const max = umkehrParameterFuer(null).maxPositionen;
-        for (const kauf of plan.kaufen) {
-          if (belegt >= max) break;
-          if (alle.has(kauf.symbol)) continue;
-          if (symbolSperreAusVermerk(k.get('risk.abgleich'), kauf.symbol, now)) continue;
-          const px = preis(kauf.symbol);
-          if (px === null) continue;
-          const klasse = classify(kauf.symbol);
-          const qty = umkehrStueck(wert, px, klasse);
-          if (!(qty > 0)) continue;
-          const r = await executeTrade(
-            {
-              uid: k.id,
-              symbol: kauf.symbol,
-              side: 'buy',
-              price: px,
-              qty,
-              source: 'engine',
-              assetClass: klasse,
-              quelle: 'umkehr',
-              bucket: bucketKey({ assetClass: klasse, timeframe: 'daily', signature: 'umkehr', side: 'long' }),
-              signalContext: { typ: 'umkehr' },
-            },
-            clamped,
-            laufId,
-          );
-          if (r.executed) {
-            kaeufe += 1;
-            belegt += 1;
-          }
-        }
-      }
+      // Stempel VOR dem Handel: Bricht der Lauf mitten im Konto ab, kauft
+      // ein Neustart nicht doppelt (Doppelkauf-Sperre und Order-Kennung
+      // decken den Rest).
       await planRef.set({ ausgefuehrtAm: heute, ausgefuehrtAt: now.toISOString(), einstiegGesperrt: tore.einstieg ?? null }, { merge: true });
+      const r = await fuehreAus(k, tore.clamped, tore.einstieg !== null, plan.verkaufen, plan.kaufen, `umk-${plan.tag}`, now);
+      kaeufe += r.kaeufe;
+      verkaeufe += r.verkaeufe;
       bearbeitet += 1;
     } catch (err) {
       logger.warn(`Umkehr-Morgenlauf: Konto ${k.id} übersprungen`, err);
@@ -353,6 +478,65 @@ export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: numbe
   return { konten: bearbeitet, kaeufe, verkaeufe };
 }
 
+/* ── Kryptolauf (täglich, direkt nach Schluss der UTC-Kerze) ─────────────── */
+
+export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: number; signale: number; kaeufe: number; verkaeufe: number }> {
+  const db = getFirestore();
+  const konten = await umkehrKonten();
+  const krypto = (s: string): boolean => istKrypto(s);
+  const gehalten = new Map<string, Map<string, Position>>();
+  const extra = new Set<string>();
+  for (const k of konten) {
+    const ps = await k.ref.collection('positions').get();
+    const m = new Map(ps.docs.map((d) => [d.id, d.data() as Position]));
+    gehalten.set(k.id, m);
+    for (const [sym, p] of m) if (umkehrBesitz(p) && krypto(sym)) extra.add(sym);
+  }
+  const universum = umkehrUniversum('krypto');
+  const kerzen = await ladeKerzen([...new Set([...universum, ...extra])], now);
+  const signale = signaleAus(kerzen, universum);
+  // Kennung: der gerade geschlossene UTC-Tag (letzte abgeschlossene Kerze).
+  const tag = kerzen.get('BTC-USD')?.at(-1)?.date ?? kerzenTag('crypto', now.getTime() - 86_400_000);
+
+  let kaeufe = 0;
+  let verkaeufe = 0;
+  let bearbeitet = 0;
+  for (const k of konten) {
+    try {
+      const stand = k.ref.collection('meta').doc('umkehrKrypto');
+      if ((await stand.get()).get('tag') === tag) continue; // je UTC-Tag genau einmal
+      const tore = toreFuer(k, now);
+      if (tore.handel) continue;
+      await stand.set({ tag, at: now.toISOString() });
+      const pos = gehalten.get(k.id) ?? new Map<string, Position>();
+      const plan = kontoPlan(pos, signale, ausstiegeAus(pos, kerzen, krypto), umkehrParameterFuer('crypto').maxPositionen, klasseErlaubt(tore.clamped));
+      const r = await fuehreAus(k, tore.clamped, tore.einstieg !== null, plan.verkaufen, plan.kaufen, `umk-${tag}`, now);
+      kaeufe += r.kaeufe;
+      verkaeufe += r.verkaeufe;
+      bearbeitet += 1;
+    } catch (err) {
+      logger.warn(`Umkehr-Kryptolauf: Konto ${k.id} übersprungen`, err);
+    }
+  }
+  await db.doc('meta/umkehr').set(
+    {
+      krypto: {
+        at: now.toISOString(),
+        tag,
+        konten: bearbeitet,
+        kaeufe,
+        verkaeufe,
+        signale: signale.map((s) => ({ symbol: s.symbol, rsi: s.rsi })),
+      },
+    },
+    { merge: true },
+  );
+  logger.info(`Umkehr-Kryptolauf: ${signale.length} Signal(e), ${kaeufe} Kauf/Käufe, ${verkaeufe} Verkauf/Verkäufe`);
+  return { konten: bearbeitet, signale: signale.length, kaeufe, verkaeufe };
+}
+
+/* Optionen je Lauf ausgeschrieben (nicht per Spread): Der Tresor-Wächter
+ * liest je onSchedule-Block, ob BROKER_MASTER_KEY gebunden ist. */
 export const umkehrAbend = onSchedule(
   { schedule: '45 16 * * 1-5', timeZone: 'America/New_York', retryCount: 0, timeoutSeconds: 540, memory: '512MiB', secrets: ['BROKER_MASTER_KEY'] },
   async () => {
@@ -364,5 +548,12 @@ export const umkehrMorgen = onSchedule(
   { schedule: '35 9 * * 1-5', timeZone: 'America/New_York', retryCount: 0, timeoutSeconds: 540, memory: '512MiB', secrets: ['BROKER_MASTER_KEY'] },
   async () => {
     await runUmkehrMorgen();
+  },
+);
+
+export const umkehrKrypto = onSchedule(
+  { schedule: '10 0 * * *', timeZone: 'UTC', retryCount: 0, timeoutSeconds: 540, memory: '512MiB', secrets: ['BROKER_MASTER_KEY'] },
+  async () => {
+    await runUmkehrKrypto();
   },
 );
