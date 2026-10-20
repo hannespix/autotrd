@@ -127,21 +127,21 @@ describe('Die Weiche (shared)', () => {
 
 describe('Verdrahtung — jede Stelle über die Weiche', () => {
   it('Kauf und Aufstockung setzen Sockel-Level über risikoFuer, Aufstockung ohne Ziel', () => {
-    expect(broker).toContain('const risk = risikoFuer(strategy.engine, req.assetClass ?? null, req.core === true);');
+    expect(broker).toContain('const risk = risikoFuer(strategy.engine, req.assetClass ?? null, req.core === true, einstieg);');
     expect(broker).toContain('const sockel = pos.core === true;');
-    expect(broker).toContain('const risk = risikoFuer(strategy.engine, req.assetClass ?? classify(req.symbol), sockel);');
+    expect(broker).toContain('const risk = risikoFuer(strategy.engine, req.assetClass ?? classify(req.symbol), sockel, pos.quelle ?? null);');
     expect(broker).toContain('takeProfit: sockel\n            ? null\n');
   });
 
   it('Broker-Schutz: Aufrufer UND Modul nehmen für Sockel nur die Notbremse', () => {
-    expect(broker).toContain('risikoFuer(strategy.engine, klasse, req.core === true),');
-    expect(schutz).toContain('const wirksam = pos.core === true ? sockelRisk() : risk;');
+    expect(broker).toContain('risikoFuer(strategy.engine, klasse, req.core === true, einstiegsQuelle({ quelle: req.quelle, source: req.source, bucket: req.bucket })),');
+    expect(schutz).toContain('const wirksam = pos.core === true ? sockelRisk() : umkehrBesitz(pos) ? umkehrRisk(umkehrParameterFuer(klasse)) : risk;');
     expect(schutz).toContain('if (pos.core === true) risk = sockelRisk();');
   });
 
   it('Puls: prüft die Sockel-Prüfposition mit der Sockel-Hülle und zieht Altlevel + Broker-Order nach', () => {
-    expect(puls).toContain('const pruefPos = sockelPruefPosition(pos);');
-    expect(puls).toContain('risk: sockel ? sockelRisk() : resolveRisk(clamped.engine, cls),');
+    expect(puls).toContain('const pruefPos = umkehr ? umkehrPruefPosition(pos, cls) : sockelPruefPosition(pos);');
+    expect(puls).toContain('risk: sockel ? sockelRisk() : umkehr ? umkehrRisk(umkehrParameterFuer(cls)) : resolveRisk(clamped.engine, cls),');
     expect(puls).toContain('riskExitReason(pruefPos, preis, {');
     expect(puls).toContain('const nachzug = sockelNachzugNoetig(pos);');
     expect(puls).toContain('.update({ stopLoss: sockelNotbremseLevel(pos.avgEntry, pos.side ?? null), takeProfit: null }, {');

@@ -1271,8 +1271,9 @@ export async function executeTrade(
       verbindung,
       req.uid,
       req.symbol,
-      // Sockel: Broker-Order auf die Notbremse, nicht auf −2 % (Task 29).
-      risikoFuer(strategy.engine, klasse, req.core === true),
+      // Sockel und Umkehr: Broker-Order auf die Notbremse, nicht auf −2 %
+      // (Task 29, Task 34).
+      risikoFuer(strategy.engine, klasse, req.core === true, einstiegsQuelle({ quelle: req.quelle, source: req.source, bucket: req.bucket })),
       klasse,
       lauf,
     );
@@ -1876,7 +1877,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         // Mischkurs, KEIN Ziel — sonst schriebe der Nachschub die alten
         // 2/4-%-Marken wieder hinein.
         const sockel = pos.core === true;
-        const risk = risikoFuer(strategy.engine, req.assetClass ?? classify(req.symbol), sockel);
+        const risk = risikoFuer(strategy.engine, req.assetClass ?? classify(req.symbol), sockel, pos.quelle ?? null);
         tx.set(posRef, {
           ...pos,
           qty: nQty,
@@ -1944,7 +1945,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       // Stops als ein Index. Der Aufrufer reicht die Klasse durch; ohne
       // Angabe gelten die globalen Werte. Sockel-Käufe (Task 29): nur die
       // Notbremse, kein Ziel.
-      const risk = risikoFuer(strategy.engine, req.assetClass ?? null, req.core === true);
+      const risk = risikoFuer(strategy.engine, req.assetClass ?? null, req.core === true, einstieg);
       const position: Position = {
         symbol: req.symbol,
         qty,

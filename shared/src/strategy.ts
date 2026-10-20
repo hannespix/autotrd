@@ -7,6 +7,7 @@
  * Alt-Variante). Frontend UND Functions importieren von hier.
  */
 
+import { umkehrNotbremseLevel, umkehrParameterFuer, umkehrRisk } from './umkehr.js';
 import { MIN_EDGE_MULTIPLE } from './costGate.js';
 
 // ── Strategie (users/{uid}.settings.strategy) ────────────────────────────────
@@ -108,8 +109,15 @@ export interface EngineConfig extends RiskConfig {
    * der Scan sähe eine Momentum-Position ohne Signal und schlösse sie.
    * Die gemischte Aufteilung (Hantel) braucht eine Besitzkennzeichnung je
    * Position — die gibt es seit 04.08. als `Position.core`, siehe `corePct`.
+   *
+   * 'umkehr' (Owner-Entscheidung 20.10., Task 34): Kurzfrist-Umkehr auf
+   * TAGESKERZEN (RSI-2, siehe shared/src/umkehr.ts). Abends nach
+   * Börsenschluss rechnen, morgens zur Eröffnung handeln; ~4 Trades je
+   * Woche. Der 5-Minuten-Scan kauft für dieses Wallet nichts mehr — er
+   * hatte über 68.789 nachverfolgte Signale keinen Vorsprung. Der Sockel
+   * (`corePct`) läuft unverändert daneben.
    */
-  mode?: 'confluence' | 'momentum';
+  mode?: 'confluence' | 'momentum' | 'umkehr';
   /**
    * KERN-SATELLIT (Owner-Direktive 04.08.: „eine stabile sichere Art und
    * Weise langsam eine positive Performance zu erreichen"): Anteil des
@@ -728,8 +736,30 @@ export function sockelSchutzVersuchFaellig(letzter: string | null | undefined, n
  * klassen-aufgelösten Engine-Marken. EINE Weiche für Kauf, Aufstockung,
  * Puls und Broker-Schutz — damit keine Stelle die alten Marken erbt.
  */
-export function risikoFuer(engine: EngineConfig, assetClass: string | null | undefined, core: boolean): RiskConfig {
-  return core ? sockelRisk() : resolveRisk(engine, assetClass ?? null);
+export function risikoFuer(
+  engine: EngineConfig,
+  assetClass: string | null | undefined,
+  core: boolean,
+  quelle?: string | null,
+): RiskConfig {
+  if (core) return sockelRisk();
+  // Kurzfrist-Umkehr (Task 34): nur die Notbremse der Klasse — die
+  // 2-%-/4-%-Marken würden genau die Rücksetzer verkaufen, von denen sie lebt.
+  if (quelle === 'umkehr') return umkehrRisk(umkehrParameterFuer(assetClass));
+  return resolveRisk(engine, assetClass ?? null);
+}
+
+/**
+ * Prüfposition einer Umkehr-Position für den Puls: wie beim Sockel ersetzt
+ * die Notbremse jedes gespeicherte Level (Level haben in `riskExitReason`
+ * Vorrang), ein Ziel entfällt. Andere Positionen unverändert.
+ */
+export function umkehrPruefPosition<P extends Pick<Position, 'avgEntry' | 'stopLoss' | 'takeProfit' | 'quelle' | 'core'>>(
+  pos: P,
+  assetClass: string | null | undefined,
+): P {
+  if (pos.core === true || pos.quelle !== 'umkehr') return pos;
+  return { ...pos, stopLoss: umkehrNotbremseLevel(pos.avgEntry, umkehrParameterFuer(assetClass)), takeProfit: null };
 }
 
 /**

@@ -43,7 +43,7 @@ describe('Universum-Sync-Grund (Quelltext-Wächter)', () => {
   it('die Deploy-Aufwärm-Kette stößt den Sync an und druckt die Antwort', () => {
     // Reihenfolge + logBody prüft invokeDaily.test.mjs an den RUNS selbst;
     // hier hängt der Anschluss: --only im Workflow und die logBody-Mechanik.
-    expect(workflow).toContain('--only snapshotequity,evalforecasts,universumsyncnow,momentumrun,kibericht');
+    expect(workflow).toContain('--only snapshotequity,evalforecasts,universumsyncnow,momentumrun,umkehrabend,kibericht');
     expect(daily).toContain('await invoke(run.service, run.invokeOpts);');
     expect(scan).toContain('if (logBody) {');
   });

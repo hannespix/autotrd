@@ -43,6 +43,14 @@ export interface DailyBar {
   low: number;
   close: number;
   volume: number;
+  /**
+   * Dividenden-/split-bereinigter Schluss (Yahoo `adjclose`), falls geliefert.
+   * Nur die Kurzfrist-Umkehr liest ihn (Task 34, Red-Team M4): Auf Rohkursen
+   * erzeugt jeder Ex-Dividenden-Tag ein Scheinsignal, das die Rückrechnung
+   * (bereinigt) nie hatte. Alle anderen Leser bleiben beim Rohkurs; in
+   * `ohlcDaily` wird er nicht gespeichert (`chunkBarsByYear`).
+   */
+  adjClose?: number;
 }
 
 export interface MarketSnapshot {
@@ -97,6 +105,7 @@ interface YahooChartResponse {
           close: (number | null)[];
           volume: (number | null)[];
         }>;
+        adjclose?: Array<{ adjclose?: (number | null)[] }>;
       };
     }>;
     error?: { code: string; description: string } | null;
@@ -115,6 +124,7 @@ async function fetchYahoo(symbol: string, range: string): Promise<MarketSnapshot
 
   const tz = result.meta.exchangeTimezoneName ?? 'America/New_York';
   const quote = result.indicators.quote[0];
+  const adj = result.indicators.adjclose?.[0]?.adjclose;
   const bars: DailyBar[] = [];
   const ts = result.timestamp ?? [];
   for (let i = 0; i < ts.length; i++) {
@@ -127,6 +137,7 @@ async function fetchYahoo(symbol: string, range: string): Promise<MarketSnapshot
       low: quote!.low[i] ?? close,
       close,
       volume: quote!.volume[i] ?? 0,
+      ...(typeof adj?.[i] === 'number' && Number.isFinite(adj[i]) && adj[i]! > 0 ? { adjClose: adj[i]! } : {}),
     };
     /* Yahoo liefert bei FX für den laufenden Tag ZWEI Zeilen (Tageszeile
      * 23:00Z und Live-Tick) — heute hat die Tageszeile close null und fällt
@@ -217,7 +228,9 @@ export function chunkBarsByYear(bars: DailyBar[]): Map<string, Record<string, Om
   for (const bar of bars) {
     const year = bar.date.slice(0, 4);
     const days = byYear.get(year) ?? {};
-    const { date: _d, ...ohlcv } = bar;
+    // `adjClose` NICHT persistieren: Er verändert sich rückwirkend mit jeder
+    // Dividende — gespeichert wäre er nach dem nächsten Ex-Tag falsch.
+    const { date: _d, adjClose: _a, ...ohlcv } = bar;
     days[bar.date] = ohlcv;
     byYear.set(year, days);
   }

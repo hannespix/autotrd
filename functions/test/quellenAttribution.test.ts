@@ -89,8 +89,11 @@ describe('Task 18 — Quelle beim Öffnen gestempelt, beim Schließen kopiert', 
     expect(broker).not.toMatch(/bucket:\s*(einstieg|quelle|quelleNach)\b/);
     expect(fillSync).not.toMatch(/bucket:\s*quelle/);
     expect(adopt).not.toMatch(/bucket:\s*quelle/);
-    // und keine Regel liest das Etikett (befund.quelle/schutz.quelle sind andere Felder)
+    // und keine Regel liest das Etikett (befund.quelle/schutz.quelle sind andere Felder).
+    // Einzige Ausnahme seit Task 34: die Besitzgrenze der Kurzfrist-Umkehr,
+    // und die NUR über `umkehrBesitz` (shared/src/umkehr.ts).
     expect(scan).not.toMatch(/\b(pos|position|p)\.quelle\b/);
+    expect(scan).toContain('const fremdGefuehrt = (p: Position): boolean => p.core === true || umkehrBesitz(p);');
     expect(readFileSync(join(hier, '../src/scheduled/riskPulse.ts'), 'utf8')).not.toMatch(/\b(pos|position|p)\.quelle\b/);
   });
 

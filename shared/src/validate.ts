@@ -138,8 +138,8 @@ export function validateStrategy(value: unknown): string[] {
       && (!isFiniteNumber(engine.corePct) || engine.corePct < 0 || engine.corePct > CORE_PCT_CAP)) {
       problems.push(`val.bereichSockel|engine.corePct|0|${CORE_PCT_CAP}`);
     }
-    if (engine.mode !== undefined && engine.mode !== 'confluence' && engine.mode !== 'momentum') {
-      problems.push('val.entweder|engine.mode|confluence|momentum');
+    if (engine.mode !== undefined && engine.mode !== 'confluence' && engine.mode !== 'momentum' && engine.mode !== 'umkehr') {
+      problems.push('val.einerVon|engine.mode|confluence, momentum, umkehr');
     }
     if (engine.byClass !== undefined) {
       if (!isRecord(engine.byClass)) {

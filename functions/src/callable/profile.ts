@@ -107,6 +107,10 @@ export const ensureProfile = onCall(CALLABLE_OPTS, async (request) => {
  */
 async function startStrategie(): Promise<Strategy> {
   const basis = structuredClone(DEFAULT_STRATEGY) as Strategy;
+  // Neue Konten handeln von Anfang an die Kurzfrist-Umkehr (Task 34, Owner
+  // 20.10.: „Alle auf RSI-2"). DEFAULT_STRATEGY bleibt 'confluence', weil er
+  // auch Referenz für Scan-Schatten und Tests ist.
+  basis.engine.mode = 'umkehr';
   try {
     const axes = (await getFirestore().doc('meta/tuneGlobal').get()).get('axes') as
       | GlobalAxisStats

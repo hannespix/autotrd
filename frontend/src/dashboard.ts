@@ -2869,9 +2869,10 @@ function optionsFormStrategy(): Strategy {
     engine: {
       ...basis.engine,
       maxPositionPct: num('owMax'),
-      // Der exklusive Momentum-Modus ist im „Ruhigen Sockel %" aufgegangen
-      // (Kern-Satellit) — kein Konto nutzte ihn mehr (Heartbeat momentum=0).
-      mode: 'confluence',
+      // Den Modus NICHT überschreiben (Task 34): Seit 20.10. handeln die
+      // Konten die Kurzfrist-Umkehr (`umkehr`); ein festes 'confluence' hier
+      // hätte jedes Konto beim nächsten Speichern still zurückgestellt.
+      mode: basis.engine.mode ?? 'umkehr',
       riskPerTradePct: Math.min(MAX_RISK_PER_TRADE_PCT, Math.max(0, num('owRisk'))),
       maxOpenPositions: Math.min(
         MAX_OPEN_POSITIONS_CAP,

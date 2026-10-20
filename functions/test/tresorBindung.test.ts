@@ -50,7 +50,7 @@ describe('Tresor-Schlüssel ist gebunden', () => {
     // Schranke gegen einen leeren Scan: Diese fünf lesen nachweislich Zugangsdaten
     // (fillSync seit Drift-Paket 2, 08.10.: der Ereigniskanal liest je Konto).
     expect(geprueft.sort()).toEqual(
-      ['fillSync.ts', 'momentumRun.ts', 'riskPulse.ts', 'scanMarket.ts', 'snapshotEquity.ts'],
+      ['fillSync.ts', 'momentumRun.ts', 'riskPulse.ts', 'scanMarket.ts', 'snapshotEquity.ts', 'umkehrLauf.ts'],
     );
   });
 

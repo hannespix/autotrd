@@ -21,6 +21,7 @@ export type TradeQuelle =
   | 'konfluenz'
   | 'regelbaum'
   | 'momentum'
+  | 'umkehr'
   | 'sockel'
   | 'ki_probe'
   | 'hand'
@@ -32,6 +33,7 @@ export const TRADE_QUELLEN: readonly TradeQuelle[] = [
   'konfluenz',
   'regelbaum',
   'momentum',
+  'umkehr',
   'sockel',
   'ki_probe',
   'hand',
@@ -74,6 +76,8 @@ export function quelleAusLauf(kennung: unknown): TradeQuelle | null {
   }
   if (/(^|-)man-\d{4}-\d{2}-\d{2}T\d{2}_\d{2}Z$/.test(k)) return 'hand';
   if (/(^|-)mom-\d{4}-\d{2}-\d{2}$/.test(k)) return 'momentum';
+  // Kurzfrist-Umkehr (Task 34): `umk-` + ET-Tag des Laufs.
+  if (/(^|-)umk-\d{4}-\d{2}-\d{2}$/.test(k)) return 'umkehr';
   if (/(^|-)core-\d{4}-\d{2}-\d{2}$/.test(k)) return 'sockel';
   return null;
 }
@@ -98,7 +102,7 @@ export function laufMitWeg(laufId: string, weg: TradeQuelle | null): string {
   // Präfixierte Kennungen (Hand, Momentum, Sockel, Puls, Exit) tragen ihren
   // Weg schon oder sind keine Scan-Einstiege — ein Suffix würde beim Lesen
   // gewinnen und den Präfix überstimmen (Red-Team 09.10., N4).
-  if (!suffix || /^(man|mom|core|puls|exit)-/.test(laufId)) return laufId;
+  if (!suffix || /^(man|mom|umk|core|puls|exit)-/.test(laufId)) return laufId;
   return `${laufId}-${suffix}`;
 }
 
@@ -146,6 +150,7 @@ export function tradeQuelle(t: TradeQuelleFelder): TradeQuelle {
     const sig = t.bucket.split('|')[2] ?? '';
     if (sig === 'manuell') return 'hand';
     if (sig === 'momentum') return 'momentum';
+    if (sig === 'umkehr') return 'umkehr';
     if (sig === 'core') return 'sockel';
     if (sig === 'regelbaum') return 'regelbaum';
     if (sig.length > 0 && sig !== 'keine') return 'konfluenz';
@@ -156,6 +161,7 @@ export function tradeQuelle(t: TradeQuelleFelder): TradeQuelle {
   if (istEinstiegsweg(t.quelle)) return t.quelle;
   if (t.source === 'manual') return 'hand';
   if (t.riskExit === 'momentum_rebalance') return 'momentum';
+  if (t.riskExit === 'umkehr_erholt' || t.riskExit === 'umkehr_frist') return 'umkehr';
   if (t.riskExit === 'core_rebalance' || t.riskExit === 'core_aufloesung') return 'sockel';
   if (t.sync === true) return 'sync';
   return 'unbekannt';
