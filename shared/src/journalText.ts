@@ -49,6 +49,9 @@ const EXIT_GRUND: Record<string, string> = {
   exit_nachlauf: 'über eine stehen gebliebene Ausstiegs-Order (nachgebucht)',
   // Drift-Paket 2: vom Ereigniskanal aus der Broker-Aktivität nachgebucht.
   fill_sync: 'laut Broker-Aktivität (vom Ereigniskanal nachgebucht)',
+  // Kurzfrist-Umkehr (Task 34)
+  umkehr_erholt: 'nach der Erholung über den 5-Tage-Schnitt (Kurzfrist-Umkehr)',
+  umkehr_frist: 'nach 10 Handelstagen ohne Erholung (Kurzfrist-Umkehr)',
 };
 
 /** Geldbetrag deutsch: Vorzeichen, Komma, Dollar. */
@@ -114,6 +117,8 @@ export function journalThese(e: JournalThesenFakten): string {
     );
   } else if (sc?.typ === 'momentum') {
     gruende.push('das Momentum-Ranking das Symbol gekürt hat');
+  } else if (sc?.typ === 'umkehr') {
+    gruende.push('der Kurs über seinem 200-Tage-Schnitt lag und gerade stark zurückgesetzt hatte (Kurzfrist-Umkehr)');
   } else if (sc?.typ) {
     gruende.push(`der Pfad „${sc.typ}" ausgelöst hat`);
   }

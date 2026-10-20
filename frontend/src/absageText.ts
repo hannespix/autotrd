@@ -26,6 +26,7 @@ const SCHLUESSEL: Record<AbsageGrund, Schluessel> = {
   unter_kosten: 'abs.unter_kosten',
   filter_blockiert: 'abs.filter_blockiert',
   ausfuehrung_abgelehnt: 'abs.ausfuehrung_abgelehnt',
+  umkehr_modus: 'abs.umkehr_modus',
 };
 
 const zahl = (x: number, stellen = 2): string =>

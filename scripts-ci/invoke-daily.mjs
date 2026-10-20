@@ -151,6 +151,19 @@ export const RUNS = [
     },
   },
   {
+    service: 'umkehrabend',
+    label: 'Kurzfrist-Umkehr: Abendplan (RSI-2, Task 34)',
+    // Rechnet die Signale auf abgeschlossenen Tageskerzen und schreibt je
+    // Konto den Plan für den Morgenlauf; beim ersten Lauf stellt er die
+    // Konten um (Owner 20.10.). Optional: Der Cloud Scheduler fährt ihn
+    // werktags 16:45 ET ohnehin.
+    optional: true,
+    async spur(project) {
+      const doc = await readMeta(project, 'umkehr');
+      return doc?.abend ? { at: doc.abend.at } : null;
+    },
+  },
+  {
     service: 'kibericht',
     label: 'KI-Lagebericht (Tages-Einschätzung)',
     // MUSS nach snapshotequity stehen: Der Bericht liest die

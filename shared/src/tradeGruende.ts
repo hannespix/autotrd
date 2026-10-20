@@ -141,7 +141,7 @@ function aufzaehlen(teile: string[]): string {
 function stimmenAusSteckbrief(bucket: string | undefined, richtung: 'buy' | 'sell'): Record<string, string> | undefined {
   if (typeof bucket !== 'string' || bucket.length === 0) return undefined;
   const sig = bucket.split('|')[2] ?? '';
-  if (!sig || ['keine', 'manuell', 'momentum', 'core', 'regelbaum'].includes(sig)) return undefined;
+  if (!sig || ['keine', 'manuell', 'momentum', 'core', 'regelbaum', 'umkehr'].includes(sig)) return undefined;
   return Object.fromEntries(sig.split('+').filter((k) => k.length > 0).map((k) => [k, richtung]));
 }
 

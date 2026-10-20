@@ -55,6 +55,10 @@ import {
   sockelNotbremseLevel,
   sockelPruefPosition,
   sockelRisk,
+  umkehrBesitz,
+  umkehrParameterFuer,
+  umkehrPruefPosition,
+  umkehrRisk,
   sockelSchutzVersuchFaellig,
   type Position,
   type Strategy,
@@ -337,13 +341,16 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
             if (v) await schutzAnlegen(v, userDoc.id, pos.symbol, sockelRisk(), cls, `puls-${now.toISOString().slice(0, 16)}Z-sockel`);
           }
         }
-        const pruefPos = sockelPruefPosition(pos);
+        // KURZFRIST-UMKEHR (Task 34, Owner 20.10.): ebenfalls nur die
+        // Notbremse (−15 %, Krypto −25 %) — Ausstiege macht der Tageslauf.
+        const umkehr = !sockel && umkehrBesitz(pos);
+        const pruefPos = umkehr ? umkehrPruefPosition(pos, cls) : sockelPruefPosition(pos);
         const reason = zwangsschluss.has(pos.symbol)
           ? 'margin_call'
           : clamped.engine.mode === 'momentum' && !sockel
             ? null
             : riskExitReason(pruefPos, preis, {
-                risk: sockel ? sockelRisk() : resolveRisk(clamped.engine, cls),
+                risk: sockel ? sockelRisk() : umkehr ? umkehrRisk(umkehrParameterFuer(cls)) : resolveRisk(clamped.engine, cls),
                 now,
               });
         if (!reason) continue;

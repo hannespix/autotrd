@@ -39,6 +39,8 @@ export const ABSAGE_GRUENDE = [
   'filter_blockiert',
   /** Alle Tore passiert, aber die Ausführung scheiterte (Größe, Bargeld, Broker) — fester Code, nie der Freitext-Grund. */
   'ausfuehrung_abgelehnt',
+  /** Wallet handelt die Kurzfrist-Umkehr im Tageslauf (Task 34) — der Scan eröffnet nichts. Wird nicht gespeichert. */
+  'umkehr_modus',
 ] as const;
 export type AbsageGrund = (typeof ABSAGE_GRUENDE)[number];
 

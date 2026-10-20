@@ -47,7 +47,7 @@
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
-import { sockelRisk, usSessionClass, type Position, type RiskConfig } from '../../../shared/src/index.js';
+import { sockelRisk, umkehrBesitz, umkehrParameterFuer, umkehrRisk, usSessionClass, type Position, type RiskConfig } from '../../../shared/src/index.js';
 import {
   type AlpacaOrderStand,
   alpacaOrderAbfragen,
@@ -429,7 +429,7 @@ export async function schutzAnlegen(
     // Sockel (Task 29, Owner 16.10.): Die Broker-Order spiegelt NUR die
     // Notbremse — egal, welche Hülle der Aufrufer reicht. Sonst stünde bei
     // Alpaca weiter ein −2-%-Stop, und ein Puls-Fix allein wäre wirkungslos.
-    const wirksam = pos.core === true ? sockelRisk() : risk;
+    const wirksam = pos.core === true ? sockelRisk() : umkehrBesitz(pos) ? umkehrRisk(umkehrParameterFuer(klasse)) : risk;
     const plan = planeSchutzStop(lageAusPosition(pos), wirksam, klasse, await schutzAsset(verbindung, symbol, klasse, fetchImpl));
     if (!plan.anlegen) {
       if (pos.schutz) await posRef(uid, symbol).set({ schutz: null }, { merge: true });
@@ -614,6 +614,7 @@ export async function pflegeSchutz(
 ): Promise<SchutzBefund> {
   // Sockel: nur die Notbremse (Task 29) — dieselbe Weiche wie in schutzAnlegen.
   if (pos.core === true) risk = sockelRisk();
+  else if (umkehrBesitz(pos)) risk = umkehrRisk(umkehrParameterFuer(klasse));
   const schutz = pos.schutz;
   if (!schutz?.orderId) {
     /* Kein Netz da — anlegen (19.08.).

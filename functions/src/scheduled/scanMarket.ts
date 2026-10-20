@@ -112,6 +112,7 @@ import {
   type AbsageGrund,
   type AbsageMerk,
   type AbsageZahlen,
+  umkehrBesitz,
 } from '../../../shared/src/index.js';
 import { atrPct } from '../../../shared/src/index.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
@@ -1013,10 +1014,13 @@ async function executeUserTrades(
       // Würde der Scan sie sehen, schlösse er sie beim nächsten Rauschen:
       // Er sähe eine Position ohne Konfluenz-Signal und verkaufte sie. Genau
       // das soll der Sockel nicht erleben — er lebt von Ruhe.
+      // Dasselbe gilt für Positionen der KURZFRIST-UMKEHR (Task 34): Sie
+      // gehören dem Tageslauf (umkehrLauf), der Scan fasst sie nicht an.
+      const fremdGefuehrt = (p: Position): boolean => p.core === true || umkehrBesitz(p);
       const positions = new Map<string, Position>(
         positionsSnap.docs
           .map((d) => [d.id, d.data() as Position] as const)
-          .filter(([, p]) => p.core !== true),
+          .filter(([, p]) => !fremdGefuehrt(p)),
       );
       // Ausgeblendet heißt NICHT „nicht vorhanden". Zwei Stellen müssen den
       // Sockel weiter sehen:
@@ -1026,7 +1030,7 @@ async function executeUserTrades(
       //   2. Das Klumpenrisiko — Sockel-Positionen sind echtes Marktrisiko,
       //      auch wenn sie eine andere Maschine führt.
       const coreSymbols = new Set(
-        positionsSnap.docs.filter((d) => (d.data() as Position).core === true).map((d) => d.id),
+        positionsSnap.docs.filter((d) => fremdGefuehrt(d.data() as Position)).map((d) => d.id),
       );
       const alleSymbole = (): string[] => [...positions.keys(), ...coreSymbols];
       // Risiko-Hülle GILT FÜR JEDEN TRADE dieses Users (Engine-Audit 26.07.):
@@ -1226,6 +1230,8 @@ async function executeUserTrades(
         // „nicht handelbar" ist eine dauerhafte Eigenschaft (Index, Devise,
         // Future, Auslandsbörse), kein abgewiesenes Signal (Red-Team 09.10.).
         if (grund === 'nicht_handelbar') return;
+        // Ebenso keine Absage: Das Wallet kauft nur im Tageslauf (Task 34).
+        if (grund === 'umkehr_modus') return;
         try {
           absageMerken(absagen, symbol, seite, grund, weg, { regime, ...sperrZahlen.get(symbol), ...z });
         } catch {
@@ -1642,6 +1648,7 @@ async function executeUserTrades(
         echtesBuch = true,
       ):
         | 'live_verriegelt'
+        | 'umkehr_modus'
         | 'nicht_handelbar'
         | 'cluster_voll'
         | 'news_veto'
@@ -1663,6 +1670,10 @@ async function executeUserTrades(
         // laufen normal. Zähler je KONTO (konten.live_verriegelt), nicht
         // je Symbol — wie bei der Notbremse darunter.
         if (liveVerriegelt) return 'live_verriegelt';
+        // Kurzfrist-Umkehr (Task 34): Dieses Wallet kauft nur noch im
+        // Tageslauf. Der Scan führt Altbestand zu Ende (Exits, Stops,
+        // Nachbuchungen), eröffnet aber nichts. Das Schattenbuch misst weiter.
+        if (echtesBuch && strategy.engine.mode === 'umkehr') return 'umkehr_modus';
         // Die Notbremse steht VOR allen anderen Prüfungen: Wenn das Konto
         // heute genug verloren hat, ist jede weitere Abwägung müßig. Der
         // Zähler steht bewusst nicht hier — er zählt je KONTO, nicht je

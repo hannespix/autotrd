@@ -55,8 +55,8 @@ describe('tradeQuelle — der Steckbrief entscheidet, nicht der Ausstieg', () =>
   });
 
   it('sync und unbekannt sind Lücken, keine Pfade', () => {
-    expect(TRADE_QUELLEN).toEqual(['konfluenz', 'regelbaum', 'momentum', 'sockel', 'ki_probe', 'hand', 'sync', 'unbekannt']);
-    expect(TRADE_QUELLEN.filter(quelleBekannt)).toEqual(['konfluenz', 'regelbaum', 'momentum', 'sockel', 'ki_probe', 'hand']);
+    expect(TRADE_QUELLEN).toEqual(['konfluenz', 'regelbaum', 'momentum', 'umkehr', 'sockel', 'ki_probe', 'hand', 'sync', 'unbekannt']);
+    expect(TRADE_QUELLEN.filter(quelleBekannt)).toEqual(['konfluenz', 'regelbaum', 'momentum', 'umkehr', 'sockel', 'ki_probe', 'hand']);
   });
 });
 
