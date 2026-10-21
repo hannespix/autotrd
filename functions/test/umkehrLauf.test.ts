@@ -17,6 +17,7 @@ import {
   PLAN_MAX_ALTER_TAGE,
   UMKEHR_AUSGESCHLOSSEN,
   kaufAuftraege,
+  kryptoKerzeFrisch,
   kerzenFuerSignal,
   kerzenTag,
   kontoPlan,
@@ -212,13 +213,15 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
     expect(lauf).toContain("quelle: 'umkehr',");
     expect(lauf).toContain("signature: 'umkehr'");
     expect(lauf).toContain('plan.verkaufen, plan.kaufen, `umk-${plan.tag}`, now);');
-    expect(lauf).toContain('if (einstiegGesperrt || kaufen.length === 0) return { kaeufe, verkaeufe };');
+    expect(lauf).toContain('if (einstiegGesperrt || kaufen.length === 0) return { kaeufe, verkaeufe, ohne };');
     expect(lauf.indexOf('// 1) Verkäufe')).toBeLessThan(lauf.indexOf('// 2) Käufe'));
     // Jeder Plan genau einmal (M1), Verkauf nie zum erfundenen Kurs (M3).
     expect(lauf).toContain('      if (plan.ausgefuehrtAm) continue;');
     expect(lauf).toContain('    if (px === null) continue;\n    const r = await executeTrade(\n      { uid: k.id, symbol: v.symbol, side: \'sell\'');
     // Krypto: eigener Tageslauf direkt nach dem UTC-Tagesschluss (H1), je Tag einmal.
-    expect(lauf).toContain("schedule: '10 0 * * *', timeZone: 'UTC'");
+    expect(lauf).toContain("schedule: '10 0,2,4 * * *', timeZone: 'UTC'");
+    // 21.10.: Yahoo lieferte die Vortageskerze um 00:10 UTC noch nicht — nur auf frischer Kerze handeln.
+    expect(lauf).toContain("if (!kryptoKerzeFrisch(tag, now.getTime())) {");
     expect(lauf).toContain("if ((await stand.get()).get('tag') === tag) continue;");
     expect(lauf).toContain("const boerse = (s: string): boolean => !istKrypto(s);");
     // Nachprüfung: Kursausfall stempelt nicht, Abend überschreibt keinen gehandelten Tag,
@@ -250,5 +253,16 @@ describe('ohlcDaily speichert keinen bereinigten Kurs (veraltet rückwirkend)', 
     const { chunkBarsByYear } = await import('../src/core/marketData.js');
     const m = chunkBarsByYear([{ date: '2026-10-20', open: 1, high: 2, low: 0.5, close: 1.5, volume: 9, adjClose: 1.4 }]);
     expect(m.get('2026')?.['2026-10-20']).toEqual({ open: 1, high: 2, low: 0.5, close: 1.5, volume: 9 });
+  });
+});
+
+describe('Krypto-Kerze frisch (21.10.)', () => {
+  it('nur wenn die jüngste Kerze der gerade abgeschlossene UTC-Tag ist', () => {
+    const t0 = Date.parse('2026-10-21T00:10:00Z');
+    expect(kryptoKerzeFrisch('2026-10-20', t0)).toBe(true);
+    expect(kryptoKerzeFrisch('2026-10-19', t0)).toBe(false); // Yahoo hinkt nach
+    expect(kryptoKerzeFrisch('2026-10-21', t0)).toBe(false); // laufender Tag
+    expect(kryptoKerzeFrisch('', t0)).toBe(false);
+    expect(kryptoKerzeFrisch('2026-10-20', Date.parse('2026-10-21T04:10:00Z'))).toBe(true);
   });
 });
