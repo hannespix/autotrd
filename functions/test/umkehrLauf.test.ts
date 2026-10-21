@@ -18,6 +18,7 @@ import {
   UMKEHR_AUSGESCHLOSSEN,
   kaufAuftraege,
   kryptoKerzeFrisch,
+  planNachholenNoetig,
   kerzenFuerSignal,
   kerzenTag,
   kontoPlan,
@@ -264,5 +265,23 @@ describe('Krypto-Kerze frisch (21.10.)', () => {
     expect(kryptoKerzeFrisch('2026-10-21', t0)).toBe(false); // laufender Tag
     expect(kryptoKerzeFrisch('', t0)).toBe(false);
     expect(kryptoKerzeFrisch('2026-10-20', Date.parse('2026-10-21T04:10:00Z'))).toBe(true);
+  });
+});
+
+describe('Morgen holt einen fehlenden Abendplan nach (21.10.)', () => {
+  it('nur wenn der Plan nicht zum letzten abgeschlossenen Handelstag gehört', () => {
+    expect(planNachholenNoetig('2026-10-20', '2026-10-21')).toBe(true);
+    expect(planNachholenNoetig(undefined, '2026-10-21')).toBe(true);
+    expect(planNachholenNoetig('2026-10-21', '2026-10-21')).toBe(false);
+    expect(planNachholenNoetig('2026-10-20', null)).toBe(false); // ohne Kurse nichts erzwingen
+  });
+
+  it('Verdrahtung: Nachholen VOR der Konten-Schleife, Ergebnis im Herzschlag', () => {
+    const lauf = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/scheduled/umkehrLauf.ts'), 'utf8');
+    const morgen = lauf.slice(lauf.indexOf('export async function runUmkehrMorgen'));
+    expect(morgen.indexOf('const nachgeholt = await abendNachholen(now)')).toBeGreaterThan(-1);
+    expect(morgen.indexOf('const nachgeholt = await abendNachholen(now)')).toBeLessThan(morgen.indexOf('for (const k of await umkehrKonten())'));
+    expect(morgen).toContain('planNachgeholt: nachgeholt');
+    expect(lauf).toContain("return kerzenFuerSignal('etf_regions', snap.bars, now.getTime()).at(-1)?.date ?? null;");
   });
 });

@@ -500,6 +500,27 @@ export async function runUmkehrAbend(now = new Date()): Promise<{ konten: number
 
 /* ── Morgenlauf (Börse) ─────────────────────────────────────────────────── */
 
+/** Letzter abgeschlossener Aktien-Kerzentag (SPY) zum Zeitpunkt `now`. */
+async function letzterHandelstag(now: Date): Promise<string | null> {
+  const snap = await getMarketSnapshot('SPY', '1mo');
+  return kerzenFuerSignal('etf_regions', snap.bars, now.getTime()).at(-1)?.date ?? null;
+}
+
+/** Muss der Morgen den Abendplan nachholen? (pur) */
+export function planNachholenNoetig(abendTag: string | null | undefined, letzterTag: string | null): boolean {
+  return letzterTag !== null && abendTag !== letzterTag;
+}
+
+/** Abendplan nachholen, wenn er für den letzten abgeschlossenen Handelstag fehlt. */
+async function abendNachholen(now: Date): Promise<boolean> {
+  const abendTag = (await getFirestore().doc('meta/umkehr').get()).get('abend.tag') as string | undefined;
+  const letzter = await letzterHandelstag(now);
+  if (!planNachholenNoetig(abendTag, letzter)) return false;
+  logger.warn(`Umkehr-Morgenlauf: Abendplan fehlt für ${letzter} (vorhanden: ${abendTag ?? 'keiner'}) — wird jetzt gerechnet`);
+  await runUmkehrAbend(now);
+  return true;
+}
+
 export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: number; kaeufe: number; verkaeufe: number; grund?: string }> {
   const db = getFirestore();
   if ((await boersenOffen(now.getTime())) === false) {
@@ -507,6 +528,17 @@ export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: numbe
     return { konten: 0, kaeufe: 0, verkaeufe: 0, grund: 'boerse_zu' };
   }
   const heute = kerzenTag('stocks_us', now.getTime());
+  /* Nachholen (21.10.): Der planmäßige Abendlauf 16:45 ET hinterließ keine
+   * Spur — der Morgen hätte den Plan vom Vortag (schon ausgeführt) gesehen
+   * und nichts gehandelt. Deshalb prüft der Morgen selbst, ob ein Plan für
+   * den letzten ABGESCHLOSSENEN Handelstag existiert, und rechnet ihn sonst
+   * jetzt: Um 09:35 ET ist die gestrige Kerze sicher final, die heutige
+   * schneidet `kerzenFuerSignal` ab — Signal am Schluss t, Kauf zur
+   * Eröffnung t+1, genau wie die Rückrechnung. */
+  const nachgeholt = await abendNachholen(now).catch((err: unknown) => {
+    logger.warn('Umkehr-Morgenlauf: Plan-Nachholen gescheitert', err);
+    return false;
+  });
   let kaeufe = 0;
   let verkaeufe = 0;
   let bearbeitet = 0;
@@ -542,7 +574,7 @@ export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: numbe
       logger.warn(`Umkehr-Morgenlauf: Konto ${k.id} übersprungen`, err);
     }
   }
-  await db.doc('meta/umkehr').set({ morgen: { at: now.toISOString(), konten: bearbeitet, kaeufe, verkaeufe, ohneKauf: ohne } }, { merge: true });
+  await db.doc('meta/umkehr').set({ morgen: { at: now.toISOString(), konten: bearbeitet, kaeufe, verkaeufe, ohneKauf: ohne, planNachgeholt: nachgeholt } }, { merge: true });
   logger.info(`Umkehr-Morgenlauf: ${bearbeitet} Konto/Konten, ${kaeufe} Kauf/Käufe, ${verkaeufe} Verkauf/Verkäufe`);
   return { konten: bearbeitet, kaeufe, verkaeufe };
 }
