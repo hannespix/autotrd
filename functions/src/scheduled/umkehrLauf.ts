@@ -315,9 +315,10 @@ async function fuehreAus(
   kaufen: ReadonlyArray<PlanKauf>,
   laufId: string,
   now: Date,
-): Promise<{ kaeufe: number; verkaeufe: number }> {
+): Promise<{ kaeufe: number; verkaeufe: number; ohne: OhneKauf }> {
   let kaeufe = 0;
   let verkaeufe = 0;
+  const ohne = leerOhneKauf();
   const posSnap = await k.ref.collection('positions').get();
   const alle = new Map(posSnap.docs.map((d) => [d.id, d.data() as Position]));
   const quotes = await getSparkBatch([...new Set([...alle.keys(), ...kaufen.map((x) => x.symbol), ...verkaufen.map((x) => x.symbol)])]);
@@ -347,7 +348,8 @@ async function fuehreAus(
   }
 
   // 2) Käufe
-  if (einstiegGesperrt || kaufen.length === 0) return { kaeufe, verkaeufe };
+  if (einstiegGesperrt) ohne.gesperrt += kaufen.length;
+  if (einstiegGesperrt || kaufen.length === 0) return { kaeufe, verkaeufe, ohne };
   // Kontostand FRISCH nach den Verkäufen — der Snapshot von oben kennt die Erlöse nicht.
   const frisch = await k.ref.get();
   const buchCash = (frisch.get('wallet.paperBalance') as number | undefined) ?? 0;
@@ -357,8 +359,10 @@ async function fuehreAus(
   for (const [sym, p] of alle) equity += positionValue(p, preis(sym));
   const belegt = [...alle.values()].filter((p) => umkehrBesitz(p)).length;
   const frei = umkehrParameterFuer(null).maxPositionen - belegt;
+  const kandidaten = kaufen.filter((x) => !alle.has(x.symbol) && !symbolSperreAusVermerk(k.get('risk.abgleich'), x.symbol, now));
+  ohne.gehalten += kaufen.length - kandidaten.length;
   const auftraege = kaufAuftraege(
-    kaufen.filter((x) => !alle.has(x.symbol) && !symbolSperreAusVermerk(k.get('risk.abgleich'), x.symbol, now)),
+    kandidaten,
     preis,
     bargeld,
     umkehrPositionsWert(equity, corePct(clamped)),
@@ -383,8 +387,43 @@ async function fuehreAus(
       laufId,
     );
     if (r.executed) kaeufe += 1;
+    else ohne.abgelehnt += 1;
   }
-  return { kaeufe, verkaeufe };
+  ohne.bargeldOderPlatz += kandidaten.length - auftraege.length;
+  return { kaeufe, verkaeufe, ohne };
+}
+
+/**
+ * Warum geplante Käufe NICHT ausgeführt wurden — öffentlich, nur Anzahlen
+ * (21.10.: erster Morgenlauf, 2 Signale × 7 Konten, aber 5 Käufe; ohne
+ * Zähler ist „kein Bargeld" von „gesperrt" nicht zu unterscheiden).
+ */
+export interface OhneKauf {
+  /** Einstiegs-Tor zu (Tages-Notbremse, Abgleich-Sperre). */
+  gesperrt: number;
+  /** Symbol inzwischen gehalten oder einzeln gesperrt. */
+  gehalten: number;
+  /** Kein Kurs, zu wenig Bargeld für ein Stück oder kein freier Platz. */
+  bargeldOderPlatz: number;
+  /** Ausführung abgelehnt (Buchung/Broker). */
+  abgelehnt: number;
+}
+export const leerOhneKauf = (): OhneKauf => ({ gesperrt: 0, gehalten: 0, bargeldOderPlatz: 0, abgelehnt: 0 });
+const summiereOhne = (a: OhneKauf, b: OhneKauf): void => {
+  a.gesperrt += b.gesperrt;
+  a.gehalten += b.gehalten;
+  a.bargeldOderPlatz += b.bargeldOderPlatz;
+  a.abgelehnt += b.abgelehnt;
+};
+
+/**
+ * Ist die jüngste Krypto-Kerze der gerade abgeschlossene UTC-Tag? Am
+ * 21.10. lieferte Yahoo um 00:10 UTC die Kerze des Vortags noch nicht —
+ * der Lauf rechnete auf vorgestern. Dann lieber nicht handeln und den
+ * nächsten Versuch (02:10, 04:10 UTC) abwarten.
+ */
+export function kryptoKerzeFrisch(tag: string, nowMs: number): boolean {
+  return tag === kerzenTag('crypto', nowMs - 86_400_000);
 }
 
 function toreFuer(k: FirebaseFirestore.QueryDocumentSnapshot, now: Date): { clamped: Strategy; handel: string | null; einstieg: string | null } {
@@ -471,6 +510,7 @@ export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: numbe
   let kaeufe = 0;
   let verkaeufe = 0;
   let bearbeitet = 0;
+  const ohne = leerOhneKauf();
   for (const k of await umkehrKonten()) {
     try {
       const planRef = k.ref.collection('meta').doc('umkehrPlan');
@@ -492,6 +532,7 @@ export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: numbe
       const r = await fuehreAus(k, tore.clamped, tore.einstieg !== null, plan.verkaufen, plan.kaufen, `umk-${plan.tag}`, now);
       kaeufe += r.kaeufe;
       verkaeufe += r.verkaeufe;
+      summiereOhne(ohne, r.ohne);
       bearbeitet += 1;
     } catch (err) {
       if (err instanceof KeineKurse) {
@@ -501,7 +542,7 @@ export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: numbe
       logger.warn(`Umkehr-Morgenlauf: Konto ${k.id} übersprungen`, err);
     }
   }
-  await db.doc('meta/umkehr').set({ morgen: { at: now.toISOString(), konten: bearbeitet, kaeufe, verkaeufe } }, { merge: true });
+  await db.doc('meta/umkehr').set({ morgen: { at: now.toISOString(), konten: bearbeitet, kaeufe, verkaeufe, ohneKauf: ohne } }, { merge: true });
   logger.info(`Umkehr-Morgenlauf: ${bearbeitet} Konto/Konten, ${kaeufe} Kauf/Käufe, ${verkaeufe} Verkauf/Verkäufe`);
   return { konten: bearbeitet, kaeufe, verkaeufe };
 }
@@ -524,11 +565,18 @@ export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: numbe
   const kerzen = await ladeKerzen([...new Set([...universum, ...extra])], now);
   const signale = signaleAus(kerzen, universum);
   // Kennung: der gerade geschlossene UTC-Tag (letzte abgeschlossene Kerze).
-  const tag = kerzen.get('BTC-USD')?.at(-1)?.date ?? kerzenTag('crypto', now.getTime() - 86_400_000);
+  const tag = kerzen.get('BTC-USD')?.at(-1)?.date ?? '';
+  if (!kryptoKerzeFrisch(tag, now.getTime())) {
+    const soll = kerzenTag('crypto', now.getTime() - 86_400_000);
+    logger.info(`Umkehr-Kryptolauf: jüngste Kerze ${tag || 'fehlt'} statt ${soll} — kein Handel, nächster Versuch`);
+    await db.doc('meta/umkehr').set({ krypto: { at: now.toISOString(), tag, soll, veraltet: true } }, { merge: true });
+    return { konten: 0, signale: 0, kaeufe: 0, verkaeufe: 0 };
+  }
 
   let kaeufe = 0;
   let verkaeufe = 0;
   let bearbeitet = 0;
+  const ohne = leerOhneKauf();
   for (const k of konten) {
     try {
       const stand = k.ref.collection('meta').doc('umkehrKrypto');
@@ -541,6 +589,7 @@ export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: numbe
       const r = await fuehreAus(k, tore.clamped, tore.einstieg !== null, plan.verkaufen, plan.kaufen, `umk-${tag}`, now);
       kaeufe += r.kaeufe;
       verkaeufe += r.verkaeufe;
+      summiereOhne(ohne, r.ohne);
       bearbeitet += 1;
     } catch (err) {
       if (err instanceof KeineKurse) {
@@ -557,6 +606,8 @@ export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: numbe
         konten: bearbeitet,
         kaeufe,
         verkaeufe,
+        ohneKauf: ohne,
+        veraltet: false,
         signale: signale.map((s) => ({ symbol: s.symbol, rsi: s.rsi })),
       },
     },
@@ -583,7 +634,9 @@ export const umkehrMorgen = onSchedule(
 );
 
 export const umkehrKrypto = onSchedule(
-  { schedule: '10 0 * * *', timeZone: 'UTC', retryCount: 0, timeoutSeconds: 540, memory: '512MiB', secrets: ['BROKER_MASTER_KEY'] },
+  // Drei Versuche je Nacht (Yahoo liefert die Vortageskerze nicht immer
+  // pünktlich); gehandelt wird je UTC-Tag trotzdem nur einmal.
+  { schedule: '10 0,2,4 * * *', timeZone: 'UTC', retryCount: 0, timeoutSeconds: 540, memory: '512MiB', secrets: ['BROKER_MASTER_KEY'] },
   async () => {
     await runUmkehrKrypto();
   },
