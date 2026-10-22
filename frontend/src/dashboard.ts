@@ -10884,6 +10884,24 @@ function renderKapital(s: PortfolioStatsDoc): void {
 }
 
 /**
+ * Karte „Kurzfrist-Umkehr" aus Laufstand, eigenem Plan, Konto-Zustand und
+ * Depot. Abgeschirmt: Sie hängt in den Callbacks des Nutzer-Docs und der
+ * Positionen — ein Fehler hier darf dort nichts mitreißen (Red-Team 22.10.).
+ */
+function renderUmkehr(): void {
+  if (!st) return;
+  try {
+    const s = st.strategy;
+    const konto = { mode: s?.engine?.mode, running: s?.engine?.running === true, echtgeld: s?.broker?.mode === 'live' };
+    const gehalten = new Set(st.positions.map((p) => p.symbol));
+    const sym = (x: string): string => symbolEtikett(x, false);
+    umkehrRendern($, st.umkehrStatus, st.umkehrPlan, konto, gehalten, sym, Date.now());
+  } catch (err) {
+    console.warn('Umkehr-Karte nicht gerendert', err);
+  }
+}
+
+/**
  * Momentum-Ranking (Owner-Go 28.07.).
  *
  * Zwei Dinge müssen hier sichtbar sein, sonst ist die Karte Dekoration:
@@ -10892,13 +10910,6 @@ function renderKapital(s: PortfolioStatsDoc): void {
  * Katalog seine Historie nachholt — ein kleines Universum am Anfang ist
  * erwartetes Verhalten, kein Datenverlust).
  */
-/** Karte „Kurzfrist-Umkehr" aus Laufstand, eigenem Plan und Konto-Modus. */
-function renderUmkehr(): void {
-  if (!st) return;
-  const sym = (x: string): string => symbolEtikett(x, false);
-  umkehrRendern($, st.umkehrStatus, st.umkehrPlan, st.strategy?.engine?.mode, sym);
-}
-
 function renderMomentum(m: MomentumDoc | null): void {
   const box = $('moTop');
   const filter = $('moFilter');
@@ -11875,6 +11886,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     watchPositions(uid, (positions) => {
       if (!st) return;
       st.positions = positions;
+      renderUmkehr();
       syncPositionQuotes();
       renderPortfolio();
       // Eröffnet/geschlossen: Das Chart-Overlay folgt sofort, sonst zeigt es

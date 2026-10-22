@@ -227,6 +227,15 @@ describe('users/{uid}', () => {
     await assertFails(bob().doc('users/alice/absagen/2026-10-09').get());
   });
 
+  it('umkehrPlan (Task 34): nur der Owner liest GENAU dieses meta-Doc, schreiben darf nur der Server', async () => {
+    await assertSucceeds(alice().doc('users/alice/meta/umkehrPlan').get());
+    await assertFails(alice().doc('users/alice/meta/umkehrPlan').set({ kaufen: [] }));
+    await assertFails(bob().doc('users/alice/meta/umkehrPlan').get());
+    // Lauf-Stempel und alles Übrige unter users/{uid}/meta bleiben zu.
+    await assertFails(alice().doc('users/alice/meta/umkehrKrypto').get());
+    await assertFails(alice().collection('users/alice/meta').get());
+  });
+
   it('alerts gehören dem User komplett', async () => {
     await assertSucceeds(alice().doc('users/alice/alerts/a1').set({ symbol: 'QQQ', above: 700 }));
     await assertFails(bob().doc('users/alice/alerts/a2').set({ symbol: 'QQQ' }));

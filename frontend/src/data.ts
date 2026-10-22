@@ -1109,9 +1109,13 @@ export function watchUmkehrPlan(uid: string, cb: (doc: UmkehrKontoPlan | null) =
   return onSnapshot(
     doc(db(), 'users', uid, 'meta', 'umkehrPlan'),
     (snap) => cb(snap.exists() ? (snap.data() as UmkehrKontoPlan) : null),
-    // Vor dem Regel-Deploy (oder ohne Login) ist das Doc nicht lesbar —
-    // dann zeigt die Karte „nichts geplant" statt einer Konsolen-Ausnahme.
-    () => cb(null),
+    // Vor dem Regel-Deploy (Frontend und Regeln deployen getrennt) ist das
+    // Doc nicht lesbar; der Listener endet dann bis zum Neuladen. Sichtbar
+    // machen statt still „kein Plan" (Red-Team 22.10.).
+    (err) => {
+      console.warn('umkehrPlan nicht lesbar', err);
+      cb(null);
+    },
   );
 }
 
