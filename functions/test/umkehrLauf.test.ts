@@ -253,6 +253,15 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
   it('Läufe exportiert und beim Deploy angestoßen', () => {
     expect(index).toContain("export { umkehrAbend, umkehrKrypto, umkehrMorgen } from './scheduled/umkehrLauf.js';");
     expect(workflow).toContain('momentumrun,umkehrabend,kibericht');
+    // 22.10.: Abendlauf scheiterte (code 13 / HTTP 500) ohne lesbare Spur —
+    // seine Logs stehen NACH dem Anstoß in jedem Deploy-Log, nie rot.
+    const logSchritt = workflow.slice(workflow.indexOf('- name: Umkehr-Abendlauf-Logs (Diagnose)'));
+    expect(workflow.indexOf('- name: Umkehr-Abendlauf-Logs (Diagnose)')).toBeGreaterThan(workflow.indexOf('node scripts-ci/invoke-daily.mjs'));
+    expect(logSchritt.slice(0, 400)).toContain('continue-on-error: true');
+    expect(logSchritt.slice(0, 400)).toContain('run: node scripts-ci/fetch-scan-logs.mjs 1560 WARNING umkehrabend');
+    const logs = lies('../../scripts-ci/fetch-scan-logs.mjs');
+    expect(logs).toContain('`resource.labels.service_name="${dienst}"`,');
+    expect(logs).toContain("if (!/^[a-z][a-z0-9-]{0,62}$/.test(dienst)) {");
   });
 });
 

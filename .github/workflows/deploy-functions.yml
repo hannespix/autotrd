@@ -188,6 +188,18 @@ jobs:
           --only snapshotequity,evalforecasts,universumsyncnow,momentumrun,umkehrabend,kibericht
           ${{ inputs.force_daily && '--force' || '' }}
 
+      # Kurzfrist-Umkehr (Task 34, 22.10.): Der Abendlauf scheiterte geplant
+      # (Scheduler-Status code 13) und beim Anstoß oben (HTTP 500) — ohne
+      # dass eine Zeile davon ohne GCP-Konsole lesbar war. Seine Warnungen
+      # und Fehler der letzten 26 h stehen deshalb in jedem Deploy-Log, NACH
+      # dem Anstoß (der dessen eigenen Lauf mitbringt). Nur lesend, nie rot.
+      - name: Umkehr-Abendlauf-Logs (Diagnose)
+        if: ${{ !cancelled() && env.FIREBASE_SERVICE_ACCOUNT != '' }}
+        continue-on-error: true
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: node scripts-ci/fetch-scan-logs.mjs 1560 WARNING umkehrabend
+
       # Wenn der Lauf rot wurde (z. B. Scan-Invoke 500): scanmarket-Fehlerlogs
       # direkt ins Job-Log ziehen — die Ursache soll ohne GCP-Konsole lesbar sein.
       - name: Scan-Fehlerlogs (Diagnose bei Rot)
