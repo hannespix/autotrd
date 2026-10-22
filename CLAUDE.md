@@ -343,6 +343,19 @@ Für UI-Änderungen zusätzlich mit headless Chrome bei Desktop (1500) **und** P
 > Das funktioniert, wo `actions_run_trigger` mit 403 scheitert. Erst wenn
 > der Vorfall auf githubstatus vorbei ist; der dritte Versuch lief durch.
 > Danach wie immer: den Deploy-SCHRITT der Wiederholung prüfen.
+>
+> **Vierte Sorte: grüner Neustart, der nichts ausrollt.** Am 22.10.
+> scheiterten beim Deploy zu #575 alle 53 neuen Revisionen am
+> Container-Start („Container Healthcheck failed") — Cloud Run ließ die
+> alten weiterdienen. Der Neustart desselben Laufs war GRÜN, weil
+> firebase-tools alle 53 als „Skipped (No changes detected)" übersprang:
+> Der gescheiterte Versuch hatte die neuen Quell-Hashes schon eingetragen.
+> Auch der Zustands-Check meldete ✓ (ACTIVE, und `serviceConfig.revision`
+> zeigt auf die gescheiterte NEUE Revision). Also nach jedem Neustart im
+> Log zählen: `Successful update` gegen `Skipped (No changes`. Seit
+> 22.10. fragt `check-functions-state` den Cloud-Run-Dienst selbst
+> (`latestReadyRevision` ≠ `latestCreatedRevision` ⇒ es dient die alte)
+> und löst dann die Stempel-Heilung aus.
 
 > **Nach einem Stapel Änderungen: ein Zusammenspiel-Durchgang.** Acht einzeln
 > verifizierte Änderungen ergeben keinen verifizierten Stand — Fehler sitzen
