@@ -661,16 +661,22 @@ export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: numbe
 }
 
 /* Optionen je Lauf ausgeschrieben (nicht per Spread): Der Tresor-Wächter
- * liest je onSchedule-Block, ob BROKER_MASTER_KEY gebunden ist. */
+ * liest je onSchedule-Block, ob BROKER_MASTER_KEY gebunden ist.
+ *
+ * Speicher (22.10., gemessen): Der Abendlauf brach am 21. und 22.10.
+ * planmäßig und bei Deploy-Anstößen mit „Memory limit of 512 MiB exceeded
+ * with 517–595 MiB used" ab — gelegentlich lief er knapp durch. Abend und
+ * Morgen (der den Abend nachholt) bekommen 1 GiB; der Kryptolauf lädt nur
+ * ~13 Coins und blieb darunter. */
 export const umkehrAbend = onSchedule(
-  { schedule: '45 16 * * 1-5', timeZone: 'America/New_York', retryCount: 0, timeoutSeconds: 540, memory: '512MiB', secrets: ['BROKER_MASTER_KEY'] },
+  { schedule: '45 16 * * 1-5', timeZone: 'America/New_York', retryCount: 0, timeoutSeconds: 540, memory: '1GiB', secrets: ['BROKER_MASTER_KEY'] },
   async () => {
     await runUmkehrAbend();
   },
 );
 
 export const umkehrMorgen = onSchedule(
-  { schedule: '35 9 * * 1-5', timeZone: 'America/New_York', retryCount: 0, timeoutSeconds: 540, memory: '512MiB', secrets: ['BROKER_MASTER_KEY'] },
+  { schedule: '35 9 * * 1-5', timeZone: 'America/New_York', retryCount: 0, timeoutSeconds: 540, memory: '1GiB', secrets: ['BROKER_MASTER_KEY'] },
   async () => {
     await runUmkehrMorgen();
   },

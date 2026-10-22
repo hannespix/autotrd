@@ -223,6 +223,9 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
     // Krypto: eigener Tageslauf direkt nach dem UTC-Tagesschluss (H1), je Tag einmal.
     // 22.10.: Vortageskerze kam erst nach 04:10 UTC — Versuche bis mittags.
     expect(lauf).toContain("schedule: '10 0-14/2 * * *', timeZone: 'UTC'");
+    // 22.10.: Abendlauf brach an 512 MiB ab (517–595 MiB gemessen) — Abend und Morgen (holt nach) 1 GiB.
+    expect(lauf).toContain("{ schedule: '45 16 * * 1-5', timeZone: 'America/New_York', retryCount: 0, timeoutSeconds: 540, memory: '1GiB',");
+    expect(lauf).toContain("{ schedule: '35 9 * * 1-5', timeZone: 'America/New_York', retryCount: 0, timeoutSeconds: 540, memory: '1GiB',");
     // Stand je Lauf ERSETZEN (keine Altfelder), späte Versuche überdecken den handelnden nicht.
     expect(lauf).toContain("return getFirestore().doc('meta/umkehr').set({ [teil]: wert }, { mergeFields: [teil] });");
     expect(lauf).not.toContain("doc('meta/umkehr').set({ abend");
