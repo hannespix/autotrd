@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { bewerteFunktionsZustaende, istVeraltet, FRISCHE_TOLERANZ_MS } from '../check-functions-state.mjs';
+import { bewerteFunktionsZustaende, dientAlteRevision, istVeraltet, FRISCHE_TOLERANZ_MS } from '../check-functions-state.mjs';
 
 const hier = dirname(fileURLToPath(import.meta.url));
 const workflow = readFileSync(join(hier, '../../.github/workflows/deploy-functions.yml'), 'utf8');
@@ -86,6 +86,24 @@ describe('istVeraltet — die pure Frische-Entscheidung', () => {
   });
 });
 
+describe('dientAlteRevision — dient der zuletzt ausgerollte Code? (22.10.)', () => {
+  const p = 'projects/p/locations/us-central1/services/umkehrabend/revisions/';
+  it('neue Revision nie bereit ⇒ es dient die alte (Befund)', () => {
+    // Der Fall vom 22.10.: 00006 scheiterte am Start, 00005 diente weiter.
+    expect(dientAlteRevision({ latestCreatedRevision: `${p}umkehrabend-00006-zen`, latestReadyRevision: `${p}umkehrabend-00005-abc` })).toBe(true);
+  });
+  it('gesunder Rollout ⇒ die neue dient', () => {
+    expect(dientAlteRevision({ latestCreatedRevision: `${p}umkehrabend-00006-zen`, latestReadyRevision: `${p}umkehrabend-00006-zen` })).toBe(false);
+    // Kurzname gegen Vollname zählt gleich.
+    expect(dientAlteRevision({ latestCreatedRevision: 'umkehrabend-00006-zen', latestReadyRevision: `${p}umkehrabend-00006-zen` })).toBe(false);
+  });
+  it('fehlende Felder sind KEIN Befund, sondern unprüfbar', () => {
+    expect(dientAlteRevision({})).toBeNull();
+    expect(dientAlteRevision(null)).toBeNull();
+    expect(dientAlteRevision({ latestCreatedRevision: `${p}x` })).toBeNull();
+  });
+});
+
 describe('Verdrahtung (Quelltext-Wächter)', () => {
   it('der Workflow prüft den Zustand nach dem Deploy UND nach der Heilung', () => {
     // Zweimal: einmal als Auslöser, einmal als Beleg, dass die Heilung wirkte.
@@ -118,7 +136,11 @@ describe('Verdrahtung (Quelltext-Wächter)', () => {
     // hätte das wieder nicht bemerkt.
     const skript = readFileSync(join(hier, '../check-functions-state.mjs'), 'utf8');
     expect(skript).toContain('https://run.googleapis.com/v2/${dienst}/revisions/${revision}');
-    expect(skript).toContain('const stale = istVeraltet(f?.updateTime, revZeit);');
+    expect(skript).toContain('const zeitStale = istVeraltet(f?.updateTime, revZeit);');
+    // 22.10.: Ohne diesen Anschluss sah die Prüfung eine nie bereite Revision als „frisch".
+    expect(skript).toContain('const { data } = await client.request({ url: `https://run.googleapis.com/v2/${dienst}` });');
+    expect(skript).toContain('alt = dientAlteRevision(data);');
+    expect(skript).toContain('const stale = alt === true ? true : zeitStale;');
     expect(skript).toContain('Frische unprüfbar: keine einzige Revisions-Erzeugungszeit lesbar');
   });
 });

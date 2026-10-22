@@ -30,6 +30,17 @@
  * NACH der Revisions-Erzeugung, hat der letzte Update-Versuch nie Code
  * ausgerollt — genau der stale Zustand, den der Hash-Skip danach für
  * „aktuell" hält.
+ *
+ * ── Dritte Prüfung: dient die neue Revision überhaupt? (22.10.) ──────────
+ *
+ * Beim Deploy zu #575 scheiterten alle 53 neuen Revisionen am Container-
+ * Start („Container Healthcheck failed"). Cloud Run ließ die ALTEN
+ * Revisionen weiterdienen — die Functions standen trotzdem ACTIVE, und
+ * `serviceConfig.revision` zeigte auf die gescheiterte NEUE Revision (4 min
+ * vor updateTime ⇒ „frisch"). Der Neustart übersprang danach alles („No
+ * changes detected") und wurde grün — der 1-GiB-Fix lief nicht. Beleg ist
+ * der Cloud-Run-Dienst selbst: Weicht `latestReadyRevision` von
+ * `latestCreatedRevision` ab, dient nicht der zuletzt ausgerollte Code.
  */
 
 import { readFileSync } from 'node:fs';
@@ -80,6 +91,20 @@ export function bewerteFunktionsZustaende(fns) {
   return { gesamt: liste.length, kaputt };
 }
 
+/**
+ * Pure Entscheidung am Cloud-Run-Dienst: Dient die zuletzt erzeugte Revision?
+ * `true`  ⇒ nein — die neue Revision wurde nie bereit, es dient die alte.
+ * `false` ⇒ ja.
+ * `null`  ⇒ unprüfbar (Felder fehlen) — kein Befund, wie bei istVeraltet.
+ */
+export function dientAlteRevision(dienst) {
+  const kurz = (n) => (typeof n === 'string' && n !== '' ? n.split('/').pop() : null);
+  const erzeugt = kurz(dienst?.latestCreatedRevision);
+  const bereit = kurz(dienst?.latestReadyRevision);
+  if (!erzeugt || !bereit) return null;
+  return erzeugt !== bereit;
+}
+
 const alsSkript = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (alsSkript) {
@@ -123,9 +148,20 @@ if (alsSkript) {
         revZeit = null;
       }
     }
-    const stale = istVeraltet(f?.updateTime, revZeit);
+    // Dritte Prüfung: Dient die neue Revision? (siehe Kopf, 22.10.)
+    let alt = null;
+    if (dienst) {
+      try {
+        const { data } = await client.request({ url: `https://run.googleapis.com/v2/${dienst}` });
+        alt = dientAlteRevision(data);
+      } catch {
+        alt = null;
+      }
+    }
+    const zeitStale = istVeraltet(f?.updateTime, revZeit);
+    const stale = alt === true ? true : zeitStale;
     if (stale === null) unpruefbar += 1;
-    else if (stale) veraltet.push({ name: kurz, updateTime: f?.updateTime, revZeit });
+    else if (stale) veraltet.push({ name: kurz, updateTime: f?.updateTime, revZeit, nichtBereit: alt === true });
     console.log(
       `  ${f?.state === 'ACTIVE' && stale !== true ? '✓' : '✗'} ${kurz}: state=${f?.state}`
         + ` · updateTime=${f?.updateTime ?? '?'} · revision=${revZeit ?? 'unpruefbar'}`,
@@ -150,8 +186,10 @@ if (alsSkript) {
   }
   for (const v of veraltet) {
     console.error(
-      `✗ ${v.name}: VERALTET — letzter Update-Versuch ${v.updateTime} rollte keinen Code aus `
-        + `(dienende Revision von ${v.revZeit}).`,
+      v.nichtBereit
+        ? `✗ ${v.name}: NICHT BEREIT — die neue Revision startete nie, es dient weiter die alte.`
+        : `✗ ${v.name}: VERALTET — letzter Update-Versuch ${v.updateTime} rollte keinen Code aus `
+          + `(dienende Revision von ${v.revZeit}).`,
     );
   }
   console.error(
