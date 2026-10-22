@@ -133,6 +133,14 @@ service cloud.firestore {
         allow read: if isOwner(uid);
         allow write: if false;
       }
+      // Kurzfrist-Umkehr (Task 34): der Tagesplan des eigenen Kontos —
+      // Symbole, RSI, Ausstiegsgrund, keine Beträge. Bewusst NUR dieses Doc:
+      // users/{uid}/meta trägt auch Lauf-Stempel (umkehrKrypto, …), die
+      // niemand lesen muss. Schreiben nur die Tagesläufe (Admin SDK).
+      match /meta/umkehrPlan {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
       match /stats/{doc} {
         allow read: if isOwner(uid);
         allow write: if false;

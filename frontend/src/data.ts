@@ -56,6 +56,7 @@ import { getApp } from 'firebase/app';
 import { db } from './firebase.js';
 import { muxWatch } from './mux.js';
 import type { ChartBar } from './chart.js';
+import type { UmkehrKontoPlan, UmkehrStatus } from './umkehrKarte.js';
 
 export interface MarketDocData {
   name?: string;
@@ -1090,6 +1091,31 @@ export interface MomentumDoc {
 export function watchMomentum(cb: (doc: MomentumDoc | null) => void): Unsubscribe {
   return onSnapshot(doc(db(), 'meta', 'momentum'), (snap) =>
     cb(snap.exists() ? (snap.data() as MomentumDoc) : null),
+  );
+}
+
+/**
+ * Kurzfrist-Umkehr (Task 34): öffentlicher Stand der drei Tagesläufe
+ * (meta/umkehr — Anzahlen und Marktsignale, keine Kontodaten).
+ */
+export function watchUmkehr(cb: (doc: UmkehrStatus | null) => void): Unsubscribe {
+  return onSnapshot(doc(db(), 'meta', 'umkehr'), (snap) =>
+    cb(snap.exists() ? (snap.data() as UmkehrStatus) : null),
+  );
+}
+
+/** Der Tagesplan des eigenen Kontos (users/{uid}/meta/umkehrPlan, nur Eigentümer). */
+export function watchUmkehrPlan(uid: string, cb: (doc: UmkehrKontoPlan | null) => void): Unsubscribe {
+  return onSnapshot(
+    doc(db(), 'users', uid, 'meta', 'umkehrPlan'),
+    (snap) => cb(snap.exists() ? (snap.data() as UmkehrKontoPlan) : null),
+    // Vor dem Regel-Deploy (Frontend und Regeln deployen getrennt) ist das
+    // Doc nicht lesbar; der Listener endet dann bis zum Neuladen. Sichtbar
+    // machen statt still „kein Plan" (Red-Team 22.10.).
+    (err) => {
+      console.warn('umkehrPlan nicht lesbar', err);
+      cb(null);
+    },
   );
 }
 

@@ -1119,6 +1119,31 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
    Scroll-Container, in dem man die beste Zeile suchen müsste. Die Tabelle
    ist kurz und endlich, also darf sie ganz dastehen. */
 .hd-tbl { font-size: 11px; }
+/* Kurzfrist-Umkehr (Task 34): eigenes 3-Spalten-Raster statt .fl-row.
+   Das 5er-Raster mit nowrap hätte den Klartext („Tageskerze fehlt noch –
+   nächster Versuch in 2 h") in 0,7fr gequetscht und über die Nachbarn
+   geschoben (CLAUDE.md §6: Geometrie statt geschätzter Textbreite).
+   Symbol und Zahl behalten ihre volle Breite (max-content), nur der
+   Satz rechts gibt nach und bricht um. Ohne Höhen-Deckel: Plan (≤ 10
+   Käufe) und Signale (≤ 8) sind endlich. */
+/* EIN Raster für die ganze Tabelle (Subgrid): Mit je einem Raster pro
+   Zeile sprang die mittlere Spalte mit der Symbollänge („DBA Kauf" neben
+   „BTC-USD Kauf", Bildbefund 22.10.). */
+.uk-tbl { display: grid; grid-template-columns: max-content max-content minmax(0, 1fr); column-gap: 12px; margin: 4px 0 8px; font-size: 11px; }
+.uk-tbl > .hint { grid-column: 1 / -1; }
+.uk-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: baseline; padding: 4px 6px; border-bottom: 1px solid var(--hair); font-variant-numeric: tabular-nums; }
+.uk-row > span { white-space: nowrap; }
+/* `>`: Ohne ihn traf :last-child auch das verschachtelte Symbol-Etikett. */
+.uk-row > span:last-child { white-space: normal; text-align: right; color: var(--t2); }
+.uk-row > span:nth-child(2) { color: var(--t3); }
+.uk-row > span.c-gn { color: var(--gn); }
+.uk-row > span.c-rd { color: var(--rd); }
+.uk-nw { white-space: nowrap; }
+.uk-zeit { color: var(--t3); font-size: 10px; }
+.uk-plankopf { margin: 2px 0 4px; }
+.uk-warn { color: var(--yl, #d9a441); }
+/* Kennzahlen: Werte auf eine Linie, auch wenn eine Bezeichnung umbricht. */
+.uk-zahlen { align-items: flex-end; }
 .hd-row { display: grid; grid-template-columns: 1fr 0.7fr 1fr 0.9fr 1fr 1fr; gap: 4px; padding: 4px 6px; border-bottom: 1px solid var(--hair); font-variant-numeric: tabular-nums; }
 .hd-row span { text-align: right; white-space: nowrap; }
 .hd-row span:first-child { text-align: left; }
