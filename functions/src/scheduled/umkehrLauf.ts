@@ -426,6 +426,26 @@ export function kryptoKerzeFrisch(tag: string, nowMs: number): boolean {
   return tag === kerzenTag('crypto', nowMs - 86_400_000);
 }
 
+/**
+ * Darf ein Kryptoversuch den öffentlichen Stand überschreiben? Ab dem
+ * ersten frischen Versuch eines Tages sind alle Konten gestempelt; die
+ * späteren Versuche desselben Tages bearbeiten keins mehr und würden das
+ * Ergebnis des handelnden Laufs mit Nullen überdecken.
+ */
+export function kryptoStandErsetzen(alt: { tag?: unknown; veraltet?: unknown } | undefined, tag: string, bearbeitet: number): boolean {
+  return bearbeitet > 0 || !(alt?.tag === tag && alt?.veraltet === false);
+}
+
+/**
+ * Öffentlichen Stand eines Laufs ERSETZEN statt verschmelzen: Mit
+ * `merge: true` blieben Felder eines früheren Laufs stehen (22.10.: das
+ * „2 Käufe" vom Vortag stand neben „veraltet"). `mergeFields` tauscht den
+ * Teilbaum komplett und lässt die anderen Läufe unberührt.
+ */
+function standSchreiben(teil: 'abend' | 'morgen' | 'krypto', wert: Record<string, unknown>): Promise<unknown> {
+  return getFirestore().doc('meta/umkehr').set({ [teil]: wert }, { mergeFields: [teil] });
+}
+
 function toreFuer(k: FirebaseFirestore.QueryDocumentSnapshot, now: Date): { clamped: Strategy; handel: string | null; einstieg: string | null } {
   const roh = k.get('settings.strategy') as Strategy;
   const clamped = clampStrategyRisk(structuredClone(roh));
@@ -437,7 +457,6 @@ function toreFuer(k: FirebaseFirestore.QueryDocumentSnapshot, now: Date): { clam
 /* ── Abendlauf (Börse) ──────────────────────────────────────────────────── */
 
 export async function runUmkehrAbend(now = new Date()): Promise<{ konten: number; signale: number; symbole: number; fehlend: number }> {
-  const db = getFirestore();
   await umstellungEinmal(now).catch((err: unknown) => logger.warn('Umkehr-Umstellung gescheitert', err));
   const konten = await umkehrKonten();
   const boerse = (s: string): boolean => !istKrypto(s);
@@ -480,20 +499,15 @@ export async function runUmkehrAbend(now = new Date()): Promise<{ konten: number
 
   // Öffentlicher Stand: Signale sind Marktinformation (Katalog-Symbole),
   // keine Kontodaten — Anzahlen und die Kandidatenliste, keine Positionen.
-  await db.doc('meta/umkehr').set(
-    {
-      abend: {
-        at: now.toISOString(),
-        tag,
-        konten: geplant,
-        symbole: symbole.length,
-        fehlend,
-        signale: [...signale].sort((a, b) => a.rsi - b.rsi).slice(0, 30).map((s) => ({ symbol: s.symbol, rsi: s.rsi })),
-        signaleN: signale.length,
-      },
-    },
-    { merge: true },
-  );
+  await standSchreiben('abend', {
+    at: now.toISOString(),
+    tag,
+    konten: geplant,
+    symbole: symbole.length,
+    fehlend,
+    signale: [...signale].sort((a, b) => a.rsi - b.rsi).slice(0, 30).map((s) => ({ symbol: s.symbol, rsi: s.rsi })),
+    signaleN: signale.length,
+  });
   logger.info(`Umkehr-Abendlauf: ${signale.length} Signal(e), ${geplant} Konto/Konten geplant, ${fehlend} ohne Kurse`);
   return { konten: geplant, signale: signale.length, symbole: symbole.length, fehlend };
 }
@@ -522,7 +536,6 @@ async function abendNachholen(now: Date): Promise<boolean> {
 }
 
 export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: number; kaeufe: number; verkaeufe: number; grund?: string }> {
-  const db = getFirestore();
   if ((await boersenOffen(now.getTime())) === false) {
     logger.info('Umkehr-Morgenlauf: Börse zu (Feiertag) — Plan bleibt bis morgen');
     return { konten: 0, kaeufe: 0, verkaeufe: 0, grund: 'boerse_zu' };
@@ -574,7 +587,7 @@ export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: numbe
       logger.warn(`Umkehr-Morgenlauf: Konto ${k.id} übersprungen`, err);
     }
   }
-  await db.doc('meta/umkehr').set({ morgen: { at: now.toISOString(), konten: bearbeitet, kaeufe, verkaeufe, ohneKauf: ohne, planNachgeholt: nachgeholt } }, { merge: true });
+  await standSchreiben('morgen', { at: now.toISOString(), konten: bearbeitet, kaeufe, verkaeufe, ohneKauf: ohne, planNachgeholt: nachgeholt });
   logger.info(`Umkehr-Morgenlauf: ${bearbeitet} Konto/Konten, ${kaeufe} Kauf/Käufe, ${verkaeufe} Verkauf/Verkäufe`);
   return { konten: bearbeitet, kaeufe, verkaeufe };
 }
@@ -601,7 +614,7 @@ export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: numbe
   if (!kryptoKerzeFrisch(tag, now.getTime())) {
     const soll = kerzenTag('crypto', now.getTime() - 86_400_000);
     logger.info(`Umkehr-Kryptolauf: jüngste Kerze ${tag || 'fehlt'} statt ${soll} — kein Handel, nächster Versuch`);
-    await db.doc('meta/umkehr').set({ krypto: { at: now.toISOString(), tag, soll, veraltet: true } }, { merge: true });
+    await standSchreiben('krypto', { at: now.toISOString(), tag, soll, veraltet: true });
     return { konten: 0, signale: 0, kaeufe: 0, verkaeufe: 0 };
   }
 
@@ -630,21 +643,19 @@ export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: numbe
       logger.warn(`Umkehr-Kryptolauf: Konto ${k.id} übersprungen`, err);
     }
   }
-  await db.doc('meta/umkehr').set(
-    {
-      krypto: {
-        at: now.toISOString(),
-        tag,
-        konten: bearbeitet,
-        kaeufe,
-        verkaeufe,
-        ohneKauf: ohne,
-        veraltet: false,
-        signale: signale.map((s) => ({ symbol: s.symbol, rsi: s.rsi })),
-      },
-    },
-    { merge: true },
-  );
+  const alt = (await db.doc('meta/umkehr').get()).get('krypto') as { tag?: unknown; veraltet?: unknown } | undefined;
+  if (kryptoStandErsetzen(alt, tag, bearbeitet)) {
+    await standSchreiben('krypto', {
+      at: now.toISOString(),
+      tag,
+      konten: bearbeitet,
+      kaeufe,
+      verkaeufe,
+      ohneKauf: ohne,
+      veraltet: false,
+      signale: signale.map((s) => ({ symbol: s.symbol, rsi: s.rsi })),
+    });
+  }
   logger.info(`Umkehr-Kryptolauf: ${signale.length} Signal(e), ${kaeufe} Kauf/Käufe, ${verkaeufe} Verkauf/Verkäufe`);
   return { konten: bearbeitet, signale: signale.length, kaeufe, verkaeufe };
 }
@@ -666,9 +677,10 @@ export const umkehrMorgen = onSchedule(
 );
 
 export const umkehrKrypto = onSchedule(
-  // Drei Versuche je Nacht (Yahoo liefert die Vortageskerze nicht immer
-  // pünktlich); gehandelt wird je UTC-Tag trotzdem nur einmal.
-  { schedule: '10 0,2,4 * * *', timeZone: 'UTC', retryCount: 0, timeoutSeconds: 540, memory: '512MiB', secrets: ['BROKER_MASTER_KEY'] },
+  // Versuche alle zwei Stunden bis 14:10 UTC: Yahoo lieferte die
+  // Vortageskerze am 22.10. selbst um 04:10 UTC noch nicht, mittags schon.
+  // Gehandelt wird beim ersten frischen Versuch, je UTC-Tag nur einmal.
+  { schedule: '10 0-14/2 * * *', timeZone: 'UTC', retryCount: 0, timeoutSeconds: 540, memory: '512MiB', secrets: ['BROKER_MASTER_KEY'] },
   async () => {
     await runUmkehrKrypto();
   },

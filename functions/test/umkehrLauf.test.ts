@@ -18,6 +18,7 @@ import {
   UMKEHR_AUSGESCHLOSSEN,
   kaufAuftraege,
   kryptoKerzeFrisch,
+  kryptoStandErsetzen,
   planNachholenNoetig,
   kerzenFuerSignal,
   kerzenTag,
@@ -220,7 +221,13 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
     expect(lauf).toContain('      if (plan.ausgefuehrtAm) continue;');
     expect(lauf).toContain('    if (px === null) continue;\n    const r = await executeTrade(\n      { uid: k.id, symbol: v.symbol, side: \'sell\'');
     // Krypto: eigener Tageslauf direkt nach dem UTC-Tagesschluss (H1), je Tag einmal.
-    expect(lauf).toContain("schedule: '10 0,2,4 * * *', timeZone: 'UTC'");
+    // 22.10.: Vortageskerze kam erst nach 04:10 UTC — Versuche bis mittags.
+    expect(lauf).toContain("schedule: '10 0-14/2 * * *', timeZone: 'UTC'");
+    // Stand je Lauf ERSETZEN (keine Altfelder), späte Versuche überdecken den handelnden nicht.
+    expect(lauf).toContain("return getFirestore().doc('meta/umkehr').set({ [teil]: wert }, { mergeFields: [teil] });");
+    expect(lauf).not.toContain("doc('meta/umkehr').set({ abend");
+    expect(lauf).not.toMatch(/meta\/umkehr'\)\.set\([^)]*\{ merge: true \}/);
+    expect(lauf).toContain('if (kryptoStandErsetzen(alt, tag, bearbeitet)) {');
     // 21.10.: Yahoo lieferte die Vortageskerze um 00:10 UTC noch nicht — nur auf frischer Kerze handeln.
     expect(lauf).toContain("if (!kryptoKerzeFrisch(tag, now.getTime())) {");
     expect(lauf).toContain("if ((await stand.get()).get('tag') === tag) continue;");
@@ -265,6 +272,18 @@ describe('Krypto-Kerze frisch (21.10.)', () => {
     expect(kryptoKerzeFrisch('2026-10-21', t0)).toBe(false); // laufender Tag
     expect(kryptoKerzeFrisch('', t0)).toBe(false);
     expect(kryptoKerzeFrisch('2026-10-20', Date.parse('2026-10-21T04:10:00Z'))).toBe(true);
+    expect(kryptoKerzeFrisch('2026-10-20', Date.parse('2026-10-21T14:10:00Z'))).toBe(true);
+  });
+
+  it('späte Versuche überdecken den Stand des handelnden Laufs nicht (22.10.)', () => {
+    const gehandelt = { tag: '2026-10-21', veraltet: false };
+    expect(kryptoStandErsetzen(gehandelt, '2026-10-21', 0)).toBe(false);
+    expect(kryptoStandErsetzen(gehandelt, '2026-10-21', 2)).toBe(true);
+    // Vorher veraltet oder anderer Tag ⇒ der frische Lauf schreibt, auch ohne Konto.
+    expect(kryptoStandErsetzen({ tag: '2026-10-20', veraltet: true }, '2026-10-21', 0)).toBe(true);
+    expect(kryptoStandErsetzen({ tag: '2026-10-21', veraltet: true }, '2026-10-21', 0)).toBe(true);
+    expect(kryptoStandErsetzen(gehandelt, '2026-10-22', 0)).toBe(true);
+    expect(kryptoStandErsetzen(undefined, '2026-10-21', 0)).toBe(true);
   });
 });
 
