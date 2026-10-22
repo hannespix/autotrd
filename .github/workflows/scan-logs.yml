@@ -12,6 +12,9 @@ on:
       severity:
         description: Mindest-Severity (DEFAULT/INFO/WARNING/ERROR)
         default: 'DEFAULT'
+      dienst:
+        description: Cloud-Run-Dienst (z. B. scanmarket, umkehrabend, umkehrmorgen)
+        default: 'scanmarket'
 
 jobs:
   logs:
@@ -39,4 +42,4 @@ jobs:
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
-        run: node scripts-ci/fetch-scan-logs.mjs "${{ inputs.minutes }}" "${{ inputs.severity }}"
+        run: node scripts-ci/fetch-scan-logs.mjs "${{ inputs.minutes }}" "${{ inputs.severity }}" "${{ inputs.dienst }}"
