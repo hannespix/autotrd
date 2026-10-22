@@ -169,6 +169,8 @@ import {
   watchPortfolioStats,
   watchEquitySeries,
   watchMomentum,
+  watchUmkehr,
+  watchUmkehrPlan,
   watchHealth,
   watchPositioning,
   saveJournalReview,
@@ -229,6 +231,12 @@ import {
   haltedauerMeta,
   haltedauerTabelle,
 } from './haltedauerCard.js';
+import {
+  type UmkehrKontoPlan,
+  type UmkehrStatus,
+  umkehrGeruest,
+  umkehrRendern,
+} from './umkehrKarte.js';
 import { depotChart, depotTooltip } from './depotChart.js';
 import {
   KARTE,
@@ -299,6 +307,7 @@ const PANEL_TITLES: Record<string, string> = {
   clock: t('panel.marktUhr'),
   forecastacc: t('panel.prognoseGenauigkeit'),
   fclab: t('panel.prognoseLabor'),
+  umkehr: t('panel.umkehr'),
   momentum: t('panel.momentum'),
   tuner: t('panel.autoTuner'),
   struktur: t('panel.struktursuche'),
@@ -484,6 +493,9 @@ interface DashState {
   positioning: PositioningDoc | null;
   /** Sockel-Kennzahlen des letzten Momentum-Laufs (meta/momentum). */
   sockelKonten: number | null;
+  /** Kurzfrist-Umkehr: öffentlicher Laufstand (meta/umkehr) und eigener Plan. */
+  umkehrStatus: UmkehrStatus | null;
+  umkehrPlan: UmkehrKontoPlan | null;
   /** Zuletzt gesetzte News-Punkte im Haupt-Chart (E2E-Hook, 26.07.). */
   lastMainMarkers?: number;
   /** Live-Preise der Positions-Symbole (aus market/{sym}.quote). */
@@ -1185,6 +1197,13 @@ function layout(email: string): string {
         <label class="lbl">${t('lay.vorhersageRealitaet')} ${iBtn('mae')} <span id="flSym2" style="color:var(--t3)"></span></label>
         <div id="flRows" class="fl-tbl"><div class="hint">${t('lay.keinePrognosenSym')}</div></div>
       </div></div>
+
+      <!-- Kurzfrist-Umkehr (Task 34): die Tagesstrategie der Konten seit
+           20.10. Ohne diese Karte sah ein Nutzer nur, DASS selten gekauft
+           wird — nicht, dass abends geplant und morgens gekauft wird, und
+           dass ein Tag ohne Signal bei dieser Regel normal ist. Inhalt aus
+           umkehrKarte.ts (dort getestet und im umkehr-shot vermessen). -->
+      ${umkehrGeruest(iBtn('umkehr'))}
 
       <div class="card" data-panel="momentum"><div class="sect">${t('panel.momentum')} ${iBtn('momentum')}
         <span id="moFilter" class="tn-tag" style="float:right"></span>
@@ -10873,6 +10892,13 @@ function renderKapital(s: PortfolioStatsDoc): void {
  * Katalog seine Historie nachholt — ein kleines Universum am Anfang ist
  * erwartetes Verhalten, kein Datenverlust).
  */
+/** Karte „Kurzfrist-Umkehr" aus Laufstand, eigenem Plan und Konto-Modus. */
+function renderUmkehr(): void {
+  if (!st) return;
+  const sym = (x: string): string => symbolEtikett(x, false);
+  umkehrRendern($, st.umkehrStatus, st.umkehrPlan, st.strategy?.engine?.mode, sym);
+}
+
 function renderMomentum(m: MomentumDoc | null): void {
   const box = $('moTop');
   const filter = $('moFilter');
@@ -11686,6 +11712,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     health: null,
     positioning: null,
     sockelKonten: null,
+    umkehrStatus: null,
+    umkehrPlan: null,
     chartGroup: 'A',
     chart2Group: 'B',
     chart2Symbol: DEFAULT_STRATEGY.watchlist[1] ?? 'QQQ',
@@ -11788,6 +11816,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       renderAdminCard();
       st.strategy = strategy ?? DEFAULT_STRATEGY;
       st.wallet = wallet;
+      renderUmkehr();
       ($('tnOn') as HTMLInputElement).checked = autoTune;
       st.ui = {
         predArrow: ui?.predArrow === true,
@@ -11904,6 +11933,16 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         st.sockelKonten = (doc as { sockelKonten?: number } | null)?.sockelKonten ?? null;
         renderEngineWhy();
       }
+    }),
+    watchUmkehr((doc) => {
+      if (!st) return;
+      st.umkehrStatus = doc;
+      renderUmkehr();
+    }),
+    watchUmkehrPlan(uid, (doc) => {
+      if (!st) return;
+      st.umkehrPlan = doc;
+      renderUmkehr();
     }),
     watchHealth((doc) => {
       if (!st) return;
