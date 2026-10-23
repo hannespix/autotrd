@@ -196,6 +196,17 @@ describe('Läufe und Gründe', () => {
     expect(umkehrOhneKaufText(mitKrypto)).toContain('8× schon im Depot');
     expect(umkehrOhneKaufText(mitKrypto)).toContain('2× Order abgelehnt');
     expect(umkehrOhneKaufText({ morgen: { ohneKauf: { gehalten: 0 } } })).toBe('');
+    // Seit 23.10. aufgeschlüsselt — und ein älterer Krypto-Stand daneben bleibt beim Sammelgrund.
+    const fein: UmkehrStatus = {
+      morgen: { ohneKauf: { bargeldOderPlatz: 6, keinBargeld: 5, keinPlatz: 0, keinKurs: 1 } },
+      krypto: { veraltet: false, ohneKauf: { bargeldOderPlatz: 2 } },
+    };
+    const text = umkehrOhneKaufText(fein);
+    expect(text).toContain('5× Bargeld reicht nicht für ein Stück');
+    expect(text).toContain('1× kein aktueller Kurs');
+    expect(text).toContain('2× kein Bargeld oder Platz frei');
+    expect(text).not.toContain('6×');
+    expect(text).not.toContain('Plätze belegt');
     expect(umkehrOhneKaufText(null)).toBe('');
   });
 });

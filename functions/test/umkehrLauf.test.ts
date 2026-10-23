@@ -17,6 +17,8 @@ import {
   PLAN_MAX_ALTER_TAGE,
   UMKEHR_AUSGESCHLOSSEN,
   kaufAuftraege,
+  kaufAuftraegeMitGrund,
+  median,
   kryptoKerzeFrisch,
   kryptoStandErsetzen,
   planNachholenNoetig,
@@ -116,6 +118,25 @@ describe('Kaufaufträge: Bargeld-Deckel (Red-Team M2)', () => {
     expect(kaufAuftraege([k('XLF'), k('XLE')], px, 1e6, 1_000, 1)).toHaveLength(1);
     expect(kaufAuftraege([k('XLF')], px, 1e6, 1_000, 0)).toEqual([]);
     expect(kaufAuftraege([k('XLF')], px, Number.NaN, 1_000, 5)).toEqual([]);
+  });
+
+  it('zählt, WARUM ein Kandidat leer ausging (23.10.: Sammelzähler war blind)', () => {
+    // Kein Kurs; dann reicht das Bargeld (300 × 0,98) für 5 × XLF à 50 — der
+    // Rest von 50 trägt weder SPY (500) noch XLE (100): zweimal kein Bargeld.
+    const r = kaufAuftraegeMitGrund([k('UNBEKANNT'), k('XLF'), k('SPY'), k('XLE')], px, 300, 10_000, 2);
+    expect(r.auftraege).toEqual([{ symbol: 'XLF', qty: 5, preis: 50 }]);
+    expect(r).toMatchObject({ keinKurs: 1, keinBargeld: 2, keinPlatz: 0 });
+    const voll = kaufAuftraegeMitGrund([k('XLF'), k('XLE'), k('SPY')], px, 1e6, 1_000, 1);
+    expect(voll).toMatchObject({ keinKurs: 0, keinBargeld: 0, keinPlatz: 2 });
+    // Summe der Gründe + Aufträge = Kandidaten — nichts fällt durch.
+    for (const x of [r, voll]) expect(x.auftraege.length + x.keinKurs + x.keinBargeld + x.keinPlatz).toBe(x === r ? 4 : 3);
+  });
+
+  it('Median für die anonymen Kapital-Kennzahlen', () => {
+    expect(median([30, 10, 20])).toBe(20);
+    expect(median([40, 10, 20, 30])).toBe(25);
+    expect(median([])).toBeNull();
+    expect(median([Number.NaN, 5])).toBe(5);
   });
 });
 
@@ -234,6 +255,11 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
     // 21.10.: Yahoo lieferte die Vortageskerze um 00:10 UTC noch nicht — nur auf frischer Kerze handeln.
     expect(lauf).toContain("if (!kryptoKerzeFrisch(tag, now.getTime())) {");
     expect(lauf).toContain("if ((await stand.get()).get('tag') === tag) continue;");
+    // 23.10.: Gründe aufgeschlüsselt, Kapital nur als Median (meta/** ist öffentlich).
+    expect(lauf).toContain('ohne.keinBargeld += wahl.keinBargeld;');
+    expect(lauf).toContain('bargeldMedianPct: rund(median(anteile.map((a) => a.bargeld))),');
+    expect(lauf).toContain('altbestandMedianPct: rund(median(anteile.map((a) => a.altbestand))),');
+    expect(lauf).toContain("else if (!umkehrBesitz(p)) altbestand += wert;");
     expect(lauf).toContain("const boerse = (s: string): boolean => !istKrypto(s);");
     // Nachprüfung: Kursausfall stempelt nicht, Abend überschreibt keinen gehandelten Tag,
     // Bargeld-Deckel mit Broker-Abgleich.
