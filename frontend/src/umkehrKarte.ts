@@ -29,6 +29,10 @@ export interface UmkehrOhneKauf {
   gesperrt?: number;
   gehalten?: number;
   bargeldOderPlatz?: number;
+  /** Seit 23.10. aufgeschlüsselt; ältere Stände tragen nur `bargeldOderPlatz`. */
+  keinBargeld?: number;
+  keinPlatz?: number;
+  keinKurs?: number;
   abgelehnt?: number;
 }
 
@@ -311,16 +315,26 @@ export function umkehrOhneKaufText(s: UmkehrStatus | null): string {
       const v = q?.[f];
       return acc + (zahl(v) && v > 0 ? v : 0);
     }, 0);
+  // Aufgeschlüsselt, wo der Lauf es schon kann; ältere Stände bleiben beim Sammelgrund.
+  const fein = (q: UmkehrOhneKauf | undefined): boolean =>
+    zahl(q?.keinBargeld) || zahl(q?.keinPlatz) || zahl(q?.keinKurs);
+  const sammel = quellen.reduce<number>((acc, q) => {
+    const v = q?.bargeldOderPlatz;
+    return acc + (!fein(q) && zahl(v) && v > 0 ? v : 0);
+  }, 0);
   const teile: string[] = [];
   for (const [f, text] of [
     ['gehalten', t('uk.ohneGehalten')],
-    ['bargeldOderPlatz', t('uk.ohneBargeld')],
+    ['keinBargeld', t('uk.ohneKeinBargeld')],
+    ['keinPlatz', t('uk.ohneKeinPlatz')],
+    ['keinKurs', t('uk.ohneKeinKurs')],
     ['gesperrt', t('uk.ohneGesperrt')],
     ['abgelehnt', t('uk.ohneAbgelehnt')],
   ] as const) {
     const n = summe(f);
     if (n > 0) teile.push(`${n}× ${text}`);
   }
+  if (sammel > 0) teile.splice(1, 0, `${sammel}× ${t('uk.ohneBargeld')}`);
   return teile.length === 0 ? '' : `${t('uk.ohneKopf')} ${teile.join(' · ')}`;
 }
 

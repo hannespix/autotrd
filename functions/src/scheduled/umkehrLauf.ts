@@ -197,18 +197,53 @@ export function kaufAuftraege(
   zielWert: number,
   freiePlaetze: number,
 ): KaufAuftrag[] {
-  const out: KaufAuftrag[] = [];
+  return kaufAuftraegeMitGrund(kaufen, preis, bargeld, zielWert, freiePlaetze).auftraege;
+}
+
+/**
+ * Wie `kaufAuftraege`, zählt aber, WARUM ein Kandidat leer ausging
+ * (23.10.: 6× „kein Bargeld oder Platz" bei 4 Käufen — der Sammelzähler
+ * konnte nicht sagen, ob Altbestand das Kapital bindet).
+ */
+export function kaufAuftraegeMitGrund(
+  kaufen: ReadonlyArray<PlanKauf>,
+  preis: (symbol: string) => number | null,
+  bargeld: number,
+  zielWert: number,
+  freiePlaetze: number,
+): { auftraege: KaufAuftrag[]; keinKurs: number; keinPlatz: number; keinBargeld: number } {
+  const auftraege: KaufAuftrag[] = [];
+  let keinKurs = 0;
+  let keinPlatz = 0;
+  let keinBargeld = 0;
   let rest = Number.isFinite(bargeld) ? bargeld : 0;
   for (const k of kaufen) {
-    if (out.length >= freiePlaetze) break;
+    if (auftraege.length >= freiePlaetze) {
+      keinPlatz += 1;
+      continue;
+    }
     const px = preis(k.symbol);
-    if (px === null || !(px > 0)) continue;
+    if (px === null || !(px > 0)) {
+      keinKurs += 1;
+      continue;
+    }
     const qty = umkehrStueck(Math.min(zielWert, rest * BARGELD_ANTEIL), px, classify(k.symbol));
-    if (!(qty > 0)) continue;
-    out.push({ symbol: k.symbol, qty, preis: px });
+    if (!(qty > 0)) {
+      keinBargeld += 1;
+      continue;
+    }
+    auftraege.push({ symbol: k.symbol, qty, preis: px });
     rest -= qty * px;
   }
-  return out;
+  return { auftraege, keinKurs, keinPlatz, keinBargeld };
+}
+
+/** Median (für die anonymen Kapital-Kennzahlen); leere Liste ⇒ null. */
+export function median(werte: readonly number[]): number | null {
+  const w = werte.filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
+  if (w.length === 0) return null;
+  const m = Math.floor(w.length / 2);
+  return w.length % 2 === 1 ? w[m]! : (w[m - 1]! + w[m]!) / 2;
 }
 
 export function planFrisch(plan: UmkehrPlan | undefined, now: Date): plan is UmkehrPlan {
@@ -315,7 +350,7 @@ async function fuehreAus(
   kaufen: ReadonlyArray<PlanKauf>,
   laufId: string,
   now: Date,
-): Promise<{ kaeufe: number; verkaeufe: number; ohne: OhneKauf }> {
+): Promise<{ kaeufe: number; verkaeufe: number; ohne: OhneKauf; anteile?: KapitalAnteile }> {
   let kaeufe = 0;
   let verkaeufe = 0;
   const ohne = leerOhneKauf();
@@ -350,24 +385,38 @@ async function fuehreAus(
   // 2) Käufe
   if (einstiegGesperrt) ohne.gesperrt += kaufen.length;
   if (einstiegGesperrt || kaufen.length === 0) return { kaeufe, verkaeufe, ohne };
+  // (Anteile erst ab hier: Ohne Kaufabsicht misst die Kennzahl nichts, was blockiert.)
   // Kontostand FRISCH nach den Verkäufen — der Snapshot von oben kennt die Erlöse nicht.
   const frisch = await k.ref.get();
   const buchCash = (frisch.get('wallet.paperBalance') as number | undefined) ?? 0;
   // Broker-Konten: das sichere Bargeld (kleiner aus Buch und Broker-Abgleich).
   const bargeld = kapitalDeckel(frisch.get('risk.abgleich'), buchCash, now.toISOString());
   let equity = buchCash;
-  for (const [sym, p] of alle) equity += positionValue(p, preis(sym));
+  let altbestand = 0;
+  let sockel = 0;
+  for (const [sym, p] of alle) {
+    const wert = positionValue(p, preis(sym));
+    equity += wert;
+    if (p.core === true) sockel += wert;
+    else if (!umkehrBesitz(p)) altbestand += wert;
+  }
+  const anteile: KapitalAnteile | undefined =
+    equity > 0 ? { bargeld: (bargeld / equity) * 100, altbestand: (altbestand / equity) * 100, sockel: (sockel / equity) * 100 } : undefined;
   const belegt = [...alle.values()].filter((p) => umkehrBesitz(p)).length;
   const frei = umkehrParameterFuer(null).maxPositionen - belegt;
   const kandidaten = kaufen.filter((x) => !alle.has(x.symbol) && !symbolSperreAusVermerk(k.get('risk.abgleich'), x.symbol, now));
   ohne.gehalten += kaufen.length - kandidaten.length;
-  const auftraege = kaufAuftraege(
+  const wahl = kaufAuftraegeMitGrund(
     kandidaten,
     preis,
     bargeld,
     umkehrPositionsWert(equity, corePct(clamped)),
     frei,
   );
+  const auftraege = wahl.auftraege;
+  ohne.keinKurs += wahl.keinKurs;
+  ohne.keinPlatz += wahl.keinPlatz;
+  ohne.keinBargeld += wahl.keinBargeld;
   for (const a of auftraege) {
     const klasse = classify(a.symbol);
     const r = await executeTrade(
@@ -390,7 +439,7 @@ async function fuehreAus(
     else ohne.abgelehnt += 1;
   }
   ohne.bargeldOderPlatz += kandidaten.length - auftraege.length;
-  return { kaeufe, verkaeufe, ohne };
+  return { kaeufe, verkaeufe, ohne, ...(anteile ? { anteile } : {}) };
 }
 
 /**
@@ -403,18 +452,37 @@ export interface OhneKauf {
   gesperrt: number;
   /** Symbol inzwischen gehalten oder einzeln gesperrt. */
   gehalten: number;
-  /** Kein Kurs, zu wenig Bargeld für ein Stück oder kein freier Platz. */
+  /** Kein Kurs, zu wenig Bargeld für ein Stück oder kein freier Platz (Summe der drei unten). */
   bargeldOderPlatz: number;
+  /** Aufgeschlüsselt (23.10.): ohne Kurs, ohne freien Platz, Bargeld reicht nicht für ein Stück. */
+  keinKurs: number;
+  keinPlatz: number;
+  keinBargeld: number;
   /** Ausführung abgelehnt (Buchung/Broker). */
   abgelehnt: number;
 }
-export const leerOhneKauf = (): OhneKauf => ({ gesperrt: 0, gehalten: 0, bargeldOderPlatz: 0, abgelehnt: 0 });
+export const leerOhneKauf = (): OhneKauf => ({ gesperrt: 0, gehalten: 0, bargeldOderPlatz: 0, keinKurs: 0, keinPlatz: 0, keinBargeld: 0, abgelehnt: 0 });
 const summiereOhne = (a: OhneKauf, b: OhneKauf): void => {
   a.gesperrt += b.gesperrt;
   a.gehalten += b.gehalten;
   a.bargeldOderPlatz += b.bargeldOderPlatz;
+  a.keinKurs += b.keinKurs;
+  a.keinPlatz += b.keinPlatz;
+  a.keinBargeld += b.keinBargeld;
   a.abgelehnt += b.abgelehnt;
 };
+
+/**
+ * Wofür das Kapital eines Kontos zur Eröffnung gebunden ist, in % des
+ * Kontowerts (nur Konten mit Kaufabsicht). Öffentlich nur als MEDIAN über
+ * alle Konten — keine Kontodaten (meta/** ist öffentlich lesbar).
+ */
+export interface KapitalAnteile {
+  bargeld: number;
+  /** Positionen außerhalb von Umkehr und Sockel (z. B. aus der Konfluenz-Zeit). */
+  altbestand: number;
+  sockel: number;
+}
 
 /**
  * Ist die jüngste Krypto-Kerze der gerade abgeschlossene UTC-Tag? Am
@@ -556,6 +624,7 @@ export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: numbe
   let verkaeufe = 0;
   let bearbeitet = 0;
   const ohne = leerOhneKauf();
+  const anteile: KapitalAnteile[] = [];
   for (const k of await umkehrKonten()) {
     try {
       const planRef = k.ref.collection('meta').doc('umkehrPlan');
@@ -578,6 +647,7 @@ export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: numbe
       kaeufe += r.kaeufe;
       verkaeufe += r.verkaeufe;
       summiereOhne(ohne, r.ohne);
+      if (r.anteile) anteile.push(r.anteile);
       bearbeitet += 1;
     } catch (err) {
       if (err instanceof KeineKurse) {
@@ -587,7 +657,22 @@ export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: numbe
       logger.warn(`Umkehr-Morgenlauf: Konto ${k.id} übersprungen`, err);
     }
   }
-  await standSchreiben('morgen', { at: now.toISOString(), konten: bearbeitet, kaeufe, verkaeufe, ohneKauf: ohne, planNachgeholt: nachgeholt });
+  const rund = (x: number | null): number | null => (x === null ? null : Math.round(x * 10) / 10);
+  await standSchreiben('morgen', {
+    at: now.toISOString(),
+    konten: bearbeitet,
+    kaeufe,
+    verkaeufe,
+    ohneKauf: ohne,
+    planNachgeholt: nachgeholt,
+    // Anonym: nur Mediane über die Konten mit Kaufabsicht (23.10.).
+    kapital: {
+      n: anteile.length,
+      bargeldMedianPct: rund(median(anteile.map((a) => a.bargeld))),
+      altbestandMedianPct: rund(median(anteile.map((a) => a.altbestand))),
+      sockelMedianPct: rund(median(anteile.map((a) => a.sockel))),
+    },
+  });
   logger.info(`Umkehr-Morgenlauf: ${bearbeitet} Konto/Konten, ${kaeufe} Kauf/Käufe, ${verkaeufe} Verkauf/Verkäufe`);
   return { konten: bearbeitet, kaeufe, verkaeufe };
 }
