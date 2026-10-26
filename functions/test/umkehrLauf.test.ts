@@ -18,6 +18,7 @@ import {
   UMKEHR_AUSGESCHLOSSEN,
   kaufAuftraege,
   kaufAuftraegeMitGrund,
+  zaehleGrund,
   median,
   kryptoKerzeFrisch,
   kryptoStandErsetzen,
@@ -132,6 +133,27 @@ describe('Kaufaufträge: Bargeld-Deckel (Red-Team M2)', () => {
     for (const x of [r, voll]) expect(x.auftraege.length + x.keinKurs + x.keinBargeld + x.keinPlatz).toBe(x === r ? 4 : 3);
   });
 
+  it('„zu teuer" ≠ „kein Bargeld": Zielbetrag kleiner als ein Stück, Bargeld wäre da (26.10.)', () => {
+    // Zielwert 400 je Platz, Bargeld reichlich: SPY (500) passt nicht in den Zielwert.
+    const r = kaufAuftraegeMitGrund([k('SPY'), k('XLF')], px, 1e6, 400, 10);
+    expect(r).toMatchObject({ zuTeuer: 1, keinBargeld: 0 });
+    expect(r.auftraege).toEqual([{ symbol: 'XLF', qty: 8, preis: 50 }]);
+    // Bargeld leer ⇒ weiterhin „kein Bargeld", auch wenn der Zielwert hoch wäre.
+    expect(kaufAuftraegeMitGrund([k('SPY')], px, 100, 1e6, 10)).toMatchObject({ zuTeuer: 0, keinBargeld: 1 });
+  });
+
+  it('Grund-Codes sind öffentlich: nur [a-z0-9_], gedeckelt, Rest unter „sonstig"', () => {
+    const z: Record<string, number> = {};
+    zaehleGrund(z, 'zu_wenig_cash', 2);
+    zaehleGrund(z, 'zu_wenig_cash', 1);
+    zaehleGrund(z, 'Broker sagt: Konto 123 gesperrt', 1); // Freitext ⇒ nie durchreichen
+    expect(z).toEqual({ zu_wenig_cash: 3, sonstig: 1 });
+    const voll: Record<string, number> = {};
+    for (let i = 0; i < 20; i++) zaehleGrund(voll, `g${i}`, 1);
+    expect(Object.keys(voll).length).toBeLessThanOrEqual(13);
+    expect(voll['sonstig']).toBe(8);
+  });
+
   it('Median für die anonymen Kapital-Kennzahlen', () => {
     expect(median([30, 10, 20])).toBe(20);
     expect(median([40, 10, 20, 30])).toBe(25);
@@ -236,7 +258,7 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
     expect(lauf).toContain("quelle: 'umkehr',");
     expect(lauf).toContain("signature: 'umkehr'");
     expect(lauf).toContain('plan.verkaufen, plan.kaufen, `umk-${plan.tag}`, now);');
-    expect(lauf).toContain('if (einstiegGesperrt || kaufen.length === 0) return { kaeufe, verkaeufe, ohne };');
+    expect(lauf).toContain('if (einstiegSperre !== null || kaufen.length === 0) return { kaeufe, verkaeufe, ohne };');
     expect(lauf.indexOf('// 1) Verkäufe')).toBeLessThan(lauf.indexOf('// 2) Käufe'));
     // Jeder Plan genau einmal (M1), Verkauf nie zum erfundenen Kurs (M3).
     expect(lauf).toContain('      if (plan.ausgefuehrtAm) continue;');
@@ -257,6 +279,10 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
     expect(lauf).toContain("if ((await stand.get()).get('tag') === tag) continue;");
     // 23.10.: Gründe aufgeschlüsselt, Kapital nur als Median (meta/** ist öffentlich).
     expect(lauf).toContain('ohne.keinBargeld += wahl.keinBargeld;');
+    // 26.10.: Gründe der Ablehnungen und Sperren als Codes, „zu teuer" getrennt.
+    expect(lauf).toContain("zaehleGrund(ohne.abgelehntGruende, r.reason ?? 'ohne_grund', 1);");
+    expect(lauf).toContain('zaehleGrund(ohne.gesperrtGruende, einstiegSperre, kaufen.length);');
+    expect(lauf).toContain('ohne.zuTeuer += wahl.zuTeuer;');
     expect(lauf).toContain('bargeldMedianPct: rund(median(anteile.map((a) => a.bargeld))),');
     expect(lauf).toContain('altbestandMedianPct: rund(median(anteile.map((a) => a.altbestand))),');
     expect(lauf).toContain("else if (!umkehrBesitz(p)) altbestand += wert;");

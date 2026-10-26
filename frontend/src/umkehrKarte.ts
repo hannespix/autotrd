@@ -33,6 +33,8 @@ export interface UmkehrOhneKauf {
   keinBargeld?: number;
   keinPlatz?: number;
   keinKurs?: number;
+  /** Seit 26.10.: Zielbetrag je Platz kleiner als ein ganzes Stück. */
+  zuTeuer?: number;
   abgelehnt?: number;
 }
 
@@ -317,7 +319,7 @@ export function umkehrOhneKaufText(s: UmkehrStatus | null): string {
     }, 0);
   // Aufgeschlüsselt, wo der Lauf es schon kann; ältere Stände bleiben beim Sammelgrund.
   const fein = (q: UmkehrOhneKauf | undefined): boolean =>
-    zahl(q?.keinBargeld) || zahl(q?.keinPlatz) || zahl(q?.keinKurs);
+    zahl(q?.keinBargeld) || zahl(q?.keinPlatz) || zahl(q?.keinKurs) || zahl(q?.zuTeuer);
   const sammel = quellen.reduce<number>((acc, q) => {
     const v = q?.bargeldOderPlatz;
     return acc + (!fein(q) && zahl(v) && v > 0 ? v : 0);
@@ -326,6 +328,7 @@ export function umkehrOhneKaufText(s: UmkehrStatus | null): string {
   for (const [f, text] of [
     ['gehalten', t('uk.ohneGehalten')],
     ['keinBargeld', t('uk.ohneKeinBargeld')],
+    ['zuTeuer', t('uk.ohneZuTeuer')],
     ['keinPlatz', t('uk.ohneKeinPlatz')],
     ['keinKurs', t('uk.ohneKeinKurs')],
     ['gesperrt', t('uk.ohneGesperrt')],
