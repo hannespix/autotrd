@@ -207,6 +207,9 @@ describe('Läufe und Gründe', () => {
     expect(text).toContain('2× kein Bargeld oder Platz frei');
     expect(text).not.toContain('6×');
     expect(text).not.toContain('Plätze belegt');
+    // 26.10.: „zu teuer" getrennt.
+    expect(umkehrOhneKaufText({ morgen: { ohneKauf: { bargeldOderPlatz: 2, keinBargeld: 0, zuTeuer: 2 } } }))
+      .toContain('2× eine Aktie kostet mehr als der Betrag je Platz');
     expect(umkehrOhneKaufText(null)).toBe('');
   });
 });

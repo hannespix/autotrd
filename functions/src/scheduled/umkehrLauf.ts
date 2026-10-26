@@ -211,11 +211,12 @@ export function kaufAuftraegeMitGrund(
   bargeld: number,
   zielWert: number,
   freiePlaetze: number,
-): { auftraege: KaufAuftrag[]; keinKurs: number; keinPlatz: number; keinBargeld: number } {
+): { auftraege: KaufAuftrag[]; keinKurs: number; keinPlatz: number; keinBargeld: number; zuTeuer: number } {
   const auftraege: KaufAuftrag[] = [];
   let keinKurs = 0;
   let keinPlatz = 0;
   let keinBargeld = 0;
+  let zuTeuer = 0;
   let rest = Number.isFinite(bargeld) ? bargeld : 0;
   for (const k of kaufen) {
     if (auftraege.length >= freiePlaetze) {
@@ -229,13 +230,16 @@ export function kaufAuftraegeMitGrund(
     }
     const qty = umkehrStueck(Math.min(zielWert, rest * BARGELD_ANTEIL), px, classify(k.symbol));
     if (!(qty > 0)) {
-      keinBargeld += 1;
+      // 26.10.: Bei ~30 % Bargeld meldete der Lauf „kein Bargeld" — tatsächlich
+      // war der Zielbetrag je Platz kleiner als EIN Stück (z. B. META ~700 $).
+      if (zielWert < px && rest * BARGELD_ANTEIL >= px) zuTeuer += 1;
+      else keinBargeld += 1;
       continue;
     }
     auftraege.push({ symbol: k.symbol, qty, preis: px });
     rest -= qty * px;
   }
-  return { auftraege, keinKurs, keinPlatz, keinBargeld };
+  return { auftraege, keinKurs, keinPlatz, keinBargeld, zuTeuer };
 }
 
 /** Median (für die anonymen Kapital-Kennzahlen); leere Liste ⇒ null. */
@@ -345,7 +349,8 @@ export class KeineKurse extends Error {
 async function fuehreAus(
   k: FirebaseFirestore.QueryDocumentSnapshot,
   clamped: Strategy,
-  einstiegGesperrt: boolean,
+  /** Code des geschlossenen Einstiegs-Tors (z. B. Tages-Notbremse) oder null. */
+  einstiegSperre: string | null,
   verkaufen: ReadonlyArray<PlanVerkauf>,
   kaufen: ReadonlyArray<PlanKauf>,
   laufId: string,
@@ -383,8 +388,11 @@ async function fuehreAus(
   }
 
   // 2) Käufe
-  if (einstiegGesperrt) ohne.gesperrt += kaufen.length;
-  if (einstiegGesperrt || kaufen.length === 0) return { kaeufe, verkaeufe, ohne };
+  if (einstiegSperre !== null && kaufen.length > 0) {
+    ohne.gesperrt += kaufen.length;
+    zaehleGrund(ohne.gesperrtGruende, einstiegSperre, kaufen.length);
+  }
+  if (einstiegSperre !== null || kaufen.length === 0) return { kaeufe, verkaeufe, ohne };
   // (Anteile erst ab hier: Ohne Kaufabsicht misst die Kennzahl nichts, was blockiert.)
   // Kontostand FRISCH nach den Verkäufen — der Snapshot von oben kennt die Erlöse nicht.
   const frisch = await k.ref.get();
@@ -417,6 +425,7 @@ async function fuehreAus(
   ohne.keinKurs += wahl.keinKurs;
   ohne.keinPlatz += wahl.keinPlatz;
   ohne.keinBargeld += wahl.keinBargeld;
+  ohne.zuTeuer += wahl.zuTeuer;
   for (const a of auftraege) {
     const klasse = classify(a.symbol);
     const r = await executeTrade(
@@ -436,7 +445,10 @@ async function fuehreAus(
       laufId,
     );
     if (r.executed) kaeufe += 1;
-    else ohne.abgelehnt += 1;
+    else {
+      ohne.abgelehnt += 1;
+      zaehleGrund(ohne.abgelehntGruende, r.reason ?? 'ohne_grund', 1);
+    }
   }
   ohne.bargeldOderPlatz += kandidaten.length - auftraege.length;
   return { kaeufe, verkaeufe, ohne, ...(anteile ? { anteile } : {}) };
@@ -458,10 +470,32 @@ export interface OhneKauf {
   keinKurs: number;
   keinPlatz: number;
   keinBargeld: number;
+  /** 26.10.: Zielbetrag je Platz kleiner als ein ganzes Stück, Bargeld wäre da. */
+  zuTeuer: number;
   /** Ausführung abgelehnt (Buchung/Broker). */
   abgelehnt: number;
+  /** Gründe als feste Codes mit Anzahl (26.10.: 8 Krypto-Ablehnungen, 4 Sperren — ohne Grund). */
+  abgelehntGruende: Record<string, number>;
+  gesperrtGruende: Record<string, number>;
 }
-export const leerOhneKauf = (): OhneKauf => ({ gesperrt: 0, gehalten: 0, bargeldOderPlatz: 0, keinKurs: 0, keinPlatz: 0, keinBargeld: 0, abgelehnt: 0 });
+export const leerOhneKauf = (): OhneKauf => ({
+  gesperrt: 0, gehalten: 0, bargeldOderPlatz: 0, keinKurs: 0, keinPlatz: 0, keinBargeld: 0, zuTeuer: 0, abgelehnt: 0,
+  abgelehntGruende: {}, gesperrtGruende: {},
+});
+
+/** Höchstens so viele verschiedene Gründe je Zähler — der Rest landet unter „sonstig". */
+const GRUENDE_MAX = 12;
+
+/**
+ * Grund-Code zählen (öffentlich!): nur [a-z0-9_], höchstens 40 Zeichen,
+ * höchstens GRUENDE_MAX Schlüssel — eine durchgereichte Broker-Meldung
+ * kann so weder Text noch Kontodaten nach meta/umkehr tragen.
+ */
+export function zaehleGrund(ziel: Record<string, number>, roh: string, n: number): void {
+  const sauber = /^[a-z0-9_]{1,40}$/.test(roh) ? roh : 'sonstig';
+  const code = sauber in ziel || Object.keys(ziel).length < GRUENDE_MAX ? sauber : 'sonstig';
+  ziel[code] = (ziel[code] ?? 0) + n;
+}
 const summiereOhne = (a: OhneKauf, b: OhneKauf): void => {
   a.gesperrt += b.gesperrt;
   a.gehalten += b.gehalten;
@@ -469,7 +503,10 @@ const summiereOhne = (a: OhneKauf, b: OhneKauf): void => {
   a.keinKurs += b.keinKurs;
   a.keinPlatz += b.keinPlatz;
   a.keinBargeld += b.keinBargeld;
+  a.zuTeuer += b.zuTeuer;
   a.abgelehnt += b.abgelehnt;
+  for (const [k, n] of Object.entries(b.abgelehntGruende)) zaehleGrund(a.abgelehntGruende, k, n);
+  for (const [k, n] of Object.entries(b.gesperrtGruende)) zaehleGrund(a.gesperrtGruende, k, n);
 };
 
 /**
@@ -643,7 +680,7 @@ export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: numbe
       // ein Neustart nicht doppelt (Doppelkauf-Sperre und Order-Kennung
       // decken den Rest).
       await planRef.set({ ausgefuehrtAm: heute, ausgefuehrtAt: now.toISOString(), einstiegGesperrt: tore.einstieg ?? null }, { merge: true });
-      const r = await fuehreAus(k, tore.clamped, tore.einstieg !== null, plan.verkaufen, plan.kaufen, `umk-${plan.tag}`, now);
+      const r = await fuehreAus(k, tore.clamped, tore.einstieg, plan.verkaufen, plan.kaufen, `umk-${plan.tag}`, now);
       kaeufe += r.kaeufe;
       verkaeufe += r.verkaeufe;
       summiereOhne(ohne, r.ohne);
@@ -716,7 +753,7 @@ export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: numbe
       await stand.set({ tag, at: now.toISOString() });
       const pos = gehalten.get(k.id) ?? new Map<string, Position>();
       const plan = kontoPlan(pos, signale, ausstiegeAus(pos, kerzen, krypto), umkehrParameterFuer('crypto').maxPositionen, klasseErlaubt(tore.clamped));
-      const r = await fuehreAus(k, tore.clamped, tore.einstieg !== null, plan.verkaufen, plan.kaufen, `umk-${tag}`, now);
+      const r = await fuehreAus(k, tore.clamped, tore.einstieg, plan.verkaufen, plan.kaufen, `umk-${tag}`, now);
       kaeufe += r.kaeufe;
       verkaeufe += r.verkaeufe;
       summiereOhne(ohne, r.ohne);
