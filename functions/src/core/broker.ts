@@ -437,6 +437,45 @@ export interface TradeResult {
   trade?: Trade & { id: string };
 }
 
+/**
+ * Puffer des Grenzpreises für Krypto-Einstiege der Kurzfrist-Umkehr (27.10.).
+ *
+ * Gemessen: Von 6 Umkehr-Krypto-Einstiegen am 27.10. füllten 5 NICHT
+ * (`broker_kein_fill`). Ursache ist im Wesentlichen die Kursquelle, nicht
+ * der Markt (Red-Team 27.10.): Entschieden wird auf dem Yahoo-Kurs,
+ * gehandelt an Alpacas Ask, Wartefenster 12 s — ein Limit exakt am
+ * Yahoo-Kurs füllt nur, wenn Alpaca gerade darunter liegt. Ohne Fills
+ * bekommt die Umkehr-Krypto-Messung keine Stichprobe; das ist der Grund
+ * für den Puffer. Er deckelt das Abrutschen hart; füllt selbst das nicht,
+ * storniert K-2c wie bisher.
+ *
+ * Ehrlich zu den Kosten: Die Rückrechnung setzte 0,25 % je Seite pauschal
+ * an. Live kommen der Abstand Alpaca-Ask ↔ Yahoo (bis zum Puffer) und beim
+ * Ausstieg der Market-Spread dazu. Deshalb misst der Kryptolauf das
+ * Abrutschen je Einstieg (meta/umkehr.krypto.abrutschen); ob Krypto in der
+ * Umkehr bleibt, entscheidet weiter die Messung je Klasse (quellen7t,
+ * Klassen-Regler) — nicht dieser Puffer. Saubere Fortsetzung: Grenzpreis
+ * aus Alpacas eigenem Ask statt aus Yahoo.
+ */
+export const UMKEHR_KRYPTO_LIMIT_PUFFER = 0.005;
+
+/**
+ * Grenzpreis eines Krypto-EINSTIEGS (pur). Umkehr: Kurs + Puffer (sofort
+ * ausführbar, gedeckelt). Alle anderen Wege: Maker-Limit am Kurs (Hebel 1b,
+ * unverändert). Ausstiege erreichen diese Funktion nie (nur `eroeffnet`).
+ */
+export function kryptoEinstiegsLimit(preis: number, side: 'buy' | 'sell', quelle: string | null): number {
+  if (quelle === 'umkehr' && side === 'buy') {
+    if (!Number.isFinite(preis) || preis <= 0) return 0;
+    // Nie UNTER dem Kurs (Red-Team H1): Der Kauf rundet auf den Tick ab — im
+    // Band 1–2 $ verschwand der Puffer so ganz, bei 1,001 → 1,00 lag das
+    // Limit sogar darunter. Mindestens der aufgerundete Kurs, höchstens
+    // Kurs × (1 + Puffer) abgerundet.
+    return Math.max(rundeLimitPreis(preis, 'sell'), rundeLimitPreis(preis * (1 + UMKEHR_KRYPTO_LIMIT_PUFFER), 'buy'));
+  }
+  return rundeLimitPreis(preis, side);
+}
+
 /** Einstiegs-ATR nur stempeln, wenn er eine echte positive Zahl ist. */
 export function atrStempel(v: number | null | undefined): { einstiegAtrPct?: number } {
   return typeof v === 'number' && Number.isFinite(v) && v > 0
@@ -1137,9 +1176,11 @@ export async function executeTrade(
    * ein verpasster Einstieg kostet nichts, ein zu teurer echtes Geld.
    * NUR Einstiege: Exits bleiben Market (das Routing erzwingt das
    * zusätzlich selbst). Gebucht wird weiterhin die Taker-Gebühr der
-   * Klasse — lieber zu viel Reibung einplanen als zu wenig. */
+   * Klasse — lieber zu viel Reibung einplanen als zu wenig.
+   * Ausnahme seit 27.10.: Umkehr-Einstiege bekommen einen sofort
+   * ausführbaren Grenzpreis (Kurs + 0,5 %, siehe kryptoEinstiegsLimit). */
   const limitPreis =
-    eroeffnet && klasse === 'crypto' ? rundeLimitPreis(req.price, req.side) : 0;
+    eroeffnet && klasse === 'crypto' ? kryptoEinstiegsLimit(req.price, req.side, einstiegFruh) : 0;
 
   /* Läuft von UNS schon eine schließende Order für dieses Symbol
    * (Drift-Paket 08.10., Ursache 3)? Ein Exit ohne Fill im Wartefenster

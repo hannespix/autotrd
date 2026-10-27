@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import { alpacaOrder, rundeLimitPreis } from '../src/core/alpacaBroker.js';
+import { UMKEHR_KRYPTO_LIMIT_PUFFER, kryptoEinstiegsLimit } from '../src/core/broker.js';
 import {
   LIMIT_WARTE_PAUSE_MS,
   LIMIT_WARTE_VERSUCHE,
@@ -173,10 +174,42 @@ describe('routeOrder mit Limit', () => {
   });
 });
 
+describe('Umkehr-Krypto-Einstieg: grenzbewehrter Taker statt Maker-Limit (27.10.)', () => {
+  it('Umkehr-Kauf: Kurs + 0,5 % (sofort ausführbar, Abrutschen gedeckelt)', () => {
+    expect(UMKEHR_KRYPTO_LIMIT_PUFFER).toBe(0.005);
+    expect(kryptoEinstiegsLimit(100, 'buy', 'umkehr')).toBe(100.5);
+    expect(kryptoEinstiegsLimit(0.5, 'buy', 'umkehr')).toBe(0.5025);
+  });
+  it('alle anderen Wege bleiben Maker-Limit am Kurs (Hebel 1b unverändert)', () => {
+    expect(kryptoEinstiegsLimit(100, 'buy', 'konfluenz')).toBe(rundeLimitPreis(100, 'buy'));
+    expect(kryptoEinstiegsLimit(100, 'buy', null)).toBe(rundeLimitPreis(100, 'buy'));
+    // Nie ein Puffer auf der Verkaufsseite, auch nicht für die Umkehr.
+    expect(kryptoEinstiegsLimit(100, 'sell', 'umkehr')).toBe(rundeLimitPreis(100, 'sell'));
+  });
+  it('Raster 0,0001 … 100 000: Grenzpreis nie UNTER dem Kurs, nie mehr als Puffer + 1 Tick (Red-Team H1)', () => {
+    const tick = (p: number): number => (p >= 1 ? 0.01 : p >= 0.001 ? 0.0001 : 0.000001);
+    // Die Fälle des Red-Teams zuerst (1,001 → 1,00 lag vorher UNTER dem Kurs).
+    for (const p of [1.001, 1.2, 1.5, 1.99, 2.3, 3.7, 0.012, 0.00125, 0.15]) {
+      expect(kryptoEinstiegsLimit(p, 'buy', 'umkehr'), `Kurs ${p}`).toBeGreaterThanOrEqual(p);
+    }
+    for (let e = -4; e <= 5; e += 0.01) {
+      const p = Number((10 ** e).toPrecision(6));
+      const l = kryptoEinstiegsLimit(p, 'buy', 'umkehr');
+      expect(l, `Kurs ${p}`).toBeGreaterThanOrEqual(p);
+      expect(l, `Kurs ${p}`).toBeLessThanOrEqual(p * (1 + UMKEHR_KRYPTO_LIMIT_PUFFER) + tick(p) + 1e-12);
+    }
+  });
+
+  it('kaputter Kurs ⇒ kein Limit (0), wie bisher', () => {
+    expect(kryptoEinstiegsLimit(Number.NaN, 'buy', 'umkehr')).toBe(0);
+    expect(kryptoEinstiegsLimit(0, 'buy', 'umkehr')).toBe(0);
+  });
+});
+
 describe('Anschluss-Wächter (der Serienfehler: Funktion korrekt, nicht angeschlossen)', () => {
   it('broker.ts berechnet das Limit NUR für Krypto-EINSTIEGE und übergibt es', () => {
     expect(brokerSrc).toContain(
-      "eroeffnet && klasse === 'crypto' ? rundeLimitPreis(req.price, req.side) : 0",
+      "eroeffnet && klasse === 'crypto' ? kryptoEinstiegsLimit(req.price, req.side, einstiegFruh) : 0",
     );
     expect(brokerSrc).toContain('...(limitPreis > 0 ? { limitPreis } : {})');
   });

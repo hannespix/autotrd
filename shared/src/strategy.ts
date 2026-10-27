@@ -917,6 +917,9 @@ export const CLASS_MAKER_FEE_RATE: Record<string, number> = {
   // Alpaca Krypto Tier 1: Maker 0,15 %. Nur hier eingetragen, weil nur hier
   // der Einstieg tatsächlich als Limit-Order läuft — ein Satz für eine
   // Order-Art, die es nicht gibt, wäre eine geschenkte Kostensenkung.
+  // ACHTUNG (27.10.): Umkehr-Krypto-Einstiege laufen sofort ausführbar,
+  // also als TAKER (kryptoEinstiegsLimit). Wer Umkehr-Kosten mit diesem
+  // Satz rechnet, rechnet sie schön — dafür feeRateForClass nehmen.
   crypto: 0.0015,
 };
 

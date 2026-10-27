@@ -18,6 +18,7 @@ import {
   UMKEHR_AUSGESCHLOSSEN,
   kaufAuftraege,
   kaufAuftraegeMitGrund,
+  abrutschStat,
   zaehleGrund,
   median,
   kryptoKerzeFrisch,
@@ -154,6 +155,20 @@ describe('Kaufaufträge: Bargeld-Deckel (Red-Team M2)', () => {
     expect(voll['sonstig']).toBe(8);
   });
 
+  it('Krypto reserviert Kurs + Puffer (Red-Team N1), Aktien nicht', () => {
+    const pk = (s: string): number | null => ({ 'BTC-USD': 100, 'ETH-USD': 100, XLF: 195 } as Record<string, number>)[s] ?? null;
+    // Zielwert 400: je 4 BTC/ETH zu 100 reservieren 4 × 100,5 = 402 ⇒ Rest 1000 − 804 = 196,
+    // × 0,98 = 192,08 < 195 ⇒ KEIN XLF. Ohne Puffer-Reservierung bliebe 200 × 0,98 = 196 ⇒ 1 XLF.
+    const a = kaufAuftraegeMitGrund([k('BTC-USD'), k('ETH-USD'), k('XLF')], pk, 1000, 400, 10);
+    expect(a.auftraege.map((x) => x.symbol)).toEqual(['BTC-USD', 'ETH-USD']);
+    expect(a.keinBargeld).toBe(1);
+  });
+
+  it('Abrutschen: Median und Anteil ≥ 0,4 % (Red-Team M1)', () => {
+    expect(abrutschStat([0.1, 0.45, 0.2, 0.5])).toEqual({ n: 4, medianPct: 0.325, anteilAb04Pct: 50 });
+    expect(abrutschStat([])).toEqual({ n: 0, medianPct: null, anteilAb04Pct: null });
+  });
+
   it('Median für die anonymen Kapital-Kennzahlen', () => {
     expect(median([30, 10, 20])).toBe(20);
     expect(median([40, 10, 20, 30])).toBe(25);
@@ -258,7 +273,7 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
     expect(lauf).toContain("quelle: 'umkehr',");
     expect(lauf).toContain("signature: 'umkehr'");
     expect(lauf).toContain('plan.verkaufen, plan.kaufen, `umk-${plan.tag}`, now);');
-    expect(lauf).toContain('if (einstiegSperre !== null || kaufen.length === 0) return { kaeufe, verkaeufe, ohne };');
+    expect(lauf).toContain('if (einstiegSperre !== null || kaufen.length === 0) return { kaeufe, verkaeufe, ohne, abrutschen };');
     expect(lauf.indexOf('// 1) Verkäufe')).toBeLessThan(lauf.indexOf('// 2) Käufe'));
     // Jeder Plan genau einmal (M1), Verkauf nie zum erfundenen Kurs (M3).
     expect(lauf).toContain('      if (plan.ausgefuehrtAm) continue;');
@@ -283,6 +298,9 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
     expect(lauf).toContain("zaehleGrund(ohne.abgelehntGruende, r.reason ?? 'ohne_grund', 1);");
     expect(lauf).toContain('zaehleGrund(ohne.gesperrtGruende, einstiegSperre, kaufen.length);');
     expect(lauf).toContain('ohne.zuTeuer += wahl.zuTeuer;');
+    // 27.10.: Abrutschen der Krypto-Käufe gemessen und veröffentlicht (aggregiert).
+    expect(lauf).toContain('abrutschen: abrutschStat(abrutschen),');
+    expect(lauf).toContain("if (klasse === 'crypto' && typeof fill === 'number' && fill > 0 && a.preis > 0) abrutschen.push((fill / a.preis - 1) * 100);");
     expect(lauf).toContain('bargeldMedianPct: rund(median(anteile.map((a) => a.bargeld))),');
     expect(lauf).toContain('altbestandMedianPct: rund(median(anteile.map((a) => a.altbestand))),');
     expect(lauf).toContain("else if (!umkehrBesitz(p)) altbestand += wert;");

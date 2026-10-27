@@ -48,7 +48,7 @@ import {
   type Strategy,
   type UmkehrAusstiegGrund,
 } from '../../../shared/src/index.js';
-import { executeTrade, kapitalDeckel, resolveBrokerMode } from '../core/broker.js';
+import { UMKEHR_KRYPTO_LIMIT_PUFFER, executeTrade, kapitalDeckel, resolveBrokerMode } from '../core/broker.js';
 import { kontoTore, symbolSperreAusVermerk } from '../core/kontoTore.js';
 import { mayTrade } from '../core/access.js';
 import { clampStrategyRisk, corePct } from '../core/rulesTrading.js';
@@ -237,9 +237,27 @@ export function kaufAuftraegeMitGrund(
       continue;
     }
     auftraege.push({ symbol: k.symbol, qty, preis: px });
-    rest -= qty * px;
+    // Krypto-Umkehr-Käufe reservieren beim Broker qty × Grenzpreis (Kurs +
+    // Puffer) — so viel Bargeld ist gebunden, nicht qty × Kurs (Red-Team N1).
+    rest -= qty * px * (classify(k.symbol) === 'crypto' ? 1 + UMKEHR_KRYPTO_LIMIT_PUFFER : 1);
   }
   return { auftraege, keinKurs, keinPlatz, keinBargeld, zuTeuer };
+}
+
+/**
+ * Abrutschen der Krypto-Käufe eines Laufs (Fill gegen Entscheidungskurs, %):
+ * Median und Anteil der Käufe, die den Puffer fast ausschöpften (≥ 0,4 %).
+ * Red-Team M1: Ohne diese Zahl kauft der Puffer Stichprobe zu einem Preis,
+ * den niemand sieht. Öffentlich nur aggregiert.
+ */
+export function abrutschStat(werte: readonly number[]): { n: number; medianPct: number | null; anteilAb04Pct: number | null } {
+  const w = werte.filter((x) => Number.isFinite(x));
+  const m = median(w);
+  return {
+    n: w.length,
+    medianPct: m === null ? null : Math.round(m * 1000) / 1000,
+    anteilAb04Pct: w.length === 0 ? null : Math.round((w.filter((x) => x >= 0.4).length / w.length) * 1000) / 10,
+  };
 }
 
 /** Median (für die anonymen Kapital-Kennzahlen); leere Liste ⇒ null. */
@@ -355,8 +373,10 @@ async function fuehreAus(
   kaufen: ReadonlyArray<PlanKauf>,
   laufId: string,
   now: Date,
-): Promise<{ kaeufe: number; verkaeufe: number; ohne: OhneKauf; anteile?: KapitalAnteile }> {
+): Promise<{ kaeufe: number; verkaeufe: number; ohne: OhneKauf; anteile?: KapitalAnteile; abrutschen: number[] }> {
   let kaeufe = 0;
+  /** Abrutschen je Krypto-Kauf (Fill / Entscheidungskurs − 1, in %) — Red-Team M1. */
+  const abrutschen: number[] = [];
   let verkaeufe = 0;
   const ohne = leerOhneKauf();
   const posSnap = await k.ref.collection('positions').get();
@@ -392,7 +412,7 @@ async function fuehreAus(
     ohne.gesperrt += kaufen.length;
     zaehleGrund(ohne.gesperrtGruende, einstiegSperre, kaufen.length);
   }
-  if (einstiegSperre !== null || kaufen.length === 0) return { kaeufe, verkaeufe, ohne };
+  if (einstiegSperre !== null || kaufen.length === 0) return { kaeufe, verkaeufe, ohne, abrutschen };
   // (Anteile erst ab hier: Ohne Kaufabsicht misst die Kennzahl nichts, was blockiert.)
   // Kontostand FRISCH nach den Verkäufen — der Snapshot von oben kennt die Erlöse nicht.
   const frisch = await k.ref.get();
@@ -444,14 +464,17 @@ async function fuehreAus(
       clamped,
       laufId,
     );
-    if (r.executed) kaeufe += 1;
-    else {
+    if (r.executed) {
+      kaeufe += 1;
+      const fill = (r.trade as { brokerFillPrice?: unknown } | undefined)?.brokerFillPrice;
+      if (klasse === 'crypto' && typeof fill === 'number' && fill > 0 && a.preis > 0) abrutschen.push((fill / a.preis - 1) * 100);
+    } else {
       ohne.abgelehnt += 1;
       zaehleGrund(ohne.abgelehntGruende, r.reason ?? 'ohne_grund', 1);
     }
   }
   ohne.bargeldOderPlatz += kandidaten.length - auftraege.length;
-  return { kaeufe, verkaeufe, ohne, ...(anteile ? { anteile } : {}) };
+  return { kaeufe, verkaeufe, ohne, abrutschen, ...(anteile ? { anteile } : {}) };
 }
 
 /**
@@ -744,6 +767,7 @@ export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: numbe
   let verkaeufe = 0;
   let bearbeitet = 0;
   const ohne = leerOhneKauf();
+  const abrutschen: number[] = [];
   for (const k of konten) {
     try {
       const stand = k.ref.collection('meta').doc('umkehrKrypto');
@@ -757,6 +781,7 @@ export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: numbe
       kaeufe += r.kaeufe;
       verkaeufe += r.verkaeufe;
       summiereOhne(ohne, r.ohne);
+      abrutschen.push(...r.abrutschen);
       bearbeitet += 1;
     } catch (err) {
       if (err instanceof KeineKurse) {
@@ -776,6 +801,7 @@ export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: numbe
       ohneKauf: ohne,
       veraltet: false,
       signale: signale.map((s) => ({ symbol: s.symbol, rsi: s.rsi })),
+      abrutschen: abrutschStat(abrutschen),
     });
   }
   logger.info(`Umkehr-Kryptolauf: ${signale.length} Signal(e), ${kaeufe} Kauf/Käufe, ${verkaeufe} Verkauf/Verkäufe`);
