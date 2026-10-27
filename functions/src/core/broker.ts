@@ -437,6 +437,30 @@ export interface TradeResult {
   trade?: Trade & { id: string };
 }
 
+/**
+ * Puffer des Grenzpreises für Krypto-Einstiege der Kurzfrist-Umkehr (27.10.).
+ *
+ * Gemessen: Von 6 Umkehr-Krypto-Einstiegen am 27.10. füllten 5 NICHT
+ * (`broker_kein_fill`) — das Maker-Limit exakt am Entscheidungskurs (Hebel
+ * 1b) füllt nur, wenn der Kurs nach der Entscheidung weiter fällt. Für eine
+ * Rücksetzer-Strategie ist das negative Auslese: Genau die Rücksetzer, die
+ * sofort drehen (die Gewinner), werden verpasst. Die Rückrechnung, auf der
+ * die Strategie beruht, rechnete mit Taker-Kosten (0,25 % je Seite) — ein
+ * grenzbewehrter Taker-Kauf ist also das Getestete. Der Puffer deckelt das
+ * Abrutschen hart; füllt selbst das nicht, storniert K-2c wie bisher.
+ */
+export const UMKEHR_KRYPTO_LIMIT_PUFFER = 0.005;
+
+/**
+ * Grenzpreis eines Krypto-EINSTIEGS (pur). Umkehr: Kurs + Puffer (sofort
+ * ausführbar, gedeckelt). Alle anderen Wege: Maker-Limit am Kurs (Hebel 1b,
+ * unverändert). Ausstiege erreichen diese Funktion nie (nur `eroeffnet`).
+ */
+export function kryptoEinstiegsLimit(preis: number, side: 'buy' | 'sell', quelle: string | null): number {
+  if (quelle === 'umkehr' && side === 'buy') return rundeLimitPreis(preis * (1 + UMKEHR_KRYPTO_LIMIT_PUFFER), 'buy');
+  return rundeLimitPreis(preis, side);
+}
+
 /** Einstiegs-ATR nur stempeln, wenn er eine echte positive Zahl ist. */
 export function atrStempel(v: number | null | undefined): { einstiegAtrPct?: number } {
   return typeof v === 'number' && Number.isFinite(v) && v > 0
@@ -1139,7 +1163,7 @@ export async function executeTrade(
    * zusätzlich selbst). Gebucht wird weiterhin die Taker-Gebühr der
    * Klasse — lieber zu viel Reibung einplanen als zu wenig. */
   const limitPreis =
-    eroeffnet && klasse === 'crypto' ? rundeLimitPreis(req.price, req.side) : 0;
+    eroeffnet && klasse === 'crypto' ? kryptoEinstiegsLimit(req.price, req.side, einstiegFruh) : 0;
 
   /* Läuft von UNS schon eine schließende Order für dieses Symbol
    * (Drift-Paket 08.10., Ursache 3)? Ein Exit ohne Fill im Wartefenster
