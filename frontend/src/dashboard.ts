@@ -10943,6 +10943,12 @@ function renderMomentum(m: MomentumDoc | null): void {
           .join('');
 
   const teile: string[] = [];
+  // Seit wann der Depotwert zählt (Task 36): Nach einem Neustart des
+  // Schattendepots wäre „25.000 $" sonst nicht vom ersten Tag zu trennen.
+  const seitMs = m.seit ? Date.parse(m.seit) : Number.NaN;
+  if (Number.isFinite(seitMs)) {
+    teile.push(`${t('mo.seit')} ${new Date(seitMs).toLocaleDateString(sprachWahl() === 'en' ? 'en-US' : 'de-DE')}.`);
+  }
   if (!m.marktOffen) {
     teile.push(
       t('mo.leitindexUnter'),

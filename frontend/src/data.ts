@@ -1086,6 +1086,8 @@ export interface MomentumDoc {
   trades: number;
   rebalanced: boolean;
   fehlendeHistorie: number;
+  /** Start des Schattendepots (Task 36: nach einem Neustart ≠ 28.07.). */
+  seit?: string;
 }
 
 export function watchMomentum(cb: (doc: MomentumDoc | null) => void): Unsubscribe {

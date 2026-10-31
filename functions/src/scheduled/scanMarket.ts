@@ -2247,18 +2247,23 @@ async function executeUserTrades(
             const d = marketData.get(sym);
             if (d) prices.set(sym, d.price);
           }
+          /* `update` mit Feldpfaden statt set(merge) (Task 36, Sweep 31.10.):
+           * merge mischt verschachtelte Maps — ein von `shadowTrade`
+           * gelöschtes (verkauftes) Symbol blieb in `shadow.positions`
+           * stehen, sein Erlös lag schon in `balance`, und beim nächsten
+           * Ausstiegssignal wurde es erneut gutgeschrieben. Ein Feldpfad
+           * ERSETZT die Map; die übrigen `shadow`-Felder bleiben unberührt. */
           const patch: Record<string, unknown> = { updatedAt: now.toISOString() };
           if (dirsChanged) patch.lastDirs = lastDirs;
           if (book && bookChanged) {
-            patch.shadow = {
-              ...doc.shadow,
-              balance: Math.round(book.balance * 100) / 100,
-              positions: book.positions,
-              equity: shadowEquity(book, prices),
-              updatedAt: now.toISOString(),
-            };
+            patch['shadow.balance'] = Math.round(book.balance * 100) / 100;
+            patch['shadow.positions'] = book.positions;
+            patch['shadow.equity'] = shadowEquity(book, prices);
+            patch['shadow.updatedAt'] = now.toISOString();
           }
-          await ref.set(patch, { merge: true });
+          // Gelöschte Strategie zwischen Lesen und Schreiben: update wirft —
+          // das darf den übrigen Scan (Ausstiege!) dieses Kontos nie kosten.
+          await ref.update(patch).catch((err: unknown) => logger.warn(`Strategie-Schatten ${ref.path} nicht geschrieben`, err));
         }
       }
 

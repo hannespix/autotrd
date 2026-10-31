@@ -44,6 +44,7 @@ import {
   applyMomentumOrders,
   classify,
   emptyMomentumBook,
+  momentumBuchStimmig,
   feeRateForClass,
   isStrategy,
   isTradable,
@@ -461,9 +462,35 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
   // ── 4. Schattendepot ──────────────────────────────────────────────────────
   const bookRef = db.doc('meta/momentumBook');
   const bookSnap = await bookRef.get();
-  let book =
-    (bookSnap.get('book') as MomentumBook | undefined) ??
-    emptyMomentumBook(MOMENTUM_START_BALANCE, now);
+  const gelesen = bookSnap.get('book') as MomentumBook | undefined;
+  let book = gelesen ?? emptyMomentumBook(MOMENTUM_START_BALANCE, now);
+  /* Task 36: Ein Buch, dessen Bilanz nicht aufgeht, hat Geld erfunden —
+   * jede Zahl daraus (Depotwert, Trades, „gehalten") wäre Fiktion. Es wird
+   * unverändert archiviert (write-once je Tag, für die Nachprüfung) und
+   * das Schattendepot startet neu. Sofort gespeichert, nicht erst am
+   * Rebalance-Tag: Sonst archivierte jeder ausgesetzte Lauf erneut. */
+  let neustart: { am: string; grund: string } | null = null;
+  /* Scheitert das Archivieren (anders als „gibt es schon"), wird das alte
+   * Buch NICHT überschrieben (Red-Team 31.10.): Es wäre der einzige Beleg.
+   * Der Lauf rechnet dann mit einem leeren Buch weiter, schreibt es aber
+   * nicht — morgen neuer Versuch. */
+  let buchSchreiben = true;
+  if (gelesen !== undefined && !momentumBuchStimmig(gelesen)) {
+    const grund = typeof gelesen.startkapital === 'number' ? 'bilanz' : 'ohne_bilanz';
+    buchSchreiben = await db
+      .doc(`meta/momentumBookAlt-${now.toISOString().slice(0, 10)}`)
+      .create({ book: gelesen, grund, archiviertAm: now.toISOString() })
+      .then(() => true)
+      .catch((err: unknown) => {
+        if ((err as { code?: number }).code === 6) return true;
+        logger.warn('Momentum-Buch nicht archiviert — altes Buch bleibt unangetastet', err);
+        return false;
+      });
+    logger.warn(`Momentum-Schattenbuch: Bilanz geht nicht auf (${grund}) — Neustart${buchSchreiben ? '' : ' (ungespeichert)'}`);
+    book = emptyMomentumBook(MOMENTUM_START_BALANCE, now);
+    neustart = { am: now.toISOString(), grund };
+    if (buchSchreiben) await bookRef.set({ book, updatedAt: now.toISOString(), neustart });
+  }
 
   // Preise: letzter bekannter Close je Symbol — dieselbe Quelle wie das
   // Ranking, damit Bewertung und Entscheidung nicht auseinanderlaufen.
@@ -502,7 +529,16 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
     } else {
       book = { ...book, lastRebalance: now.toISOString() };
     }
-    await bookRef.set({ book, updatedAt: now.toISOString() }, { merge: true });
+    /* OHNE merge (Task 36): merge mischt verschachtelte Maps — ein in
+     * `holdings` gelöschtes (verkauftes) Symbol bliebe in Firestore
+     * stehen, während sein Erlös schon im Bargeld liegt. Das Buch ist ein
+     * Ganzes und wird als Ganzes ersetzt; `neustart` wird mitgetragen. */
+    const neustartAlt = bookSnap.get('neustart') as { am: string; grund: string } | undefined;
+    if (buchSchreiben) await bookRef.set({
+      book,
+      updatedAt: now.toISOString(),
+      ...(neustart ?? neustartAlt ? { neustart: neustart ?? neustartAlt } : {}),
+    });
   }
 
   const equity = momentumEquity(book, preise);
@@ -556,6 +592,9 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
       gehalten: Object.keys(book.holdings).sort(),
       equity,
       trades: book.pnls.length,
+      // Ab wann der Depotwert zählt — nach einem Neustart (Task 36) wäre
+      // „25.000 $" ohne Datum nicht vom ersten Tag zu unterscheiden.
+      seit: book.startedAt,
       rebalanced: faellig,
       backfilled,
       // Bezogen auf die KANDIDATEN: Beim vollen Universum ist eine große
@@ -1124,6 +1163,19 @@ async function messePositionierung(
     );
     const { readings, oiJetzt } = await fetchPositioning(katalog, vorher);
     const summary = positioningSummary(readings);
+    // Kraken ganz ohne Daten: nichts schreiben — sonst wären auch die
+    // OI-Vergleichswerte für morgen weg.
+    if (readings.size === 0 && oiJetzt.size === 0) {
+      logger.warn('Positionierung: keine Daten — Vortagsstand bleibt stehen');
+      return summary;
+    }
+    /* OHNE merge (Task 36, Red-Team 31.10.): merge mischt die Maps `oi`,
+     * `auffaellig` und `zustaende` — ein Symbol, das gestern auffällig war
+     * und heute neutral ist (und deshalb fehlt), bliebe für immer
+     * „auffällig" und sperrte über die Hebel-Ampel im Scan den Hebel. Am
+     * 31.10. standen 7 Symbole in `auffaellig`, der Lauf hatte 6 gezählt.
+     * Der Lauf ist der einzige Schreiber; das Dokument wird als Ganzes
+     * ersetzt. */
     await ref.set(
       {
         at: now.toISOString(),
@@ -1136,7 +1188,6 @@ async function messePositionierung(
         ),
         ...summary,
       },
-      { merge: true },
     );
     logger.info(
       `Positionierung: ${summary.abgedeckt} Symbole, ${JSON.stringify(summary.zustaende)}`,
