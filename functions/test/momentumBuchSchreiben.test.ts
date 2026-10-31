@@ -29,3 +29,46 @@ describe('Momentum-Schattenbuch schreiben', () => {
     expect(rebalance).toBeGreaterThan(pruefen);
   });
 });
+
+describe('meta/positioning schreiben', () => {
+  const start = lauf.indexOf('async function messePositionierung(');
+  const rumpf = lauf.slice(start, lauf.indexOf('\n}\n', start));
+
+  it('ersetzt das Dokument als Ganzes — kein merge der Maps oi/auffaellig/zustaende', () => {
+    expect(start).toBeGreaterThan(0);
+    const aufrufe = [...rumpf.matchAll(/ref\.set\(([\s\S]*?)\n {4}\);/g)].map((m) => m[1] ?? '');
+    expect(aufrufe.length).toBe(1);
+    expect(aufrufe[0]).toMatch(/auffaellig/);
+    expect(aufrufe[0]).not.toMatch(/merge/);
+  });
+
+  it('schreibt nicht, wenn Kraken gar nichts liefert', () => {
+    const leer = rumpf.indexOf('readings.size === 0 && oiJetzt.size === 0');
+    expect(leer).toBeGreaterThan(0);
+    expect(rumpf.indexOf('ref.set(')).toBeGreaterThan(leer);
+  });
+});
+
+describe('Archiv vor dem Überschreiben', () => {
+  it('ohne Archiv kein Schreiben des Buchs', () => {
+    expect(lauf).toMatch(/if \(buchSchreiben\) await bookRef\.set\(\{ book, updatedAt: now\.toISOString\(\), neustart \}\)/);
+    expect(lauf).toMatch(/if \(buchSchreiben\) await bookRef\.set\(\{\n/);
+  });
+});
+
+describe('weitere Schreibstellen derselben Fehlerklasse (Sweep 31.10.)', () => {
+  const scan = readFileSync(join(import.meta.dirname, '..', 'src', 'scheduled', 'scanMarket.ts'), 'utf8');
+  const adopt = readFileSync(join(import.meta.dirname, '..', 'src', 'callable', 'adoptBroker.ts'), 'utf8');
+
+  it('Regelbaum-Schatten: shadow.positions per Feldpfad, nicht per merge', () => {
+    expect(scan).toMatch(/patch\['shadow\.positions'\] = book\.positions;/);
+    const ab = scan.indexOf("patch['shadow.positions']");
+    const schreiben = scan.indexOf('await ref.', ab);
+    expect(scan.slice(schreiben, schreiben + 40)).toMatch(/^await ref\.update\(patch\)/);
+  });
+
+  it('adoptBroker ersetzt risk.abgleich als Ganzes (keine stehenbleibenden abweichungSymbole)', () => {
+    expect(adopt).toMatch(/b\.update\(userRef, new FieldPath\('risk', 'abgleich'\), \{/);
+    expect(adopt).not.toMatch(/risk: \{\s*abgleich: \{/);
+  });
+});

@@ -39,7 +39,7 @@
  * will, übernimmt nicht.
  */
 
-import { getFirestore, Timestamp, type WriteBatch } from 'firebase-admin/firestore';
+import { FieldPath, getFirestore, Timestamp, type WriteBatch } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import {
@@ -632,24 +632,23 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
   // 5) Abgleich-Vermerk direkt mitschreiben: Nach der Übernahme IST der
   //    Stand sauber; die Karte soll das sofort sagen und nicht erst beim
   //    nächsten Scan.
+  //    Als GANZER Vermerk ersetzt, nicht per merge (Sweep 31.10.): merge
+  //    ließ `abweichungSymbole`, `abweichungen` und `konto.sicheresCash`
+  //    des Drift-Vermerks stehen — mit frischem `at` sperrte
+  //    `symbolSperreAusVermerk` genau die übernommenen Symbole weiter, und
+  //    der Kapitaldeckel rechnete mit dem Bargeld von VOR der Übernahme.
+  //    FieldPath wie in `vermerke()` (brokerAbgleich.ts): ersetzt nur
+  //    `risk.abgleich`, Geschwister wie `resetLaeuftSeit` bleiben.
   ops.push((b) =>
-    b.set(
-      userRef,
-      {
-        risk: {
-          abgleich: {
-            at: now,
-            status: 'sauber',
-            anzahl: 0,
-            fehlbestand: 0,
-            fremdbestand: 0,
-            verglichen: brokerPositionen.length,
-            brokerPositionen: brokerPositionen.length,
-          },
-        },
-      },
-      { merge: true },
-    ),
+    b.update(userRef, new FieldPath('risk', 'abgleich'), {
+      at: now,
+      status: 'sauber',
+      anzahl: 0,
+      fehlbestand: 0,
+      fremdbestand: 0,
+      verglichen: brokerPositionen.length,
+      brokerPositionen: brokerPositionen.length,
+    }),
   );
 
   /* 6) Equity-Serie VOR heute schneiden (Audit 13.08., B-3): Die Übernahme
