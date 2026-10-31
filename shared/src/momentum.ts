@@ -178,6 +178,11 @@ export interface MomentumBook {
   pnls: number[];
   startedAt: string;
   lastRebalance: string | null;
+  /** Startkapital und laufende Summe ALLER realisierten Ergebnisse (Task 36).
+   *  `pnls` ist auf 400 gekappt und taugt deshalb nicht für die Bilanz.
+   *  Fehlen beide (Bücher vor dem 31.10.), ist das Buch nicht prüfbar. */
+  startkapital?: number;
+  realisiert?: number;
 }
 
 export function emptyMomentumBook(startkapital: number, now: Date): MomentumBook {
@@ -187,7 +192,43 @@ export function emptyMomentumBook(startkapital: number, now: Date): MomentumBook
     pnls: [],
     startedAt: now.toISOString(),
     lastRebalance: null,
+    startkapital,
+    realisiert: 0,
   };
+}
+
+/** Erlaubte Rundungsdifferenz der Bilanz in Kontowährung: `cash` wird je
+ *  Rebalancing auf Cent gerundet (≤ 0,5 ct je Lauf). Fünf Dollar sind
+ *  Jahrzehnte an Rundung — und weniger als jede einzelne Position. */
+export const MOMENTUM_BILANZ_TOLERANZ = 5;
+
+/**
+ * Geht die Bilanz des Schattenbuchs auf? (Task 36)
+ *
+ * Bargeld plus Einstandswert aller Bestände muss Startkapital plus
+ * realisiertem Ergebnis entsprechen — Käufe tauschen Bargeld gegen
+ * Einstand, Verkäufe Einstand gegen Erlös, die Differenz landet in
+ * `realisiert`. Steht hier mehr Geld, als je hineinkam, hat das Buch Geld
+ * erfunden.
+ *
+ * Genau das ist geschehen: Das Buch wurde mit `set(…, {merge: true})`
+ * gespeichert, und merge mischt verschachtelte Maps — ein verkauftes Symbol
+ * blieb in `holdings` stehen, sein Erlös stand trotzdem im Bargeld. Jede
+ * Woche wurde jede Leiche erneut „verkauft"; aus 25.000 $ wurden 1,26 Mio.
+ * Diese Prüfung sieht das am Ergebnis, unabhängig davon, welcher Weg das
+ * Geld erfindet.
+ */
+export function momentumBuchStimmig(book: MomentumBook, toleranz = MOMENTUM_BILANZ_TOLERANZ): boolean {
+  const { startkapital, realisiert, cash } = book;
+  if (typeof startkapital !== 'number' || !Number.isFinite(startkapital) || !(startkapital > 0)) return false;
+  if (typeof realisiert !== 'number' || !Number.isFinite(realisiert)) return false;
+  if (typeof cash !== 'number' || !Number.isFinite(cash) || cash < -toleranz) return false;
+  let einstand = 0;
+  for (const h of Object.values(book.holdings ?? {})) {
+    if (!Number.isFinite(h?.qty) || !(h.qty > 0) || !Number.isFinite(h?.avgEntry) || !(h.avgEntry > 0)) return false;
+    einstand += h.qty * h.avgEntry;
+  }
+  return Math.abs(cash + einstand - (startkapital + realisiert)) <= toleranz;
 }
 
 /** Depotwert = Cash + bewertete Bestände. Fehlt ein Kurs, zählt der Einstand
@@ -225,6 +266,7 @@ export interface ApplyOrdersInput {
 export function applyMomentumOrders(input: ApplyOrdersInput): MomentumBook {
   const { orders, preise, feeRate, fractional, now } = input;
   let cash = input.book.cash;
+  let realisiert = input.book.realisiert ?? 0;
   const holdings = { ...input.book.holdings };
   const pnls = [...input.book.pnls];
 
@@ -235,6 +277,7 @@ export function applyMomentumOrders(input: ApplyOrdersInput): MomentumBook {
     const erloes = h.qty * p * (1 - feeRate(o.symbol));
     const einstand = h.qty * h.avgEntry;
     cash += erloes;
+    realisiert += erloes - einstand;
     pnls.push(Math.round((erloes - einstand) * 100) / 100);
     delete holdings[o.symbol];
   }
@@ -270,6 +313,8 @@ export function applyMomentumOrders(input: ApplyOrdersInput): MomentumBook {
     pnls: pnls.slice(-400),
     startedAt: input.book.startedAt,
     lastRebalance: now.toISOString(),
+    ...(input.book.startkapital !== undefined ? { startkapital: input.book.startkapital } : {}),
+    realisiert: Math.round(realisiert * 100) / 100,
   };
 }
 
