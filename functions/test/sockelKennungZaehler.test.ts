@@ -24,8 +24,9 @@ describe('Sockel ohne Kennung zählen (Task 32)', () => {
   });
 
   it('öffentlich nur Anzahlen, die Symbolliste nur im privaten Konto-Dokument', () => {
-    const health = snapshot.indexOf("await db.doc('meta/health').set(\n");
-    const oeffentlich = snapshot.indexOf('        sockelKennung,\n', health);
+    // Seit Task 38 (06.11.) wird `trading` vorab gebaut und per Feldpfad geschrieben.
+    const health = snapshot.indexOf('  const health = aggregateTradingHealth(beitraege);\n');
+    const oeffentlich = snapshot.indexOf('    sockelKennung,\n', health);
     expect(health).toBeGreaterThan(-1);
     expect(oeffentlich).toBeGreaterThan(health);
     expect(snapshot.indexOf('sockelOhneKennung,', health)).toBe(-1);

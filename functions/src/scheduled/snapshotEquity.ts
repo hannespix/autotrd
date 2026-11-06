@@ -753,28 +753,41 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   // ausschließlich in `users/{uid}/stats/main` und war von außen unsichtbar;
   // am 27.07. musste ein Mensch sie mit dem Taschenrechner zurückrechnen.
   const health = aggregateTradingHealth(beitraege);
-  await db.doc('meta/health').set(
-    {
-      equitySnapshot: {
-        at: now.toISOString(),
-        date,
-        users: users.size,
-        snapped,
-        marginInterest: Math.round(zinsSumme * 100) / 100,
-      },
-      trading: {
-        ...health,
-        verdict: tradingVerdict(health),
-        at: now.toISOString(),
-        // Wovon `exits7t` das Fenster ist — ohne den Stempel wäre die Zahl
-        // im Dokument nicht interpretierbar.
-        exits7tSeit: fensterSeit,
-        // Task 32: nur Anzahlen, keine Symbole oder Konten-Kennungen.
-        sockelKennung,
-      },
-    },
-    { merge: true },
-  );
+  const equitySnapshot = {
+    at: now.toISOString(),
+    date,
+    users: users.size,
+    snapped,
+    marginInterest: Math.round(zinsSumme * 100) / 100,
+  };
+  const trading = {
+    ...health,
+    verdict: tradingVerdict(health),
+    at: now.toISOString(),
+    // Wovon `exits7t` das Fenster ist — ohne den Stempel wäre die Zahl
+    // im Dokument nicht interpretierbar.
+    exits7tSeit: fensterSeit,
+    // Task 32: nur Anzahlen, keine Symbole oder Konten-Kennungen.
+    sockelKennung,
+  };
+  /* Je Feld per Feldpfad ERSETZEN, nicht set(merge) (Task 38, 06.11.):
+   * merge mischt verschachtelte Maps — ein Ausstiegsgrund oder eine Klasse,
+   * die aus dem 7-Tage-Fenster fiel, behielt ihre alten n/pnl/share. Am
+   * 06.11. summierten sich die Anteile in `exits7t` auf 1,41; „signal 8 /
+   * +165 $ / 100 %" stand dort seit über einer Woche. Feldpfade auf der
+   * obersten Ebene von `trading` ersetzen jede Map als Ganzes und lassen
+   * die Geschwister anderer Schreiber stehen (`exits7tAtr`,
+   * `sockelStopKontrafakt`, unten). `update` scheitert nur am fehlenden
+   * Dokument — dann das erste Anlegen per set. */
+  const felder: Record<string, unknown> = { equitySnapshot };
+  for (const [k, wert] of Object.entries(trading)) felder[`trading.${k}`] = wert;
+  await db
+    .doc('meta/health')
+    .update(felder)
+    .catch(async (err: unknown) => {
+      if ((err as { code?: number }).code !== 5) throw err;
+      await db.doc('meta/health').set({ equitySnapshot, trading }, { merge: true });
+    });
 
   // Klasse × Einstiegsweg × Ausstiegsgrund × ATR-Stufe, 7 Tage (Loop #138,
   // 19.10.). `update` mit Feldpfad, NICHT set(merge): merge mischt

@@ -22,7 +22,8 @@ describe('Sockel-Gegenrechnung im Abendlauf (Task 30)', () => {
   });
 
   it('läuft NACH dem Health-Schreiben und vor MU3, mit Fristen (R5)', () => {
-    const health = snapshot.indexOf("await db.doc('meta/health').set(\n");
+    // Seit Task 38 (06.11.): Health-Schreiben per Feldpfad-update.
+    const health = snapshot.indexOf('    .update(felder)\n');
     const block = snapshot.indexOf('// ── Task 30: Gegenrechnung');
     const mu3 = snapshot.indexOf('// ── MU3 „Bewährte Einstellungen"');
     expect(health).toBeGreaterThan(-1);
