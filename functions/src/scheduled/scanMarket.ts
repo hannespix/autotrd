@@ -1165,6 +1165,14 @@ async function executeUserTrades(
          * an dem die Kapitaldecke haengt. */
         kontoStandFuerAbgleich(userDoc),
       );
+      /* Krypto-Gebührenabzug (10.11.): Der Abgleich hat die Buchmenge in
+       * Firestore an den Broker angeglichen — die Kopie dieses Laufs wurde
+       * VORHER gelesen und zieht hier nach. Sonst verkaufte ein Ausstieg im
+       * selben Lauf die alte, zu große Menge, und Alpaca lehnte ihn ab. */
+      for (const g of abgleichBefund.angeglichen ?? []) {
+        const p = positions.get(g.symbol);
+        if (p) positions.set(g.symbol, { ...p, qty: g.menge });
+      }
       // Symbole, die Buch und Broker verschieden führen (Drift-Paket 08.10.).
       const abweichSymbole = new Set(abgleichBefund.abweichungen.map((a) => a.symbol));
       if (abgleichBefund.zustand !== 'kein_broker') {

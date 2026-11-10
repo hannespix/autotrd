@@ -227,8 +227,11 @@ describe('Anschluss-Wächter (der Serienfehler: Funktion korrekt, nicht angeschl
     );
   });
 
-  it('der Market-Pfad ist unangetastet: type market + day existieren weiter', () => {
-    expect(alpacaSrc).toContain("{ type: 'market', time_in_force: 'day' }");
+  it('der Market-Pfad bleibt Market: day für Börsenwerte, gtc nur für Krypto (10.11.)', () => {
+    // Alpaca lehnt `day` für Krypto ab (HTTP 422) — jeder Krypto-Ausstieg
+    // scheiterte daran. Die Regel selbst hält kryptoGebuehrAbgleich.test.ts.
+    expect(alpacaSrc).toContain("{ type: 'market', time_in_force: marketGueltigkeit(order.symbol) }");
+    expect(alpacaSrc).toContain("includes('/') ? 'gtc' : 'day'");
     // und der Limit-Zweig hängt an gtc — Alpaca kennt für Krypto kein day.
     expect(alpacaSrc).toContain(
       "{ type: 'limit', limit_price: String(order.limitPreis), time_in_force: 'gtc' }",
