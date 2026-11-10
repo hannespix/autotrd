@@ -775,8 +775,15 @@ export function rundeLimitPreis(preis: number, side: 'buy' | 'sell'): number {
 }
 
 /**
- * Order absenden — Market-Order, `day`-Gültigkeit; mit `limitPreis` eine
- * Limit-Order mit `gtc`.
+ * Order absenden — Market-Order, `day`-Gültigkeit (Krypto: `gtc`); mit
+ * `limitPreis` eine Limit-Order mit `gtc`.
+ *
+ * KRYPTO-MARKET mit `gtc` (10.11.): Alpaca kennt für Krypto nur gtc/ioc
+ * und lehnt `day` mit HTTP 422 „invalid crypto time_in_force" ab. Jede
+ * Krypto-Market-Order — also JEDER Krypto-Ausstieg eines Broker-Kontos —
+ * scheiterte daran; die Positionen der Kurzfrist-Umkehr vom 30.10. kamen
+ * elf Tage nicht mehr heraus. Eine Market-Order füllt sofort oder gar
+ * nicht, die Gültigkeit ändert an ihrer Laufzeit nichts.
  *
  * Warum Market und nicht Limit (die Regel): Die Engine entscheidet auf
  * Basis eines gerade geholten Kurses und will die Position JETZT. Eine
@@ -794,6 +801,16 @@ export function rundeLimitPreis(preis: number, side: 'buy' | 'sell'): number {
  * Krypto nur gtc/ioc kennt; die Laufzeit begrenzt ohnehin der Storno,
  * nicht die Gültigkeit.
  */
+/**
+ * Gültigkeit einer MARKET-Order: Krypto braucht `gtc`, alles andere bleibt
+ * bei `day`. Erkannt werden alle drei Schreibweisen (`BTC-USD`, `BTC/USD`
+ * und das kompakte `BTCUSD`, letzteres nur für Katalog-Krypto — siehe
+ * KOMPAKT_ZURUECK). Pur, damit der Test die Regel festhält.
+ */
+export function marketGueltigkeit(symbol: string): 'gtc' | 'day' {
+  return zuAlpacaSymbol(vonAlpacaSymbol(symbol)).includes('/') ? 'gtc' : 'day';
+}
+
 export async function alpacaOrder(
   mode: BrokerMode,
   order: {
@@ -820,7 +837,7 @@ export async function alpacaOrder(
         side: order.side,
         ...(limit
           ? { type: 'limit', limit_price: String(order.limitPreis), time_in_force: 'gtc' }
-          : { type: 'market', time_in_force: 'day' }),
+          : { type: 'market', time_in_force: marketGueltigkeit(order.symbol) }),
         client_order_id: order.clientOrderId,
       }),
     },

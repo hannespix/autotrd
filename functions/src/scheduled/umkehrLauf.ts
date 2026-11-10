@@ -373,8 +373,13 @@ async function fuehreAus(
   kaufen: ReadonlyArray<PlanKauf>,
   laufId: string,
   now: Date,
-): Promise<{ kaeufe: number; verkaeufe: number; ohne: OhneKauf; anteile?: KapitalAnteile; abrutschen: number[] }> {
+): Promise<{ kaeufe: number; verkaeufe: number; ohne: OhneKauf; anteile?: KapitalAnteile; abrutschen: number[]; verkaufFehl: Record<string, number> }> {
   let kaeufe = 0;
+  /* Gescheiterte AUSSTIEGE je Grund (10.11.): Bis dahin unsichtbar — der
+   * Kryptolauf meldete „0 Verkäufe", während Alpaca sechs Verkäufe
+   * ablehnte (ungültige Order-Laufzeit). Ein Ausstieg, der nicht
+   * durchgeht, ist der teuerste stille Fehler; er wird gezählt. */
+  const verkaufFehl: Record<string, number> = {};
   /** Abrutschen je Krypto-Kauf (Fill / Entscheidungskurs − 1, in %) — Red-Team M1. */
   const abrutschen: number[] = [];
   let verkaeufe = 0;
@@ -395,7 +400,12 @@ async function fuehreAus(
     const p = alle.get(v.symbol);
     if (!p || !umkehrBesitz(p)) continue;
     const px = preis(v.symbol);
-    if (px === null) continue;
+    if (px === null) {
+      // Kein Kurs ⇒ kein Verkauf zum erfundenen Preis (M3) — aber gezählt:
+      // Ein offener Ausstieg darf im Stand nicht wie „alles erledigt" aussehen.
+      zaehleGrund(verkaufFehl, 'kein_kurs', 1);
+      continue;
+    }
     const r = await executeTrade(
       { uid: k.id, symbol: v.symbol, side: 'sell', price: px, source: 'engine', riskExit: v.grund, assetClass: classify(v.symbol) },
       clamped,
@@ -404,6 +414,9 @@ async function fuehreAus(
     if (r.executed) {
       verkaeufe += 1;
       if (r.trade?.teilSchluss !== true) alle.delete(v.symbol);
+    } else {
+      zaehleGrund(verkaufFehl, r.reason ?? 'unbekannt', 1);
+      logger.warn(`Umkehr ${k.id} ${v.symbol}: Ausstieg (${v.grund}) nicht ausgeführt — ${r.reason ?? 'unbekannt'}`);
     }
   }
 
@@ -412,7 +425,7 @@ async function fuehreAus(
     ohne.gesperrt += kaufen.length;
     zaehleGrund(ohne.gesperrtGruende, einstiegSperre, kaufen.length);
   }
-  if (einstiegSperre !== null || kaufen.length === 0) return { kaeufe, verkaeufe, ohne, abrutschen };
+  if (einstiegSperre !== null || kaufen.length === 0) return { kaeufe, verkaeufe, ohne, abrutschen, verkaufFehl };
   // (Anteile erst ab hier: Ohne Kaufabsicht misst die Kennzahl nichts, was blockiert.)
   // Kontostand FRISCH nach den Verkäufen — der Snapshot von oben kennt die Erlöse nicht.
   const frisch = await k.ref.get();
@@ -474,7 +487,7 @@ async function fuehreAus(
     }
   }
   ohne.bargeldOderPlatz += kandidaten.length - auftraege.length;
-  return { kaeufe, verkaeufe, ohne, abrutschen, ...(anteile ? { anteile } : {}) };
+  return { kaeufe, verkaeufe, ohne, abrutschen, verkaufFehl, ...(anteile ? { anteile } : {}) };
 }
 
 /**
@@ -518,6 +531,10 @@ export function zaehleGrund(ziel: Record<string, number>, roh: string, n: number
   const sauber = /^[a-z0-9_]{1,40}$/.test(roh) ? roh : 'sonstig';
   const code = sauber in ziel || Object.keys(ziel).length < GRUENDE_MAX ? sauber : 'sonstig';
   ziel[code] = (ziel[code] ?? 0) + n;
+}
+/** Öffentlicher Stand der gescheiterten Ausstiege: Anzahl und Gründe (nur Codes). */
+export function verkaufStand(fehl: Readonly<Record<string, number>>): { n: number; gruende: Record<string, number> } {
+  return { n: Object.values(fehl).reduce((a, b) => a + b, 0), gruende: { ...fehl } };
 }
 const summiereOhne = (a: OhneKauf, b: OhneKauf): void => {
   a.gesperrt += b.gesperrt;
@@ -684,6 +701,7 @@ export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: numbe
   let verkaeufe = 0;
   let bearbeitet = 0;
   const ohne = leerOhneKauf();
+  const verkaufFehl: Record<string, number> = {};
   const anteile: KapitalAnteile[] = [];
   for (const k of await umkehrKonten()) {
     try {
@@ -707,6 +725,7 @@ export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: numbe
       kaeufe += r.kaeufe;
       verkaeufe += r.verkaeufe;
       summiereOhne(ohne, r.ohne);
+      for (const [g, n] of Object.entries(r.verkaufFehl)) zaehleGrund(verkaufFehl, g, n);
       if (r.anteile) anteile.push(r.anteile);
       bearbeitet += 1;
     } catch (err) {
@@ -723,6 +742,7 @@ export async function runUmkehrMorgen(now = new Date()): Promise<{ konten: numbe
     konten: bearbeitet,
     kaeufe,
     verkaeufe,
+    verkaufAbgelehnt: verkaufStand(verkaufFehl),
     ohneKauf: ohne,
     planNachgeholt: nachgeholt,
     // Anonym: nur Mediane über die Konten mit Kaufabsicht (23.10.).
@@ -767,20 +787,50 @@ export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: numbe
   let verkaeufe = 0;
   let bearbeitet = 0;
   const ohne = leerOhneKauf();
+  const verkaufFehl: Record<string, number> = {};
   const abrutschen: number[] = [];
+  /** Nachgeholte Ausstiege schon gestempelter Konten (s. u.). */
+  let nachVersucht = 0;
+  let nachVerkauft = 0;
+  const nachFehl: Record<string, number> = {};
   for (const k of konten) {
     try {
       const stand = k.ref.collection('meta').doc('umkehrKrypto');
-      if ((await stand.get()).get('tag') === tag) continue; // je UTC-Tag genau einmal
+      const schonHeute = (await stand.get()).get('tag') === tag; // KÄUFE je UTC-Tag genau einmal
       const tore = toreFuer(k, now);
       if (tore.handel) continue;
-      await stand.set({ tag, at: now.toISOString() });
       const pos = gehalten.get(k.id) ?? new Map<string, Position>();
+      if (schonHeute) {
+        /* AUSSTIEGE nachholen (10.11.): Der Tagesstempel gilt den Käufen.
+         * Ein Ausstieg, der im ersten Versuch scheiterte (Broker lehnt ab,
+         * kein Kurs), wartete sonst bis zum nächsten Tag — ein Exit darf
+         * nie an einem Stempel hängen. Die Order-Kennung eines Ausstiegs
+         * ist positionsstabil (`auftragsLauf`), eine Wiederholung verkauft
+         * also nie doppelt. */
+        const offen = [...ausstiegeAus(pos, kerzen, krypto)].map(([symbol, grund]) => ({ symbol, grund }));
+        if (offen.length === 0) continue;
+        nachVersucht += offen.length;
+        // Eigener Fang: Der äußere setzt bei Kursausfall den Tagesstempel
+        // zurück — hier dürfte das die KÄUFE des Tages wiederholen.
+        const r = await fuehreAus(k, tore.clamped, tore.einstieg, offen, [], `umk-${tag}`, now).catch((err: unknown) => {
+          logger.warn(`Umkehr-Kryptolauf: Ausstiege ${k.id} nicht nachgeholt`, err);
+          return null;
+        });
+        if (r === null) {
+          zaehleGrund(nachFehl, 'lauf_fehler', offen.length);
+          continue;
+        }
+        nachVerkauft += r.verkaeufe;
+        for (const [g, n] of Object.entries(r.verkaufFehl)) zaehleGrund(nachFehl, g, n);
+        continue;
+      }
+      await stand.set({ tag, at: now.toISOString() });
       const plan = kontoPlan(pos, signale, ausstiegeAus(pos, kerzen, krypto), umkehrParameterFuer('crypto').maxPositionen, klasseErlaubt(tore.clamped));
       const r = await fuehreAus(k, tore.clamped, tore.einstieg, plan.verkaufen, plan.kaufen, `umk-${tag}`, now);
       kaeufe += r.kaeufe;
       verkaeufe += r.verkaeufe;
       summiereOhne(ohne, r.ohne);
+      for (const [g, n] of Object.entries(r.verkaufFehl)) zaehleGrund(verkaufFehl, g, n);
       abrutschen.push(...r.abrutschen);
       bearbeitet += 1;
     } catch (err) {
@@ -791,6 +841,10 @@ export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: numbe
     }
   }
   const alt = (await db.doc('meta/umkehr').get()).get('krypto') as { tag?: unknown; veraltet?: unknown } | undefined;
+  // Nachgeholte Ausstiege gehören in BEIDE Stände (Red-Team 10.11.): Gibt es
+  // im selben Lauf neue und gestempelte Konten, fielen sie sonst heraus.
+  verkaeufe += nachVerkauft;
+  for (const [g, n] of Object.entries(nachFehl)) zaehleGrund(verkaufFehl, g, n);
   if (kryptoStandErsetzen(alt, tag, bearbeitet)) {
     await standSchreiben('krypto', {
       at: now.toISOString(),
@@ -798,10 +852,23 @@ export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: numbe
       konten: bearbeitet,
       kaeufe,
       verkaeufe,
+      verkaufAbgelehnt: verkaufStand(verkaufFehl),
       ohneKauf: ohne,
       veraltet: false,
       signale: signale.map((s) => ({ symbol: s.symbol, rsi: s.rsi })),
       abrutschen: abrutschStat(abrutschen),
+    });
+  } else if (nachVersucht > 0) {
+    // Nur die Ausstiegs-Zahlen des Tages fortschreiben; Käufe, Signale und
+    // Abrutschen des handelnden Laufs bleiben, wie sie sind.
+    const bisher = (alt ?? {}) as Record<string, unknown>;
+    await standSchreiben('krypto', {
+      ...bisher,
+      at: now.toISOString(),
+      verkaeufe: (typeof bisher['verkaeufe'] === 'number' ? bisher['verkaeufe'] : 0) + nachVerkauft,
+      // Der Nachhol-Zweig versucht JEDEN noch offenen Ausstieg erneut — sein
+      // Ergebnis ist der aktuelle Stand der offenen Ausstiege, kein Zuwachs.
+      verkaufAbgelehnt: verkaufStand(nachFehl),
     });
   }
   logger.info(`Umkehr-Kryptolauf: ${signale.length} Signal(e), ${kaeufe} Kauf/Käufe, ${verkaeufe} Verkauf/Verkäufe`);

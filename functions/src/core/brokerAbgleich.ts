@@ -39,7 +39,7 @@ import {
   nurBrokerPositionen,
   type Abweichung,
 } from './alpacaBroker.js';
-import { kontoAbgleich, type KontoBefund, type PdtStand } from '../../../shared/src/index.js';
+import { classify, kontoAbgleich, resetLaeuft, type KontoBefund, type PdtStand } from '../../../shared/src/index.js';
 import { brokerVerbindungLesend, verbindungUnlesbar } from './orderRouting.js';
 
 /**
@@ -75,6 +75,13 @@ export interface AbgleichBefund {
   sperre: boolean;
   /** Daytrade-Stand des Brokers (PDT-Bremse, 05.10.) — fehlt, wenn das Konto nicht lesbar war. */
   pdt?: PdtStand;
+  /**
+   * Krypto-Positionen, deren Buchmenge in DIESEM Lauf an den Broker
+   * angeglichen wurde (Gebührenabzug in Stücken, 10.11.). Der Aufrufer hat
+   * die Positionen VOR dem Abgleich gelesen — er muss seine Kopie
+   * nachziehen, sonst verkauft ein Ausstieg im selben Lauf die alte Menge.
+   */
+  angeglichen?: Array<{ symbol: string; menge: number }>;
   /** Klartext für Log und Anzeige. */
   grund?: string;
   /**
@@ -86,6 +93,120 @@ export interface AbgleichBefund {
    * auf. Genau das ist am 12.08. passiert. Geld war nie Teil des Vergleichs.
    */
   konto?: KontoBefund;
+}
+
+/**
+ * Größter Stückabzug, der als Krypto-GEBÜHR gilt — relativ zur Buchmenge.
+ *
+ * Alpaca berechnet die Gebühr eines Krypto-KAUFS in der gekauften Münze:
+ * Bestellt und als gefüllt gemeldet werden z. B. 17,02373 LINK, im Depot
+ * liegen 16,998194 — Faktor 0,9985 (Maker 0,15 %) bzw. 0,9975 (Taker
+ * 0,25 %, Basisstufe). Das Buch verbuchte die gemeldete Menge; der
+ * Abgleich sah „Buch > Broker", und ein Fehlbestand sperrt die Einstiege
+ * des ganzen Kontos. Am 10.11. standen deshalb 3 von 4 Broker-Konten in
+ * der Sperre — jedes wegen genau dieser 0,15–0,25 % (Logs 10.11.).
+ *
+ * 0,3 % deckt die Taker-Gebühr der Basisstufe mit Rundungsluft. Alles
+ * darüber ist kein Gebührenabzug und bleibt, was es war: ein Fehlbestand,
+ * der sperrt.
+ */
+export const KRYPTO_GEBUEHR_BAND = 0.003;
+
+/**
+ * Ist diese Abweichung ein Krypto-Gebührenabzug? Liefert die fehlenden
+ * Stücke oder `null` (pur).
+ *
+ * Eng gefasst: nur Krypto, nur Long, nur wenn der Broker die Position
+ * wirklich hält (Menge > 0) und dem Buch höchstens das Gebührenband fehlt.
+ * Eine beim Broker VERSCHWUNDENE Position ist nie ein Gebührenabzug.
+ */
+export function kryptoGebuehrAbzug(a: Abweichung): number | null {
+  if (classify(a.symbol) !== 'crypto') return null;
+  if (!(a.eigeneMenge > 0) || !(a.brokerMenge > 0)) return null;
+  const fehlt = a.eigeneMenge - a.brokerMenge;
+  if (!(fehlt > 0) || fehlt / a.eigeneMenge > KRYPTO_GEBUEHR_BAND) return null;
+  return fehlt;
+}
+
+/**
+ * Deckel über ALLE Angleichungen einer Position (Red-Team 10.11.).
+ *
+ * Das Band allein ist nur eine Größen-Toleranz: Ohne Deckel könnte ein
+ * echter, fortlaufender Schwund (Handverkäufe, Auszahlungen beim Broker)
+ * in 0,25-%-Schritten je Scan abgeschrieben werden — die Sperre fiele nie.
+ * Eine Gebühr fällt aber nur auf GEKAUFTE Stücke an: Der Sammler
+ * `gebuehrMenge` darf deshalb nie mehr als das Band der je geführten
+ * Bruttomenge (aktuelle Buchmenge + schon abgezogene Stücke) betragen.
+ * Ein zweiter Abzug ohne neuen Kauf sprengt den Deckel — und bleibt, was
+ * er ist: ein Fehlbestand, der sperrt. Ein Nachkauf vergrößert die
+ * Bruttomenge und gibt genau seinen eigenen Gebührenanteil frei.
+ */
+export function gebuehrDeckelHaelt(buchMenge: number, bisher: number, fehlt: number): boolean {
+  if (!(buchMenge > 0) || !(fehlt > 0) || !(bisher >= 0)) return false;
+  return (bisher + fehlt) / (buchMenge + bisher) <= KRYPTO_GEBUEHR_BAND;
+}
+
+/**
+ * Buchmenge einer Krypto-Position an den Broker angleichen (10.11.).
+ *
+ * Das ist KEIN Override der Abgleich-Sperre (CLAUDE.md §7), sondern die
+ * Korrektur ihrer Ursache: Das Buch führte Stücke, die der Broker als
+ * Gebühr einbehalten hat. Danach misst der Abgleich neu — und findet, was
+ * stimmt.
+ *
+ * Buchung, spiegelbildlich zum Broker: Die Menge sinkt auf den
+ * Broker-Bestand, und der Einstandswert der nie erhaltenen Stücke geht
+ * zurück ins Bargeld. Das Buch hatte die Gebühr beim Kauf schon in DOLLAR
+ * belastet (effektiver Einstand = Fill × (1 + Kommission)); ohne die
+ * Rückbuchung zählte dieselbe Gebühr zweimal — einmal in Dollar, einmal in
+ * Stücken. So bleibt die Equity gleich und Bargeld wie Bestand entsprechen
+ * dem Broker.
+ *
+ * In EINER Transaktion mit Vorbedingungen: Position existiert, liegt beim
+ * Broker, ist long, und ihre Menge ist noch die, gegen die verglichen
+ * wurde. Hat sich irgendetwas bewegt (Verkauf, Reset), geschieht nichts —
+ * der nächste Abgleich misst neu.
+ */
+export async function gleicheKryptoGebuehrAn(
+  uid: string,
+  a: Abweichung,
+  jetzt: Date,
+): Promise<boolean> {
+  const fehlt = kryptoGebuehrAbzug(a);
+  if (fehlt === null) return false;
+  const db = getFirestore();
+  const userRef = db.doc(`users/${uid}`);
+  const posRef = userRef.collection('positions').doc(a.symbol);
+  return db.runTransaction(async (tx) => {
+    const [userSnap, posSnap] = await Promise.all([tx.get(userRef), tx.get(posRef)]);
+    if (!userSnap.exists || !posSnap.exists) return false;
+    // Dieselbe Verfallsregel wie überall (Red-Team): Ein hängengebliebener
+    // Stempel darf die Angleichung nicht für immer blockieren.
+    if (resetLaeuft(userSnap.get('risk.resetLaeuftSeit'), jetzt)) return false;
+    const pos = posSnap.data() as Position & { gebuehrMenge?: number };
+    if (pos.broker !== true || pos.side === 'short') return false;
+    if (!(Math.abs(pos.qty - a.eigeneMenge) <= 1e-9)) return false;
+    if (!Number.isFinite(pos.avgEntry) || !(pos.avgEntry > 0)) return false;
+    const balance = userSnap.get('wallet.paperBalance') as unknown;
+    if (typeof balance !== 'number' || !Number.isFinite(balance)) return false;
+    const bisher =
+      typeof pos.gebuehrMenge === 'number' && Number.isFinite(pos.gebuehrMenge) && pos.gebuehrMenge > 0
+        ? pos.gebuehrMenge
+        : 0;
+    if (!gebuehrDeckelHaelt(pos.qty, bisher, fehlt)) return false;
+    const iso = jetzt.toISOString();
+    tx.update(posRef, {
+      qty: a.brokerMenge,
+      // Sammler je Position: wie viele Stücke insgesamt als Gebühr gingen.
+      gebuehrMenge: Math.round((bisher + fehlt) * 1e9) / 1e9,
+      gebuehrAngeglichenAm: iso,
+    });
+    tx.update(userRef, {
+      'wallet.paperBalance': Math.round((balance + fehlt * pos.avgEntry) * 100) / 100,
+      'wallet.updatedAt': iso,
+    });
+    return true;
+  });
 }
 
 /** Kein Broker, keine Prüfung — der Normalfall für reine Buch-Konten. */
@@ -200,6 +321,14 @@ export async function abgleichFuerKonto(
    * Aufrufer, die nur Positionen pruefen wollen.
    */
   buch?: { cash: number; equity: number },
+  /**
+   * Krypto-Gebührenabzüge im Buch angleichen (10.11.)? NUR der Scan setzt
+   * das: Die Angleichung schreibt Positionsmenge und Bargeld. Die
+   * Admin-Prüfung ruft dieselbe Funktion und bleibt ohne den Schalter,
+   * was sie laut Owner-Entscheidung 22.08. ist — eine Messung, kein
+   * Geld-Schreibpfad (Red-Team 10.11.).
+   */
+  opts: { kryptoGebuehrAngleichen?: boolean } = {},
 ): Promise<AbgleichBefund> {
   /* LESENDE Verbindung — auch bei hinterlegtem Echtgeld-Schlüssel.
    *
@@ -315,7 +444,29 @@ export async function abgleichFuerKonto(
   // `relevante` dient nur der Zählung im Vermerk: „gegen wie viele eigene
   // Positionen wurde überhaupt verglichen".
   const relevante = nurBrokerPositionen(eigene);
-  const abweichungen = bestandsAbgleich(relevante, brokerPositionen);
+  /* Krypto-Gebührenabzüge zuerst angleichen (10.11., siehe
+   * `gleicheKryptoGebuehrAn`): Was danach übrig bleibt, ist echte Drift
+   * und wird beurteilt wie immer. Scheitert die Angleichung (Position
+   * hat sich bewegt, Transaktion verloren), bleibt die Abweichung stehen —
+   * die Sperre gilt dann wie bisher, der nächste Lauf versucht es neu. */
+  const angeglichen: Array<{ symbol: string; menge: number }> = [];
+  const abweichungen: Abweichung[] = [];
+  for (const a of bestandsAbgleich(relevante, brokerPositionen)) {
+    if (opts.kryptoGebuehrAngleichen === true && kryptoGebuehrAbzug(a) !== null) {
+      const ok = await gleicheKryptoGebuehrAn(uid, a, jetzt).catch((err: unknown) => {
+        logger.warn(`Abgleich ${uid}: Krypto-Gebühr ${a.symbol} nicht angeglichen`, err);
+        return false;
+      });
+      if (ok) {
+        angeglichen.push({ symbol: a.symbol, menge: a.brokerMenge });
+        logger.warn(
+          `KRYPTO-GEBÜHR ${uid} ${a.symbol}: Buchmenge ${a.eigeneMenge} → ${a.brokerMenge} (Abzug in Stücken, Einstand zurückgebucht)`,
+        );
+        continue;
+      }
+    }
+    abweichungen.push(a);
+  }
 
   /* ── Nicht jede Abweichung ist gleich gefährlich (Live-Fund 05.08.) ────
    *
@@ -407,6 +558,7 @@ export async function abgleichFuerKonto(
       ...(kontoBefund ? { konto: kontoBefund } : {}),
       ...(kontoBefund?.grund ? { grund: kontoBefund.grund } : {}),
       ...(pdtStand ? { pdt: pdtStand } : {}),
+      ...(angeglichen.length > 0 ? { angeglichen } : {}),
     };
   }
   const beschreibe = (liste: Abweichung[]): string =>
@@ -429,6 +581,7 @@ export async function abgleichFuerKonto(
       sperre: kontoBefund?.sperre === true,
       ...(kontoBefund ? { konto: kontoBefund } : {}),
       ...(pdtStand ? { pdt: pdtStand } : {}),
+      ...(angeglichen.length > 0 ? { angeglichen } : {}),
       grund:
         `Nur beim Broker (${fremdbestand.length}): ${beschreibe(fremdbestand)}`
         + (kontoBefund?.grund ? ` · ${kontoBefund.grund}` : ''),
@@ -447,6 +600,7 @@ export async function abgleichFuerKonto(
     sperre: true,
     ...(kontoBefund ? { konto: kontoBefund } : {}),
     ...(pdtStand ? { pdt: pdtStand } : {}),
+    ...(angeglichen.length > 0 ? { angeglichen } : {}),
     grund:
       `Im Buch stehen ${fehlbestand.length} Position(en), die der Broker nicht hat: `
       + `${beschreibe(fehlbestand)}`

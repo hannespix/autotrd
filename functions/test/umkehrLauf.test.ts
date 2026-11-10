@@ -273,13 +273,22 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
     expect(lauf).toContain("quelle: 'umkehr',");
     expect(lauf).toContain("signature: 'umkehr'");
     expect(lauf).toContain('plan.verkaufen, plan.kaufen, `umk-${plan.tag}`, now);');
-    expect(lauf).toContain('if (einstiegSperre !== null || kaufen.length === 0) return { kaeufe, verkaeufe, ohne, abrutschen };');
+    expect(lauf).toContain('if (einstiegSperre !== null || kaufen.length === 0) return { kaeufe, verkaeufe, ohne, abrutschen, verkaufFehl };');
     expect(lauf.indexOf('// 1) Verkäufe')).toBeLessThan(lauf.indexOf('// 2) Käufe'));
     // Jeder Plan genau einmal (M1), Verkauf nie zum erfundenen Kurs (M3).
     expect(lauf).toContain('      if (plan.ausgefuehrtAm) continue;');
-    expect(lauf).toContain('    if (px === null) continue;\n    const r = await executeTrade(\n      { uid: k.id, symbol: v.symbol, side: \'sell\'');
-    // Krypto: eigener Tageslauf direkt nach dem UTC-Tagesschluss (H1), je Tag einmal.
+    // 10.11.: ohne Kurs weiterhin kein Verkauf — aber als offener Ausstieg gezählt.
+    expect(lauf).toContain("    if (px === null) {\n      // Kein Kurs ⇒ kein Verkauf zum erfundenen Preis (M3)");
+    expect(lauf).toContain("      zaehleGrund(verkaufFehl, 'kein_kurs', 1);\n      continue;\n    }\n    const r = await executeTrade(\n      { uid: k.id, symbol: v.symbol, side: 'sell'");
+    // Krypto: eigener Tageslauf direkt nach dem UTC-Tagesschluss (H1), KÄUFE je Tag einmal.
     // 22.10.: Vortageskerze kam erst nach 04:10 UTC — Versuche bis mittags.
+    // 10.11.: Gestempelte Konten holen nur noch AUSSTIEGE nach (leere Kaufliste) —
+    // der Kaufpfad hinter dem Stempel bleibt für sie unerreichbar.
+    expect(lauf).toContain("const schonHeute = (await stand.get()).get('tag') === tag;");
+    const nachholen = lauf.slice(lauf.indexOf('      if (schonHeute) {'), lauf.indexOf('      await stand.set({ tag, at: now.toISOString() });'));
+    expect(nachholen.length).toBeGreaterThan(100);
+    expect(nachholen).toContain('offen, [], `umk-${tag}`, now)');
+    expect(nachholen.trimEnd().endsWith('continue;\n      }')).toBe(true);
     expect(lauf).toContain("schedule: '10 0-14/2 * * *', timeZone: 'UTC'");
     // 22.10.: Abendlauf brach an 512 MiB ab (517–595 MiB gemessen) — Abend und Morgen (holt nach) 1 GiB.
     expect(lauf).toContain("{ schedule: '45 16 * * 1-5', timeZone: 'America/New_York', retryCount: 0, timeoutSeconds: 540, memory: '1GiB',");
@@ -291,7 +300,6 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
     expect(lauf).toContain('if (kryptoStandErsetzen(alt, tag, bearbeitet)) {');
     // 21.10.: Yahoo lieferte die Vortageskerze um 00:10 UTC noch nicht — nur auf frischer Kerze handeln.
     expect(lauf).toContain("if (!kryptoKerzeFrisch(tag, now.getTime())) {");
-    expect(lauf).toContain("if ((await stand.get()).get('tag') === tag) continue;");
     // 23.10.: Gründe aufgeschlüsselt, Kapital nur als Median (meta/** ist öffentlich).
     expect(lauf).toContain('ohne.keinBargeld += wahl.keinBargeld;');
     // 26.10.: Gründe der Ablehnungen und Sperren als Codes, „zu teuer" getrennt.
