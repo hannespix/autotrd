@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { alpacaOrder, marketGueltigkeit, type Abweichung } from '../src/core/alpacaBroker.js';
 import {
   KRYPTO_GEBUEHR_BAND,
+  gebuehrDeckelHaelt,
   gleicheKryptoGebuehrAn,
   kryptoGebuehrAbzug,
 } from '../src/core/brokerAbgleich.js';
@@ -93,6 +94,33 @@ describe('kryptoGebuehrAbzug (pur)', () => {
   });
 });
 
+describe('gebuehrDeckelHaelt (pur) — kein schleichendes Abschreiben', () => {
+  it('der erste Abzug nach einem Kauf passt', () => {
+    expect(gebuehrDeckelHaelt(17.02373, 0, 0.025535595)).toBe(true);
+    expect(gebuehrDeckelHaelt(1, 0, 0.0025)).toBe(true);
+  });
+
+  it('ein zweiter Abzug OHNE neuen Kauf sprengt den Deckel — das ist Schwund, keine Gebühr', () => {
+    // 1 Stück gekauft, 0,25 % Gebühr schon angeglichen; jetzt fehlen wieder 0,25 %.
+    expect(gebuehrDeckelHaelt(0.9975, 0.0025, 0.0025)).toBe(false);
+    // Rechnerisch bis ~58 % am Tag (0,997^288) wären ohne Deckel abschreibbar gewesen.
+    expect(gebuehrDeckelHaelt(0.9975, 0.0025, 0.0006)).toBe(false);
+  });
+
+  it('ein Nachkauf gibt genau seinen eigenen Gebührenanteil frei', () => {
+    // 1 Stück netto 0,9975 + Nachkauf 1 Stück brutto ⇒ Buch 1,9975, wieder 0,25 % auf das neue Stück.
+    expect(gebuehrDeckelHaelt(1.9975, 0.0025, 0.0025)).toBe(true);
+    expect(gebuehrDeckelHaelt(1.9975, 0.0025, 0.0040)).toBe(false);
+  });
+
+  it('kaputte Eingaben halten nie', () => {
+    expect(gebuehrDeckelHaelt(0, 0, 0.001)).toBe(false);
+    expect(gebuehrDeckelHaelt(1, -1, 0.001)).toBe(false);
+    expect(gebuehrDeckelHaelt(1, 0, 0)).toBe(false);
+    expect(gebuehrDeckelHaelt(Number.NaN, 0, 0.001)).toBe(false);
+  });
+});
+
 describe('gleicheKryptoGebuehrAn (Transaktion)', () => {
   beforeEach(() => {
     zustand.user = { wallet: { paperBalance: 1000 } };
@@ -119,6 +147,32 @@ describe('gleicheKryptoGebuehrAn (Transaktion)', () => {
     zustand.pos = { ...zustand.pos, gebuehrMenge: 0.01 };
     await gleicheKryptoGebuehrAn('u1', LINK, JETZT);
     expect(zustand.updates.find((u) => u.wo === 'pos')!.daten['gebuehrMenge']).toBeCloseTo(0.035535595, 9);
+  });
+
+  it('die SUMME aller Abzüge ist gedeckelt — weiterer Schwund ohne Kauf bleibt Fehlbestand und sperrt', async () => {
+    // Stand nach der ersten Angleichung (0,15 %); beim Broker fehlen erneut 0,25 %.
+    zustand.pos = { symbol: 'LINK-USD', qty: 16.998194405, avgEntry: 20, broker: true, gebuehrMenge: 0.025535595 };
+    const wieder = abw('LINK-USD', 16.998194405, 16.998194405 * 0.9975);
+    // Für sich genommen läge der Abzug im Band …
+    expect(kryptoGebuehrAbzug(wieder)).not.toBeNull();
+    // … zusammen mit dem schon abgezogenen aber über 0,3 % der gekauften Menge.
+    expect(await gleicheKryptoGebuehrAn('u1', wieder, JETZT)).toBe(false);
+    expect(zustand.updates).toHaveLength(0);
+    // Und was auch immer durchgeht: mehr als das Band der Bruttomenge wird es nie.
+    let qty = 100;
+    let weg = 0;
+    for (let i = 0; i < 500; i += 1) {
+      const fehlt = qty * 0.0006;
+      if (!gebuehrDeckelHaelt(qty, weg, fehlt)) break;
+      qty -= fehlt;
+      weg += fehlt;
+    }
+    expect(weg / 100).toBeLessThanOrEqual(KRYPTO_GEBUEHR_BAND + 1e-12);
+  });
+
+  it('ein hängengebliebener Reset-Stempel (verfallen) blockiert nicht', async () => {
+    zustand.user = { ...zustand.user, risk: { resetLaeuftSeit: '2026-11-08T10:00:00Z' } };
+    expect(await gleicheKryptoGebuehrAn('u1', LINK, JETZT)).toBe(true);
   });
 
   it.each([
@@ -191,6 +245,15 @@ describe('Anschluss im Lauf (Quelltext-Wächter)', () => {
     expect(abgleich).toMatch(/if \(ok\) \{[\s\S]{0,400}?continue;\s+\}\s+\}\s+abweichungen\.push\(a\);/);
   });
 
+  it('NUR der Scan gleicht an — die Admin-Prüfung bleibt eine Messung ohne Geld-Schreibpfad', () => {
+    expect(abgleich).toContain('if (opts.kryptoGebuehrAngleichen === true && kryptoGebuehrAbzug(a) !== null) {');
+    expect(scan.match(/kryptoGebuehrAngleichen: true/g)).toHaveLength(1);
+    expect(lies('callable', 'admin.ts')).not.toContain('kryptoGebuehrAngleichen');
+    for (const datei of ['riskPulse.ts', 'umkehrLauf.ts', 'momentumRun.ts', 'fillSync.ts']) {
+      expect(lies('scheduled', datei)).not.toContain('kryptoGebuehrAngleichen');
+    }
+  });
+
   it('der Scan zieht seine vorher gelesenen Positionen nach', () => {
     expect(scan).toContain('for (const g of abgleichBefund.angeglichen ?? []) {');
     expect(scan).toContain('if (p) positions.set(g.symbol, { ...p, qty: g.menge });');
@@ -198,6 +261,10 @@ describe('Anschluss im Lauf (Quelltext-Wächter)', () => {
 
   it('gescheiterte Umkehr-Ausstiege werden gezählt, gemeldet und im Kryptolauf nachgeholt', () => {
     expect(umkehr).toContain("zaehleGrund(verkaufFehl, r.reason ?? 'unbekannt', 1);");
+    expect(umkehr).toContain("zaehleGrund(verkaufFehl, 'kein_kurs', 1);");
+    // Nachgeholtes zählt im Stand mit — auch wenn im selben Lauf neue Konten handeln.
+    expect(umkehr.indexOf('for (const [g, n] of Object.entries(nachFehl)) zaehleGrund(verkaufFehl, g, n);'))
+      .toBeLessThan(umkehr.indexOf('if (kryptoStandErsetzen(alt, tag, bearbeitet)) {'));
     expect(umkehr.match(/verkaufAbgelehnt: verkaufStand\(verkaufFehl\),/g)).toHaveLength(2);
     expect(umkehr).toContain('if (schonHeute) {');
     // Nachholen verkauft nur: leere Kaufliste.

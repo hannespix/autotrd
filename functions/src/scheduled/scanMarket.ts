@@ -1164,6 +1164,9 @@ async function executeUserTrades(
          * nicht raten. Der Cash-Vergleich bleibt exakt, und er ist der,
          * an dem die Kapitaldecke haengt. */
         kontoStandFuerAbgleich(userDoc),
+        // Nur hier (10.11.): Krypto-Gebührenabzüge im Buch angleichen — die
+        // Admin-Prüfung misst mit derselben Funktion, schreibt aber kein Geld.
+        { kryptoGebuehrAngleichen: true },
       );
       /* Krypto-Gebührenabzug (10.11.): Der Abgleich hat die Buchmenge in
        * Firestore an den Broker angeglichen — die Kopie dieses Laufs wurde

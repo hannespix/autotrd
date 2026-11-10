@@ -39,7 +39,7 @@ import {
   nurBrokerPositionen,
   type Abweichung,
 } from './alpacaBroker.js';
-import { classify, kontoAbgleich, type KontoBefund, type PdtStand } from '../../../shared/src/index.js';
+import { classify, kontoAbgleich, resetLaeuft, type KontoBefund, type PdtStand } from '../../../shared/src/index.js';
 import { brokerVerbindungLesend, verbindungUnlesbar } from './orderRouting.js';
 
 /**
@@ -129,6 +129,24 @@ export function kryptoGebuehrAbzug(a: Abweichung): number | null {
 }
 
 /**
+ * Deckel über ALLE Angleichungen einer Position (Red-Team 10.11.).
+ *
+ * Das Band allein ist nur eine Größen-Toleranz: Ohne Deckel könnte ein
+ * echter, fortlaufender Schwund (Handverkäufe, Auszahlungen beim Broker)
+ * in 0,25-%-Schritten je Scan abgeschrieben werden — die Sperre fiele nie.
+ * Eine Gebühr fällt aber nur auf GEKAUFTE Stücke an: Der Sammler
+ * `gebuehrMenge` darf deshalb nie mehr als das Band der je geführten
+ * Bruttomenge (aktuelle Buchmenge + schon abgezogene Stücke) betragen.
+ * Ein zweiter Abzug ohne neuen Kauf sprengt den Deckel — und bleibt, was
+ * er ist: ein Fehlbestand, der sperrt. Ein Nachkauf vergrößert die
+ * Bruttomenge und gibt genau seinen eigenen Gebührenanteil frei.
+ */
+export function gebuehrDeckelHaelt(buchMenge: number, bisher: number, fehlt: number): boolean {
+  if (!(buchMenge > 0) || !(fehlt > 0) || !(bisher >= 0)) return false;
+  return (bisher + fehlt) / (buchMenge + bisher) <= KRYPTO_GEBUEHR_BAND;
+}
+
+/**
  * Buchmenge einer Krypto-Position an den Broker angleichen (10.11.).
  *
  * Das ist KEIN Override der Abgleich-Sperre (CLAUDE.md §7), sondern die
@@ -162,7 +180,9 @@ export async function gleicheKryptoGebuehrAn(
   return db.runTransaction(async (tx) => {
     const [userSnap, posSnap] = await Promise.all([tx.get(userRef), tx.get(posRef)]);
     if (!userSnap.exists || !posSnap.exists) return false;
-    if (userSnap.get('risk.resetLaeuftSeit')) return false;
+    // Dieselbe Verfallsregel wie überall (Red-Team): Ein hängengebliebener
+    // Stempel darf die Angleichung nicht für immer blockieren.
+    if (resetLaeuft(userSnap.get('risk.resetLaeuftSeit'), jetzt)) return false;
     const pos = posSnap.data() as Position & { gebuehrMenge?: number };
     if (pos.broker !== true || pos.side === 'short') return false;
     if (!(Math.abs(pos.qty - a.eigeneMenge) <= 1e-9)) return false;
@@ -170,7 +190,10 @@ export async function gleicheKryptoGebuehrAn(
     const balance = userSnap.get('wallet.paperBalance') as unknown;
     if (typeof balance !== 'number' || !Number.isFinite(balance)) return false;
     const bisher =
-      typeof pos.gebuehrMenge === 'number' && Number.isFinite(pos.gebuehrMenge) ? pos.gebuehrMenge : 0;
+      typeof pos.gebuehrMenge === 'number' && Number.isFinite(pos.gebuehrMenge) && pos.gebuehrMenge > 0
+        ? pos.gebuehrMenge
+        : 0;
+    if (!gebuehrDeckelHaelt(pos.qty, bisher, fehlt)) return false;
     const iso = jetzt.toISOString();
     tx.update(posRef, {
       qty: a.brokerMenge,
@@ -298,6 +321,14 @@ export async function abgleichFuerKonto(
    * Aufrufer, die nur Positionen pruefen wollen.
    */
   buch?: { cash: number; equity: number },
+  /**
+   * Krypto-Gebührenabzüge im Buch angleichen (10.11.)? NUR der Scan setzt
+   * das: Die Angleichung schreibt Positionsmenge und Bargeld. Die
+   * Admin-Prüfung ruft dieselbe Funktion und bleibt ohne den Schalter,
+   * was sie laut Owner-Entscheidung 22.08. ist — eine Messung, kein
+   * Geld-Schreibpfad (Red-Team 10.11.).
+   */
+  opts: { kryptoGebuehrAngleichen?: boolean } = {},
 ): Promise<AbgleichBefund> {
   /* LESENDE Verbindung — auch bei hinterlegtem Echtgeld-Schlüssel.
    *
@@ -421,7 +452,7 @@ export async function abgleichFuerKonto(
   const angeglichen: Array<{ symbol: string; menge: number }> = [];
   const abweichungen: Abweichung[] = [];
   for (const a of bestandsAbgleich(relevante, brokerPositionen)) {
-    if (kryptoGebuehrAbzug(a) !== null) {
+    if (opts.kryptoGebuehrAngleichen === true && kryptoGebuehrAbzug(a) !== null) {
       const ok = await gleicheKryptoGebuehrAn(uid, a, jetzt).catch((err: unknown) => {
         logger.warn(`Abgleich ${uid}: Krypto-Gebühr ${a.symbol} nicht angeglichen`, err);
         return false;

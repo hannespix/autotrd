@@ -400,7 +400,12 @@ async function fuehreAus(
     const p = alle.get(v.symbol);
     if (!p || !umkehrBesitz(p)) continue;
     const px = preis(v.symbol);
-    if (px === null) continue;
+    if (px === null) {
+      // Kein Kurs ⇒ kein Verkauf zum erfundenen Preis (M3) — aber gezählt:
+      // Ein offener Ausstieg darf im Stand nicht wie „alles erledigt" aussehen.
+      zaehleGrund(verkaufFehl, 'kein_kurs', 1);
+      continue;
+    }
     const r = await executeTrade(
       { uid: k.id, symbol: v.symbol, side: 'sell', price: px, source: 'engine', riskExit: v.grund, assetClass: classify(v.symbol) },
       clamped,
@@ -836,6 +841,10 @@ export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: numbe
     }
   }
   const alt = (await db.doc('meta/umkehr').get()).get('krypto') as { tag?: unknown; veraltet?: unknown } | undefined;
+  // Nachgeholte Ausstiege gehören in BEIDE Stände (Red-Team 10.11.): Gibt es
+  // im selben Lauf neue und gestempelte Konten, fielen sie sonst heraus.
+  verkaeufe += nachVerkauft;
+  for (const [g, n] of Object.entries(nachFehl)) zaehleGrund(verkaufFehl, g, n);
   if (kryptoStandErsetzen(alt, tag, bearbeitet)) {
     await standSchreiben('krypto', {
       at: now.toISOString(),
@@ -857,10 +866,11 @@ export async function runUmkehrKrypto(now = new Date()): Promise<{ konten: numbe
       ...bisher,
       at: now.toISOString(),
       verkaeufe: (typeof bisher['verkaeufe'] === 'number' ? bisher['verkaeufe'] : 0) + nachVerkauft,
+      // Der Nachhol-Zweig versucht JEDEN noch offenen Ausstieg erneut — sein
+      // Ergebnis ist der aktuelle Stand der offenen Ausstiege, kein Zuwachs.
       verkaufAbgelehnt: verkaufStand(nachFehl),
     });
   }
-  verkaeufe += nachVerkauft;
   logger.info(`Umkehr-Kryptolauf: ${signale.length} Signal(e), ${kaeufe} Kauf/Käufe, ${verkaeufe} Verkauf/Verkäufe`);
   return { konten: bearbeitet, signale: signale.length, kaeufe, verkaeufe };
 }
