@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import { alpacaOrder, rundeLimitPreis } from '../src/core/alpacaBroker.js';
-import { UMKEHR_KRYPTO_LIMIT_PUFFER, kryptoEinstiegsLimit } from '../src/core/broker.js';
+import { UMKEHR_KRYPTO_LIMIT_PUFFER, UMKEHR_MARKET_WARTE, einstiegsWarteFenster, kryptoEinstiegsLimit } from '../src/core/broker.js';
 import {
   LIMIT_WARTE_PAUSE_MS,
   LIMIT_WARTE_VERSUCHE,
@@ -236,5 +236,25 @@ describe('Anschluss-Wächter (der Serienfehler: Funktion korrekt, nicht angeschl
     expect(alpacaSrc).toContain(
       "{ type: 'limit', limit_price: String(order.limitPreis), time_in_force: 'gtc' }",
     );
+  });
+});
+
+describe('Wartefenster der Umkehr-Market-Einstiege (10.11.)', () => {
+  it('nur eröffnende Market-Orders der Umkehr bekommen mehr Geduld', () => {
+    expect(UMKEHR_MARKET_WARTE.versuche * UMKEHR_MARKET_WARTE.pauseMs).toBeGreaterThanOrEqual(10_000);
+    expect(einstiegsWarteFenster(true, 'umkehr', false)).toEqual({ versuche: 12, pauseMs: 1000 });
+  });
+
+  it('Ausstiege, andere Wege und Limit-Einstiege behalten ihr Fenster', () => {
+    expect(einstiegsWarteFenster(false, 'umkehr', false)).toEqual({});
+    expect(einstiegsWarteFenster(true, 'konfluenz', false)).toEqual({});
+    expect(einstiegsWarteFenster(true, 'sockel', false)).toEqual({});
+    expect(einstiegsWarteFenster(true, null, false)).toEqual({});
+    // Limit (Krypto) hat das eigene LIMIT-Fenster — leere Vorgabe lässt es greifen.
+    expect(einstiegsWarteFenster(true, 'umkehr', true)).toEqual({});
+  });
+
+  it('ist am Routing angeschlossen', () => {
+    expect(brokerSrc).toContain('}, undefined, einstiegsWarteFenster(eroeffnet, einstiegFruh, limitPreis > 0));');
   });
 });

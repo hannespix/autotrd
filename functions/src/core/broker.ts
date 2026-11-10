@@ -460,6 +460,33 @@ export interface TradeResult {
 export const UMKEHR_KRYPTO_LIMIT_PUFFER = 0.005;
 
 /**
+ * Wartefenster für MARKET-Einstiege der Kurzfrist-Umkehr (10.11.).
+ *
+ * Gemessen: Der Morgenlauf kauft um 09:35 ET — und Alpaca füllte dort
+ * Market-Orders liquider Standardwerte (CVX, PM, XOM am 10.11.; 4 Fälle am
+ * 06.11.) nicht innerhalb der üblichen ~4 s. Der K-2c-Storno räumte sie
+ * ab, der Kauf fiel aus (`broker_kein_fill`) — jeden Morgen ein Teil der
+ * geplanten Einstiege. Die Umkehr kauft je Plan genau EINMAL; ein
+ * verpasster Einstieg wird nicht nachgeholt.
+ *
+ * Mehr Geduld kostet nur dann Laufzeit, wenn die Order wirklich nicht
+ * füllt (zurückgekehrt wird beim ersten vollständigen Fill). Der Storno
+ * danach bleibt, wie er ist. Nur ERÖFFNENDE Market-Orders der Umkehr —
+ * Ausstiege und alle anderen Wege behalten ihr Fenster; Limit-Einstiege
+ * haben ihr eigenes.
+ */
+export const UMKEHR_MARKET_WARTE = { versuche: 12, pauseMs: 1000 } as const;
+
+/** Wartefenster-Vorgabe für das Routing (pur): nur Umkehr-Market-Einstiege bekommen mehr Geduld. */
+export function einstiegsWarteFenster(
+  eroeffnet: boolean,
+  quelle: string | null,
+  limit: boolean,
+): { versuche?: number; pauseMs?: number } {
+  return eroeffnet && quelle === 'umkehr' && !limit ? { ...UMKEHR_MARKET_WARTE } : {};
+}
+
+/**
  * Grenzpreis eines Krypto-EINSTIEGS (pur). Umkehr: Kurs + Puffer (sofort
  * ausführbar, gedeckelt). Alle anderen Wege: Maker-Limit am Kurs (Hebel 1b,
  * unverändert). Ausstiege erreichen diese Funktion nie (nur `eroeffnet`).
@@ -1229,7 +1256,7 @@ export async function executeTrade(
     // erzeugte „Position nur beim Broker".
     schliessend: schliesst,
     laufId: lauf,
-  });
+  }, undefined, einstiegsWarteFenster(eroeffnet, einstiegFruh, limitPreis > 0));
   /* Offen gebliebene Order vormerken (Drift-Paket 08.10.) — in BEIDEN
    * Ausgängen: ein teilgefüllter Einstieg, dessen Rest noch arbeitet, ein
    * Einstieg mit unbekanntem Verbleib, ein Exit ohne Fill im Fenster. Der
