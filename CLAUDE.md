@@ -376,6 +376,14 @@ Für UI-Änderungen zusätzlich mit headless Chrome bei Desktop (1500) **und** P
 - State-Format-Migrationen (z. B. neue Spalte in `history.db`) additiv +
   idempotent halten und beim Start migrieren — nie bestehende `history.db`
   löschen (sie ist die Trainingshistorie des Self-Tuners).
+- **Nach dem PR immer mergen — ohne Rückfrage** (Owner-Anweisung 12.11.,
+  Wortlaut: „immer Mergen nach PR!!!! ohne rückfrage"). Ein PR, der offen
+  liegen bleibt, ist für den Owner ein nicht erledigter Auftrag. Ablauf:
+  Draft-PR → CI grün → ready → Squash-Merge (deutscher Titel mit `(#N)`) →
+  Branch-Reset → Deploy-SCHRITT prüfen (§8). Gewartet wird nur auf die CI,
+  nie auf eine Freigabe. Was die Regel NICHT aufhebt: Roter CI wird
+  repariert, nicht übergangen; die Echtgeld-Guards (§7) bleiben, wie sie
+  sind — Mergen ohne Rückfrage heißt nicht Freischalten ohne Rückfrage.
 
 ## 10. Roadmap-Ideen (offen)
 
