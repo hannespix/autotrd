@@ -25,7 +25,7 @@
  * Die Regel selbst ist pur in shared/src/umkehr.ts und dort gegen die
  * Python-Rückrechnung gepinnt (Parität Tag für Tag).
  */
-import { getFirestore } from 'firebase-admin/firestore';
+import { FieldPath, getFirestore } from 'firebase-admin/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import {
@@ -36,6 +36,8 @@ import {
   handelstageSeit,
   isStrategy,
   klemmeGewicht,
+  umkehrKlassenZurueck,
+  type KlassenLogEintrag,
   positionValue,
   tradableSymbols,
   umkehrAusstieg,
@@ -403,6 +405,77 @@ export async function umstellungEinmal(now: Date): Promise<number> {
   return n;
 }
 
+/**
+ * Einmalige Rückkehr der Klassen, die der Regler auf FREMDEM Beleg
+ * abgeschaltet hat (20.11.).
+ *
+ * Der Klassen-Regler maß bis heute die Klasse über alle Einstiegswege —
+ * und schaltete damit die Umkehr ab, wegen Verlusten der alten
+ * Konfluenz-Engine und des Sockels (Messung 20.11.: 50 von 126 Verwürfen
+ * „Klasse aus", vier Konten ohne einen einzigen Kauf nach dem Ausverkauf).
+ * Ab jetzt misst er Umkehr-Konten an der Umkehr (`ergebnisseFuerQuelle`);
+ * die Nullen von vorher stammen aber noch aus der alten Messung, und ohne
+ * Beleg fasst der Regler ein Gewicht nicht an — sie blieben für immer.
+ *
+ * Deshalb EINMAL je Konto: Was der Regler abgeschaltet hat (jüngster
+ * Journal-Eintrag endet auf 0), kommt mit halbem Gewicht zurück. Eine von
+ * Hand gesetzte 0 bleibt, ebenso alles bei abgewähltem Auto-Regler. Jede
+ * Rückkehr steht im Journal (`classLog`), mit Herkunft — und wenn die
+ * Umkehr in der Klasse selbst strukturell verliert, schaltet der Regler sie
+ * mit seinen normalen Schwellen wieder ab.
+ *
+ * Nur Paper-Konten im Umkehr-Modus (dieselbe Auswahl wie `umkehrKonten`,
+ * ohne das „läuft"-Kriterium: Ein pausiertes Konto soll beim Wiederanlauf
+ * nicht auf der alten Messung sitzen).
+ */
+export async function klassenRueckkehrEinmal(now: Date): Promise<number> {
+  const db = getFirestore();
+  const snap = await db.collection('users').where('settings.strategy.engine.mode', '==', 'umkehr').get();
+  let zurueck = 0;
+  for (const u of snap.docs) {
+    try {
+      const roh = u.get('settings.strategy') as Strategy | undefined;
+      if (!roh || !isStrategy(roh)) continue;
+      if (roh.broker.mode === 'live' || resolveBrokerMode(roh) !== 'paper') continue;
+      const merker = u.ref.collection('meta').doc('umkehrKlassen');
+      if ((await merker.get()).get('fertig') === true) continue;
+      const journal = (await u.ref.collection('classLog').get()).docs.map((d) => d.data() as KlassenLogEintrag);
+      const liste = umkehrKlassenZurueck(roh.engine.classWeights, journal, roh.engine.classAutoTune !== false);
+      const iso = now.toISOString();
+      if (liste.length > 0) {
+        const batch = db.batch();
+        for (const z of liste) {
+          // Feldpfad je Klasse: ersetzt genau dieses Gewicht, die übrigen bleiben.
+          batch.update(u.ref, new FieldPath('settings', 'strategy', 'engine', 'classWeights', z.klasse), z.nach);
+          batch.set(u.ref.collection('classLog').doc(`${iso.slice(0, 10)}_${z.klasse}_umkehr`), {
+            at: iso,
+            date: iso.slice(0, 10),
+            klasse: z.klasse,
+            von: z.von,
+            nach: z.nach,
+            empfehlung: 'zurueckholen',
+            quelle: 'umstellung_umkehr',
+            kantePct: null,
+            n: 0,
+            grund:
+              'Abgeschaltet auf Verlusten anderer Einstiegswege (Konfluenz, Sockel). Das Konto fährt die '
+              + 'Kurzfrist-Umkehr; ab jetzt zählt deren eigene Kante in dieser Klasse. Mit halbem Gewicht zurück.',
+          });
+        }
+        batch.set(merker, { fertig: true, at: iso, klassen: liste.map((z) => z.klasse) });
+        await batch.commit();
+        zurueck += liste.length;
+        logger.info(`Umkehr-Klassen ${u.id}: ${liste.map((z) => z.klasse).join(', ')} zurück auf ${liste[0]!.nach}`);
+      } else {
+        await merker.set({ fertig: true, at: iso, klassen: [] });
+      }
+    } catch (err) {
+      logger.warn(`Umkehr-Klassen: Konto ${u.id} übersprungen`, err);
+    }
+  }
+  return zurueck;
+}
+
 /** Klasse vom Auto-Regler bzw. Owner abgeschaltet? Dann kauft auch die Umkehr dort nicht. */
 const klasseErlaubt = (clamped: Strategy) => (symbol: string): boolean =>
   klemmeGewicht(clamped.engine.classWeights?.[classify(symbol)]) > 0;
@@ -721,6 +794,8 @@ function toreFuer(k: FirebaseFirestore.QueryDocumentSnapshot, now: Date): { clam
 
 export async function runUmkehrAbend(now = new Date()): Promise<{ konten: number; signale: number; symbole: number; fehlend: number }> {
   await umstellungEinmal(now).catch((err: unknown) => logger.warn('Umkehr-Umstellung gescheitert', err));
+  // VOR dem Laden der Konten: Der Plan unten soll die zurückgekehrten Klassen schon sehen.
+  await klassenRueckkehrEinmal(now).catch((err: unknown) => logger.warn('Umkehr-Klassen-Rückkehr gescheitert', err));
   const konten = await umkehrKonten();
   const boerse = (s: string): boolean => !istKrypto(s);
 

@@ -398,6 +398,101 @@ export interface KlassenBericht {
   fazit: string;
 }
 
+/* ── Belege je Einstiegsweg (20.11.) ────────────────────────────────────────
+ *
+ * Der Regler misst eine KLASSE — über alle Einstiegswege gemischt. Solange
+ * ein Konto nur einen Weg fährt, ist das dasselbe. Seit dem 20.10. fahren
+ * die Paper-Konten die Kurzfrist-Umkehr (Owner: „Alle auf RSI-2"), und das
+ * Klassen-Gewicht ist dort nur noch EIN Schalter: Darf die Umkehr in dieser
+ * Klasse kaufen? Gemessen wurde er weiter an allem, was die Klasse je
+ * verloren hat — der alten Konfluenz-Engine und dem Sockel.
+ *
+ * Gemessen am 20.11.: 18 Umkehr-Signale × 7 Konten, 6 geplante Käufe,
+ * 50 Verwürfe „Klasse aus". Vier Konten kauften am Tag nach einem
+ * −6-%-Ausverkauf nichts — abgeschaltet von Verlusten, die mit der
+ * Strategie, die sie fahren, nichts zu tun haben. Prozyklisch obendrein:
+ * Sockel-Verluste in der Crash-Woche drücken die Klassen-Kante genau dann,
+ * wenn die Umkehr ihre Signale bekommt.
+ *
+ * Das ist keine Lockerung des Reglers. Schwellen, Schrittweite und Journal
+ * bleiben, wie sie sind — nur der Beleg passt jetzt zu dem, was er
+ * steuert. Verliert die UMKEHR in einer Klasse strukturell, schaltet
+ * derselbe Regler sie mit denselben Schwellen ab.
+ */
+
+/**
+ * Klassen-Belege NUR aus einem Einstiegsweg (pur): eigene Trades aus
+ * `stats.byClassQuelle`, der Gesamtbestand aus `meta/health.trading.
+ * klassen[*].quellen`. Der Gesamtbestand veröffentlicht die Kante je Quelle
+ * erst ab der Konten-Schwelle — darunter ist sie `null` und trägt nichts.
+ *
+ * Bewusst OHNE Schatten: Die Schatten-Reihe misst die Signale der
+ * Konfluenz-Engine. Sie dürfte eine Klasse „zurückholen", die die Umkehr
+ * selbst abgeschaltet hat — mit einem Beleg, der über die Umkehr nichts
+ * sagt.
+ */
+export function ergebnisseFuerQuelle(
+  quelle: string,
+  eigen: Readonly<Record<string, Readonly<Record<string, { n: number; kantePct?: number | null }>>>> | undefined,
+  global:
+    | Readonly<Record<string, { quellen?: Readonly<Record<string, { n?: number; kantePct?: number | null; konten?: number }>> }>>
+    | undefined,
+  /** Klassen, die auch ohne Beleg in der Liste stehen sollen (z. B. alle mit gesetztem Gewicht). */
+  bekannt: readonly string[] = [],
+): Record<string, KlassenErgebnis> {
+  const out: Record<string, KlassenErgebnis> = {};
+  const zahl = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
+  const kante = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null);
+  for (const klasse of new Set([...Object.keys(eigen ?? {}), ...Object.keys(global ?? {}), ...bekannt])) {
+    const e = eigen?.[klasse]?.[quelle];
+    const g = global?.[klasse]?.quellen?.[quelle];
+    out[klasse] = {
+      n: zahl(e?.n),
+      kantePct: e && zahl(e.n) > 0 ? kante(e.kantePct) : null,
+      ...(g ? { global: { n: zahl(g.n), kantePct: kante(g.kantePct), konten: zahl(g.konten) } } : {}),
+    };
+  }
+  return out;
+}
+
+/** Ein Eintrag des Regler-Journals (`users/{uid}/classLog`), soweit hier gebraucht. */
+export interface KlassenLogEintrag {
+  klasse: string;
+  nach: number;
+  at: string;
+}
+
+/**
+ * Welche Klassen eines Umkehr-Kontos kommen EINMALIG zurück (pur)?
+ *
+ * Nur, was der REGLER abgeschaltet hat: Gewicht 0 UND der jüngste
+ * Journal-Eintrag dieser Klasse endet auf 0. Eine 0 ohne Journal-Eintrag
+ * (oder nach einem späteren Eintrag > 0) hat ein Mensch gesetzt — die
+ * bleibt, ebenso alles, wenn der Auto-Regler abgewählt ist. Zurück geht es
+ * auf das halbe Gewicht (`SCHATTEN_PROBELOS`), dieselbe Vorsicht wie bei
+ * jeder Rückkehr einer abgeschalteten Klasse.
+ */
+export function umkehrKlassenZurueck(
+  gewichte: Readonly<Record<string, number>> | undefined,
+  journal: readonly KlassenLogEintrag[],
+  autoAn: boolean,
+): Array<{ klasse: string; von: number; nach: number }> {
+  if (!autoAn || !gewichte) return [];
+  const letzter = new Map<string, KlassenLogEintrag>();
+  for (const e of journal) {
+    if (typeof e?.klasse !== 'string' || typeof e.at !== 'string' || typeof e.nach !== 'number') continue;
+    const bisher = letzter.get(e.klasse);
+    if (!bisher || e.at > bisher.at) letzter.set(e.klasse, e);
+  }
+  const out: Array<{ klasse: string; von: number; nach: number }> = [];
+  for (const [klasse, w] of Object.entries(gewichte)) {
+    if (typeof w !== 'number' || klemmeGewicht(w) !== 0) continue;
+    if (letzter.get(klasse)?.nach !== 0) continue;
+    out.push({ klasse, von: 0, nach: SCHATTEN_PROBELOS });
+  }
+  return out.sort((a, b) => a.klasse.localeCompare(b.klasse));
+}
+
 /**
  * Empfehlung für alle gemessenen Klassen, sortiert nach Kante.
  *

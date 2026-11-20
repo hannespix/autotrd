@@ -24,6 +24,7 @@ import {
   aggregateTradingHealth,
   attribution,
   berateKlassen,
+  ergebnisseFuerQuelle,
   besserAls,
   BEWAEHRT_MIN_TAGE,
   BEWAEHRT_MIN_TRADES,
@@ -216,9 +217,12 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   // nicht nennenswert — und die Alternative wäre, alle Konten zweimal zu
   // lesen, nur um einen Tag früher dieselbe Antwort zu bekommen.
   let klassenGlobal: Record<string, { n: number; kantePct: number | null; konten: number }> = {};
+  /** Dieselben Klassen mit ihrer Aufschlüsselung je Einstiegsweg (20.11.) — Beleg für Umkehr-Konten. */
+  let klassenGlobalRoh: Record<string, KlassenBefund> = {};
   try {
     const doc = await db.doc('meta/health').get();
     const roh = (doc.get('trading.klassen') as Record<string, KlassenBefund> | undefined) ?? {};
+    klassenGlobalRoh = roh;
     klassenGlobal = Object.fromEntries(
       Object.entries(roh).map(([k, v]) => [
         k,
@@ -557,8 +561,15 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         (userDoc.get('settings.strategy.engine.classWeights') as
           | Record<string, number>
           | undefined) ?? {};
-      const ergebnisse: Record<string, KlassenErgebnis> = {};
-      for (const [klasse, slice] of Object.entries(attr.byClass)) {
+      /* Umkehr-Konten werden an der UMKEHR gemessen (20.11., siehe
+       * `ergebnisseFuerQuelle`): Das Klassen-Gewicht steuert dort nur, ob
+       * die Umkehr in der Klasse kaufen darf — der Beleg muss dazu passen.
+       * Alle anderen Konten: unverändert die Klasse als Ganzes. */
+      const umkehrModus = userDoc.get('settings.strategy.engine.mode') === 'umkehr';
+      const ergebnisse: Record<string, KlassenErgebnis> = umkehrModus
+        ? ergebnisseFuerQuelle('umkehr', attr.byClassQuelle, klassenGlobalRoh, [...Object.keys(attr.byClass), ...Object.keys(gewichte)])
+        : {};
+      for (const [klasse, slice] of umkehrModus ? [] : Object.entries(attr.byClass)) {
         ergebnisse[klasse] = {
           n: slice.n,
           kantePct: slice.kantePct ?? null,
@@ -577,11 +588,11 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
       // eigenen Trades mehr hat. Einen BELEG bekommt sie dadurch nicht: Ohne
       // Eintrag in `schattenGlobal` bleibt `schatten` leer, und `rateKlasse`
       // spricht dann „zu_wenig_daten" und lässt das Gewicht stehen.
-      for (const klasse of schattenKlassenBekannt) {
+      for (const klasse of umkehrModus ? [] : schattenKlassenBekannt) {
         const s = schattenGlobal[klasse];
         ergebnisse[klasse] ??= { n: 0, kantePct: null, ...(s ? { schatten: s } : {}) };
       }
-      for (const [klasse, g] of Object.entries(klassenGlobal)) {
+      for (const [klasse, g] of umkehrModus ? [] : Object.entries(klassenGlobal)) {
         ergebnisse[klasse] ??= { n: 0, kantePct: null, global: g };
         ergebnisse[klasse].global ??= g;
       }
