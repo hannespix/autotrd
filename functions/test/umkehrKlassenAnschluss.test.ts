@@ -1,7 +1,8 @@
 /**
  * Quelltext-Wächter (20.11.): Der Klassen-Regler misst Umkehr-Konten an der
- * Umkehr, und die auf fremdem Beleg abgeschalteten Klassen kommen genau
- * einmal zurück — vor dem Plan, nur für Paper-Konten, mit Journal.
+ * Umkehr. Abgeschaltete Klassen werden NICHT per Schalter zurückgeholt —
+ * die Umkehr stand am 20.11. selbst im Minus; zurück führt nur der Regler,
+ * auf positivem Beleg.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,33 +25,23 @@ describe('Regler: Beleg passend zum Modus', () => {
   });
 });
 
-describe('Einmalige Rückkehr im Abendlauf', () => {
-  const start = lauf.indexOf('export async function klassenRueckkehrEinmal(');
-  const rumpf = lauf.slice(start, lauf.indexOf('\n}\n', start));
-
-  it('läuft VOR dem Laden der Konten — der Plan sieht die zurückgekehrten Klassen', () => {
-    const aufruf = lauf.indexOf('await klassenRueckkehrEinmal(now)');
-    expect(aufruf).toBeGreaterThan(0);
-    expect(lauf.indexOf('const konten = await umkehrKonten();', aufruf)).toBeGreaterThan(aufruf);
-    expect(lauf.slice(aufruf, aufruf + 400)).toMatch(/^await klassenRueckkehrEinmal\(now\)\.catch\(/);
+describe('Keine Rückkehr per Schalter — und die Klasse wird auch am Morgen geprüft', () => {
+  it('es gibt keinen Weg, der abgeschaltete Klassen ohne Beleg zurücksetzt (Red-Team 20.11.)', () => {
+    expect(lauf).not.toContain('klassenRueckkehr');
+    expect(lauf).not.toMatch(/classWeights[^\n]*(update|set)\(/);
+    expect(lauf).not.toMatch(/(update|set)\([^\n]*classWeights/);
   });
 
-  it('nur Paper-Konten im Umkehr-Modus, je Konto genau einmal', () => {
-    expect(rumpf).toContain("where('settings.strategy.engine.mode', '==', 'umkehr')");
-    expect(rumpf).toContain("if (roh.broker.mode === 'live' || resolveBrokerMode(roh) !== 'paper') continue;");
-    expect(rumpf).toContain("if ((await merker.get()).get('fertig') === true) continue;");
-    expect(rumpf).toContain("batch.set(merker, { fertig: true, at: iso, klassen: liste.map((z) => z.klasse) });");
-  });
-
-  it('entscheidet über die pure Regel und schreibt jede Rückkehr ins Journal', () => {
-    expect(rumpf).toContain('umkehrKlassenZurueck(roh.engine.classWeights, journal, roh.engine.classAutoTune !== false)');
-    expect(rumpf).toContain("batch.update(u.ref, new FieldPath('settings', 'strategy', 'engine', 'classWeights', z.klasse), z.nach);");
-    expect(rumpf).toContain("quelle: 'umstellung_umkehr',");
-    // Kein set(merge) auf die Gewichte — ein Feldpfad je Klasse.
-    expect(rumpf).not.toMatch(/classWeights[^\n]*merge/);
-  });
-
-  it('die Umkehr liest weiter das Klassen-Gewicht — das Tor selbst ist unverändert', () => {
+  it('die Umkehr liest das Klassen-Gewicht — am Abend im Plan UND am Morgen vor dem Kauf', () => {
     expect(lauf).toContain('klemmeGewicht(clamped.engine.classWeights?.[classify(symbol)]) > 0;');
+    expect(lauf).toContain('const klasseAn = klasseErlaubt(clamped);');
+    expect(lauf).toContain('klasseAn(x.symbol) && !alle.has(x.symbol) && !symbolSperreAusVermerk(');
+    expect(lauf).toContain('ohne.klasseAus += klasseAus;');
+    // Die Reserve läuft durch denselben Filter.
+    expect(lauf).toContain('reserve: reserve.filter(kaufbar),');
+  });
+
+  it('Karte und Journal tragen, woran gemessen wurde', () => {
+    expect(snap.match(/beleg: umkehrModus \? 'umkehr' : 'klasse',/g)).toHaveLength(2);
   });
 });

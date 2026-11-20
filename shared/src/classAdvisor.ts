@@ -418,6 +418,18 @@ export interface KlassenBericht {
  * bleiben, wie sie sind — nur der Beleg passt jetzt zu dem, was er
  * steuert. Verliert die UMKEHR in einer Klasse strukturell, schaltet
  * derselbe Regler sie mit denselben Schwellen ab.
+ *
+ * ── Was bewusst NICHT geschieht (Red-Team 20.11.) ─────────────────────────
+ *
+ * Die schon abgeschalteten Klassen werden nicht zurückgeholt. Der erste
+ * Entwurf tat das einmalig — und hätte damit einen Zustand gesetzt, ohne zu
+ * messen. Die Messung, die es gibt, spricht dagegen: Die Umkehr selbst
+ * steht am 20.11. bei −0,93 % je Dollar in US-Aktien (24 Trades, 4 Konten),
+ * −2,81 % in Themen-ETFs (11) und −3,63 % in Krypto (17, davon 6 vom
+ * Ausstiegs-Fehler #582 verfälscht). Zu wenig für ein Urteil — aber erst
+ * recht zu wenig, um vier weitere Konten hineinzuschieben. Zurück kommt
+ * eine Klasse auf dem Weg, den der Regler immer hatte: wenn der Beleg
+ * positiv ist.
  */
 
 /**
@@ -430,6 +442,16 @@ export interface KlassenBericht {
  * Konfluenz-Engine. Sie dürfte eine Klasse „zurückholen", die die Umkehr
  * selbst abgeschaltet hat — mit einem Beleg, der über die Umkehr nichts
  * sagt.
+ *
+ * KOPIEN ZÄHLEN NICHT (Red-Team 20.11.): Die Schwelle des Gesamtbestands
+ * (`GLOBAL_MIN_TRADES`) ist damit begründet, dass fremde Konten ANDERS
+ * handeln. Ein signalgetriebener Einstiegsweg kauft aber in jedem Konto
+ * dasselbe Signal — 50 Trades aus 7 Konten sind rund 7 unabhängige Wetten,
+ * oft aus derselben Woche. Als Stichprobe des Gesamtbestands zählt deshalb
+ * `n / konten`: die Trades je Konto, also ungefähr die Zahl verschiedener
+ * Signale. Das verschiebt das Urteil in BEIDE Richtungen nach hinten —
+ * Abschalten wie Verstärken —, statt es auf einer Handvoll Signale zu
+ * fällen, von denen es bei der Umkehr keinen Rückweg gäbe (kein Schatten).
  */
 export function ergebnisseFuerQuelle(
   quelle: string,
@@ -449,48 +471,10 @@ export function ergebnisseFuerQuelle(
     out[klasse] = {
       n: zahl(e?.n),
       kantePct: e && zahl(e.n) > 0 ? kante(e.kantePct) : null,
-      ...(g ? { global: { n: zahl(g.n), kantePct: kante(g.kantePct), konten: zahl(g.konten) } } : {}),
+      ...(g ? { global: { n: Math.floor(zahl(g.n) / Math.max(1, zahl(g.konten))), kantePct: kante(g.kantePct), konten: zahl(g.konten) } } : {}),
     };
   }
   return out;
-}
-
-/** Ein Eintrag des Regler-Journals (`users/{uid}/classLog`), soweit hier gebraucht. */
-export interface KlassenLogEintrag {
-  klasse: string;
-  nach: number;
-  at: string;
-}
-
-/**
- * Welche Klassen eines Umkehr-Kontos kommen EINMALIG zurück (pur)?
- *
- * Nur, was der REGLER abgeschaltet hat: Gewicht 0 UND der jüngste
- * Journal-Eintrag dieser Klasse endet auf 0. Eine 0 ohne Journal-Eintrag
- * (oder nach einem späteren Eintrag > 0) hat ein Mensch gesetzt — die
- * bleibt, ebenso alles, wenn der Auto-Regler abgewählt ist. Zurück geht es
- * auf das halbe Gewicht (`SCHATTEN_PROBELOS`), dieselbe Vorsicht wie bei
- * jeder Rückkehr einer abgeschalteten Klasse.
- */
-export function umkehrKlassenZurueck(
-  gewichte: Readonly<Record<string, number>> | undefined,
-  journal: readonly KlassenLogEintrag[],
-  autoAn: boolean,
-): Array<{ klasse: string; von: number; nach: number }> {
-  if (!autoAn || !gewichte) return [];
-  const letzter = new Map<string, KlassenLogEintrag>();
-  for (const e of journal) {
-    if (typeof e?.klasse !== 'string' || typeof e.at !== 'string' || typeof e.nach !== 'number') continue;
-    const bisher = letzter.get(e.klasse);
-    if (!bisher || e.at > bisher.at) letzter.set(e.klasse, e);
-  }
-  const out: Array<{ klasse: string; von: number; nach: number }> = [];
-  for (const [klasse, w] of Object.entries(gewichte)) {
-    if (typeof w !== 'number' || klemmeGewicht(w) !== 0) continue;
-    if (letzter.get(klasse)?.nach !== 0) continue;
-    out.push({ klasse, von: 0, nach: SCHATTEN_PROBELOS });
-  }
-  return out.sort((a, b) => a.klasse.localeCompare(b.klasse));
 }
 
 /**

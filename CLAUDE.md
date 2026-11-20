@@ -230,6 +230,14 @@ gesamten Event-Loop ein → Server hängt → Browser bekommt leere Antwort →
 > sich zu Recht — und die nächsten zwei Proben liefen auf der noch
 > sabotierten Datei. Vor dem Testlauf prüfen, dass der Ersatztext nach dem
 > Einsetzen genau einmal vorkommt; sonst die Probe gar nicht erst starten.
+> Und die Prüfung gehört VOR das Schreiben, der Rückbau in ein `finally`:
+> Am 20.11. prüfte das Proben-Skript die Eindeutigkeit des Ersatztexts erst
+> NACH dem Einsetzen (`… bewegt,` war Teil des Ankers und kam schon vor) —
+> die Zusicherung schlug fehl, das Skript brach ab, und die Datei blieb
+> sabotiert liegen. Aufgefallen ist es nur, weil der Abbruch laut war. Also:
+> erst den neuen Inhalt im Speicher bauen und zählen (`neu.count(b) == 1`,
+> `neu.count(a) == 0`), dann schreiben, dann testen — und den Rückbau so
+> setzen, dass er auch bei einem Fehler dazwischen läuft.
 
 Es gibt keine umfassende Test-Suite — **beobachte echtes Verhalten**:
 

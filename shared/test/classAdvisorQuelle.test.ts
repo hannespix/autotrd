@@ -12,12 +12,10 @@ import { describe, expect, it } from 'vitest';
 import {
   GLOBAL_MIN_TRADES,
   KLASSE_MIN_TRADES,
-  SCHATTEN_PROBELOS,
   berateKlassen,
   ergebnisseFuerQuelle,
   rateKlasse,
   reglerSchritt,
-  umkehrKlassenZurueck,
 } from '../src/classAdvisor.js';
 import { MIN_ACCOUNTS } from '../src/globalLearning.js';
 
@@ -46,7 +44,8 @@ const GLOBAL = {
 describe('ergebnisseFuerQuelle', () => {
   it('nimmt nur die Zahlen der Umkehr — Konfluenz und Sockel zählen nicht', () => {
     const e = ergebnisseFuerQuelle('umkehr', EIGEN, GLOBAL);
-    expect(e['stocks_us']).toEqual({ n: 8, kantePct: 0.35, global: { n: 40, kantePct: null, konten: 2 } });
+    // Gesamtbestand: 40 Trades aus 2 Konten zählen als 20 — Kopien desselben Signals sind kein zweiter Beleg.
+    expect(e['stocks_us']).toEqual({ n: 8, kantePct: 0.35, global: { n: 20, kantePct: null, konten: 2 } });
     // Krypto: die Umkehr hat dort noch nie gehandelt ⇒ kein Beleg, kein erfundener.
     expect(e['crypto']).toEqual({ n: 0, kantePct: null });
   });
@@ -89,8 +88,9 @@ describe('der Regler auf Umkehr-Belegen', () => {
     expect(reglerSchritt(rat)).toBe(0);
   });
 
-  it('… und auf dem Gesamtbestand, sobald genug Konten und Trades der Umkehr dahinterstehen', () => {
-    const g = { stocks_us: { quellen: { umkehr: { n: GLOBAL_MIN_TRADES, kantePct: -0.6, konten: MIN_ACCOUNTS } } } };
+  it('… und auf dem Gesamtbestand, sobald genug UNABHÄNGIGE Trades der Umkehr dahinterstehen', () => {
+    // Je Konto GLOBAL_MIN_TRADES Trades ⇒ die Stichprobe (n / konten) erreicht die Schwelle.
+    const g = { stocks_us: { quellen: { umkehr: { n: GLOBAL_MIN_TRADES * MIN_ACCOUNTS, kantePct: -0.6, konten: MIN_ACCOUNTS } } } };
     const rat = rateKlasse('stocks_us', ergebnisseFuerQuelle('umkehr', undefined, g)['stocks_us']!, 0.5);
     expect(rat.empfehlung).toBe('abschalten');
     expect(rat.quelle).toBe('global');
@@ -99,45 +99,27 @@ describe('der Regler auf Umkehr-Belegen', () => {
     expect(rateKlasse('stocks_us', ergebnisseFuerQuelle('umkehr', undefined, zuWenig)['stocks_us']!, 0.5).empfehlung).toBe('zu_wenig_daten');
   });
 
+  it('Kopien zählen nicht: der Stand vom 20.11. (24 Trades, 4 Konten, −0,93 %) ist kein Urteil — in keine Richtung', () => {
+    const stand = { stocks_us: { quellen: { umkehr: { n: 24, kantePct: -0.9264, konten: 4 } } } };
+    const e = ergebnisseFuerQuelle('umkehr', undefined, stand)['stocks_us']!;
+    expect(e.global).toEqual({ n: 6, kantePct: -0.9264, konten: 4 });
+    // Läuft die Klasse, bleibt sie; ist sie aus, bleibt sie aus. Kein Zurückholen ohne positiven Beleg.
+    for (const w of [0, 0.5, 1]) expect(reglerSchritt(rateKlasse('stocks_us', e, w))).toBe(w);
+    // Auch 50 ROHE Trades aus 7 Konten (≈ 7 Signale) reichen nicht — vorher wäre das ein endgültiges Aus gewesen.
+    const roh50 = { stocks_us: { quellen: { umkehr: { n: GLOBAL_MIN_TRADES, kantePct: -0.6, konten: 7 } } } };
+    expect(rateKlasse('stocks_us', ergebnisseFuerQuelle('umkehr', undefined, roh50)['stocks_us']!, 1).empfehlung).toBe('zu_wenig_daten');
+  });
+
+  it('eine abgeschaltete Klasse kommt nur auf POSITIVEM Umkehr-Beleg zurück — in Schritten, wie immer', () => {
+    const gut = { stocks_us: { quellen: { umkehr: { n: GLOBAL_MIN_TRADES * 4, kantePct: 0.4, konten: 4 } } } };
+    const rat = rateKlasse('stocks_us', ergebnisseFuerQuelle('umkehr', undefined, gut)['stocks_us']!, 0);
+    expect(rat.empfehlung).toBe('verstaerken');
+    expect(reglerSchritt(rat)).toBe(0.25);
+  });
+
   it('berateKlassen läuft auf den Umkehr-Belegen ohne Sonderweg', () => {
     const b = berateKlassen(ergebnisseFuerQuelle('umkehr', EIGEN, GLOBAL), { stocks_us: 0.5, crypto: 0 });
     expect(b.raete.map((r) => r.empfehlung)).toEqual(['zu_wenig_daten', 'zu_wenig_daten']);
     expect(b.aenderungen).toBe(0);
-  });
-});
-
-describe('umkehrKlassenZurueck — einmalige Rückkehr', () => {
-  const log = (klasse: string, nach: number, at: string) => ({ klasse, nach, at });
-
-  it('holt zurück, was der REGLER abgeschaltet hat — mit halbem Gewicht', () => {
-    const z = umkehrKlassenZurueck(
-      { stocks_us: 0, etf_sectors: 0, crypto: 0.5 },
-      [log('stocks_us', 0.5, '2026-09-01T22:15:00Z'), log('stocks_us', 0, '2026-10-02T22:15:00Z'), log('etf_sectors', 0, '2026-10-05T22:15:00Z')],
-      true,
-    );
-    expect(z).toEqual([
-      { klasse: 'etf_sectors', von: 0, nach: SCHATTEN_PROBELOS },
-      { klasse: 'stocks_us', von: 0, nach: SCHATTEN_PROBELOS },
-    ]);
-  });
-
-  it('eine von Hand gesetzte 0 bleibt: kein Journal-Eintrag, oder der jüngste endet nicht auf 0', () => {
-    expect(umkehrKlassenZurueck({ crypto: 0 }, [], true)).toEqual([]);
-    expect(umkehrKlassenZurueck({ crypto: 0 }, [log('stocks_us', 0, '2026-10-02T22:15:00Z')], true)).toEqual([]);
-    // Regler schaltete ab, später wieder an (0,5), danach setzte der Owner die 0 selbst.
-    expect(
-      umkehrKlassenZurueck({ crypto: 0 }, [log('crypto', 0, '2026-09-01T22:15:00Z'), log('crypto', 0.5, '2026-10-01T22:15:00Z')], true),
-    ).toEqual([]);
-  });
-
-  it('bei abgewähltem Auto-Regler wird nichts angefasst', () => {
-    expect(umkehrKlassenZurueck({ stocks_us: 0 }, [log('stocks_us', 0, '2026-10-02T22:15:00Z')], false)).toEqual([]);
-  });
-
-  it('laufende Klassen und fehlende Gewichte bleiben unberührt; kaputte Journal-Zeilen zählen nicht', () => {
-    expect(umkehrKlassenZurueck({ stocks_us: 0.25 }, [log('stocks_us', 0, '2026-10-02T22:15:00Z')], true)).toEqual([]);
-    expect(umkehrKlassenZurueck(undefined, [log('stocks_us', 0, '2026-10-02T22:15:00Z')], true)).toEqual([]);
-    const kaputt = [{ klasse: 'stocks_us', nach: 0 } as unknown as { klasse: string; nach: number; at: string }];
-    expect(umkehrKlassenZurueck({ stocks_us: 0 }, kaputt, true)).toEqual([]);
   });
 });

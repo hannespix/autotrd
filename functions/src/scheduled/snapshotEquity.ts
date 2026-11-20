@@ -648,6 +648,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
               at: now.toISOString(),
               date,
               ...b,
+              beleg: umkehrModus ? 'umkehr' : 'klasse',
             });
           }
           await log.commit();
@@ -705,6 +706,10 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
           aenderungen: rat.aenderungen,
           fazit: rat.fazit,
           autoTune: autoAn,
+          // Woran gemessen wurde (20.11.): Umkehr-Konten an der Umkehr, alle
+          // anderen an der Klasse als Ganzem — sonst stünden in der Karte
+          // „9 Trades" neben 180 in der Depot-Attribution, ohne Erklärung.
+          beleg: umkehrModus ? 'umkehr' : 'klasse',
           bewegt,
           at: now.toISOString(),
         },
