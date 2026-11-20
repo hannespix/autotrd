@@ -27,7 +27,9 @@ import {
   kerzenFuerSignal,
   kerzenTag,
   kontoPlan,
-  planZielWert,
+  abendStandErsetzen,
+  PLAN_RESERVE_MAX,
+  PLAN_SUMMEN_MIN_KONTEN,
   regelSchluesse,
   planFrisch,
   sitzungVorbei,
@@ -52,61 +54,97 @@ describe('Plan je Konto', () => {
 
   /* 20.11.: 25 Signale nach einer −6-%-Woche, am Morgen kaufte kein Konto.
    * Die geplanten (stärksten) Signale waren für das Konto zu teuer und fielen
-   * ersatzlos weg; die bezahlbaren dahinter wurden nie versucht. */
-  describe('zu teure Signale werden übersprungen, das nächstbeste rückt nach', () => {
-    it('ohne Preisdeckel bleibt die Auswahl wie bisher: stärkstes Signal zuerst', () => {
+   * ersatzlos weg; die bezahlbaren dahinter wurden nie versucht. Seitdem
+   * trägt der Plan die übrigen Signale als RESERVE, und der Morgen wählt. */
+  describe('Reserve: was abends keinen Platz bekam, bleibt in Rangfolge im Plan', () => {
+    it('Auswahl unverändert (stärkstes Signal zuerst), der Rest ist Reserve', () => {
       const p = kontoPlan(new Map(), signale, new Map(), 2);
       expect(p.kaufen.map((k) => k.symbol)).toEqual(['AAPL', 'XLF']);
-      expect(p.verworfen).toEqual({ gehalten: 0, klasseAus: 0, zuTeuer: 0, klumpen: 0, keinPlatz: 1 });
+      expect(p.reserve.map((k) => k.symbol)).toEqual(['QQQ']);
+      expect(p.verworfen).toEqual({ gehalten: 0, klasseAus: 0, klumpen: 0, keinPlatz: 1 });
     });
 
-    it('mit Zielbetrag 120 $ fällt AAPL (200 $) und QQQ (500 $) heraus — XLF wird gekauft', () => {
-      const p = kontoPlan(new Map(), signale, new Map(), 2, () => true, 120);
-      expect(p.kaufen.map((k) => k.symbol)).toEqual(['XLF']);
-      expect(p.verworfen.zuTeuer).toBe(2);
-      expect(p.verworfen.keinPlatz).toBe(0);
-    });
-
-    it('genau am Zielbetrag ist ein Stück kaufbar; kaputter Deckel filtert nicht', () => {
-      expect(kontoPlan(new Map(), signale, new Map(), 3, () => true, 200).kaufen.map((k) => k.symbol)).toEqual(['AAPL', 'XLF']);
-      for (const kaputt of [0, -5, Number.NaN, null]) {
-        expect(kontoPlan(new Map(), signale, new Map(), 3, () => true, kaputt).kaufen).toHaveLength(3);
-      }
-    });
-
-    it('jedes Signal wird genau einmal gezählt — gekauft oder mit EINEM Grund verworfen', () => {
+    it('gehaltene und abgeschaltete Klassen kommen NICHT in die Reserve', () => {
       const halten = new Map<string, Position>([['AAPL', pos({ core: true, quelle: 'sockel' })]]);
-      const viele = [
-        ...signale,
-        { symbol: 'XLK', rsi: 4, schluss: 60 },
-        { symbol: 'SMH', rsi: 5, schluss: 70 },
-        { symbol: 'SOXX', rsi: 7, schluss: 80 },
-        { symbol: 'NVDA', rsi: 9, schluss: 90 },
-        { symbol: 'JPM', rsi: 10, schluss: 95 },
-      ];
-      const p = kontoPlan(halten, viele, new Map(), 10, (s) => s !== 'JPM', 100);
+      const p = kontoPlan(halten, signale, new Map(), 1, (s) => s !== 'QQQ');
+      expect(p.kaufen.map((k) => k.symbol)).toEqual(['XLF']);
+      expect(p.reserve).toEqual([]);
+      expect(p.verworfen).toEqual({ gehalten: 1, klasseAus: 1, klumpen: 0, keinPlatz: 0 });
+    });
+
+    it('jedes Signal wird genau einmal gezählt; die Reserve ist gedeckelt', () => {
+      const viele = Array.from({ length: 60 }, (_, i) => ({ symbol: `S${i}`, rsi: i / 10, schluss: 10 + i }));
+      const p = kontoPlan(new Map(), viele, new Map(), 10);
       const v = p.verworfen;
-      expect(v.gehalten).toBe(1); // AAPL
-      expect(v.klasseAus).toBe(1); // JPM
-      expect(v.zuTeuer).toBe(1); // QQQ
-      expect(p.kaufen.length + v.gehalten + v.klasseAus + v.zuTeuer + v.klumpen + v.keinPlatz).toBe(viele.length);
-      expect(v.klumpen).toBeGreaterThan(0); // Tech-Block: XLK, SMH, SOXX, NVDA > MAX_PER_CLUSTER
+      expect(p.kaufen.length + v.gehalten + v.klasseAus + v.klumpen + v.keinPlatz).toBe(viele.length);
+      expect(p.reserve.length).toBe(PLAN_RESERVE_MAX);
+      // Rangfolge: die Reserve setzt direkt hinter den geplanten Käufen fort.
+      expect(p.reserve[0]!.rsi).toBeGreaterThanOrEqual(p.kaufen.at(-1)!.rsi);
     });
   });
 
-  describe('planZielWert — Zielbetrag je Platz am Abend', () => {
-    it('Bargeld + Bestände zum Schlusskurs, minus Sockel, durch zehn Plätze', () => {
-      const depot = new Map<string, Position>([['AAPL', pos({ qty: 10, avgEntry: 100 })]]);
-      // 1.000 Bargeld + 10 × 150 = 2.500; 20 % Sockel ⇒ 2.000 aktiv ⇒ 200 je Platz.
-      expect(planZielWert(1000, depot, () => 150, 20)).toBeCloseTo(200, 6);
-      // Ohne Kurs zählt der Einstand: 1.000 + 10 × 100 = 2.000 ⇒ 160.
-      expect(planZielWert(1000, depot, () => null, 20)).toBeCloseTo(160, 6);
+  describe('Morgen: Reserve rückt nach, wenn ein geplanter Kauf ausfällt', () => {
+    const preise: Record<string, number> = { AAPL: 200, QQQ: 500, XLF: 50, KO: 60, PFE: 25 };
+    const preis = (s: string): number | null => preise[s] ?? null;
+    const geplant = [{ symbol: 'AAPL', rsi: 3, schluss: 200 }, { symbol: 'QQQ', rsi: 4, schluss: 500 }];
+    const reserve = [{ symbol: 'XLF', rsi: 6, schluss: 50 }, { symbol: 'KO', rsi: 7, schluss: 60 }, { symbol: 'PFE', rsi: 8, schluss: 25 }];
+
+    it('ohne Reserve wie am 20.11.: beide zu teuer, kein Kauf', () => {
+      const w = kaufAuftraegeMitGrund(geplant, preis, 5000, 120, 2);
+      expect(w.auftraege).toEqual([]);
+      expect(w.zuTeuer).toBe(2);
+      expect(w.ersatz).toBe(0);
     });
 
-    it('ohne belastbares Bargeld oder bei leerem Konto: null ⇒ der Plan filtert nicht nach Preis', () => {
-      expect(planZielWert(undefined, new Map(), () => null, 0)).toBeNull();
-      expect(planZielWert(Number.NaN, new Map(), () => null, 0)).toBeNull();
-      expect(planZielWert(0, new Map(), () => null, 0)).toBeNull();
+    it('mit Reserve: die zwei nächstbesten bezahlbaren Signale füllen die Plätze', () => {
+      const w = kaufAuftraegeMitGrund(geplant, preis, 5000, 120, 2, { reserve });
+      expect(w.auftraege.map((a) => a.symbol)).toEqual(['XLF', 'KO']);
+      expect(w.auftraege.map((a) => a.qty)).toEqual([2, 2]);
+      expect(w.zuTeuer).toBe(2); // die geplanten bleiben als Ausfall gezählt …
+      expect(w.ersatz).toBe(2); // … und der Ersatz ist sichtbar
+      expect(w.keinPlatz).toBe(0); // ungenutzte Reserve (PFE) ist kein verpasster Kauf
+    });
+
+    it('geplante Käufe haben Vorrang; Reserve wird nur gebraucht, wenn Plätze frei bleiben', () => {
+      const w = kaufAuftraegeMitGrund(geplant, preis, 5000, 600, 2, { reserve });
+      expect(w.auftraege.map((a) => a.symbol)).toEqual(['AAPL', 'QQQ']);
+      expect(w.ersatz).toBe(0);
+    });
+
+    it('nie mehr Käufe als freie Plätze, nie dasselbe Symbol zweimal', () => {
+      // XLF steht zweimal in der Reserve, und es wären VIER Plätze frei: trotzdem nur einmal XLF.
+      const doppelt = [{ symbol: 'XLF', rsi: 6, schluss: 50 }, ...reserve];
+      const w = kaufAuftraegeMitGrund(geplant, preis, 5000, 120, 4, { reserve: doppelt });
+      expect(w.auftraege.map((a) => a.symbol)).toEqual(['XLF', 'KO', 'PFE']);
+      expect(kaufAuftraegeMitGrund(geplant, preis, 5000, 120, 1, { reserve }).auftraege).toHaveLength(1);
+    });
+
+    it('Klumpen-Limit gilt am Morgen mit dem, was wirklich gehalten und gekauft wird', () => {
+      const sektoren = [{ symbol: 'SOXX', rsi: 1, schluss: 10 }, { symbol: 'XLF', rsi: 2, schluss: 10 }, { symbol: 'SPY', rsi: 3, schluss: 10 }];
+      const p10 = (): number => 10;
+      // Zwei Sektor-ETFs im Depot: nur noch EINER passt in den Block (SOXX), XLF nicht mehr; SPY ist ein anderer Block.
+      const w = kaufAuftraegeMitGrund(sektoren, p10, 5000, 100, 5, { depot: ['XLK', 'SMH'] });
+      expect(w.auftraege.map((a) => a.symbol)).toEqual(['SOXX', 'SPY']);
+      expect(w.klumpen).toBe(1);
+      // Ohne `depot` (Altaufrufer) keine Klumpen-Prüfung — Verhalten wie bisher.
+      expect(kaufAuftraegeMitGrund(sektoren, p10, 5000, 100, 5).auftraege).toHaveLength(3);
+    });
+
+    it('das Bargeld begrenzt auch den Ersatz', () => {
+      const w = kaufAuftraegeMitGrund(geplant, preis, 110, 120, 3, { reserve });
+      // 110 × 0,98 = 107,8 ⇒ 2 × XLF (100), danach 10 Rest ⇒ nichts mehr.
+      expect(w.auftraege.map((a) => a.symbol)).toEqual(['XLF']);
+    });
+  });
+
+  describe('abendStandErsetzen — die Diagnose des Tages nicht mit Nullen überschreiben', () => {
+    it('ein Lauf ohne neu geplantes Konto ersetzt den Stand desselben Kerzentags nicht', () => {
+      expect(abendStandErsetzen({ tag: '2026-11-20' }, '2026-11-20', 0)).toBe(false);
+    });
+    it('neuer Kerzentag oder mindestens ein geplantes Konto ersetzt', () => {
+      expect(abendStandErsetzen({ tag: '2026-11-19' }, '2026-11-20', 0)).toBe(true);
+      expect(abendStandErsetzen({ tag: '2026-11-20' }, '2026-11-20', 3)).toBe(true);
+      expect(abendStandErsetzen(undefined, '2026-11-20', 0)).toBe(true);
     });
   });
 
@@ -333,7 +371,7 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
   it('Lauf: Käufe gestempelt (quelle + Steckbrief + Lauf-Kennung), Verkäufe nie hinter Einstiegs-Toren', () => {
     expect(lauf).toContain("quelle: 'umkehr',");
     expect(lauf).toContain("signature: 'umkehr'");
-    expect(lauf).toContain('plan.verkaufen, plan.kaufen, `umk-${plan.tag}`, now);');
+    expect(lauf).toContain('plan.verkaufen, plan.kaufen, `umk-${plan.tag}`, now, plan.reserve ?? []);');
     expect(lauf).toContain('if (einstiegSperre !== null || kaufen.length === 0) return { kaeufe, verkaeufe, ohne, abrutschen, verkaufFehl };');
     expect(lauf.indexOf('// 1) Verkäufe')).toBeLessThan(lauf.indexOf('// 2) Käufe'));
     // Jeder Plan genau einmal (M1), Verkauf nie zum erfundenen Kurs (M3).
@@ -456,18 +494,25 @@ describe('Morgen holt einen fehlenden Abendplan nach (21.10.)', () => {
   });
 });
 
-describe('Abendlauf zählt öffentlich, warum nicht gekauft wird (20.11.)', () => {
+describe('Reserve und Zählung sind im Lauf angeschlossen (20.11.)', () => {
   const lauf20 = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/scheduled/umkehrLauf.ts'), 'utf8');
 
-  it('der Plan bekommt den Zielbetrag des Kontos, Krypto bleibt ohne Preisdeckel', () => {
-    expect(lauf20).toContain("umkehrParameterFuer(null).maxPositionen, klasseErlaubt(clamped), zielWert);");
-    expect(lauf20).toContain("umkehrParameterFuer('crypto').maxPositionen, klasseErlaubt(tore.clamped));");
+  it('Morgen- und Kryptolauf reichen die Reserve des Plans an die Ausführung', () => {
+    expect(lauf20).toContain('plan.verkaufen, plan.kaufen, `umk-${plan.tag}`, now, plan.reserve ?? []);');
+    expect(lauf20).toContain('plan.verkaufen, plan.kaufen, `umk-${tag}`, now, plan.reserve);');
+    expect(lauf20).toContain('reserve: reserve.filter(kaufbar),');
+    expect(lauf20).toContain("depot: [...alle.entries()].filter(([, p]) => umkehrBesitz(p)).map(([sym]) => sym),");
   });
 
-  it('Stand abend trägt kontenMitKauf, geplanteKaeufe und die Verwurfs-Gründe (nur Summen)', () => {
-    const stand = lauf20.slice(lauf20.indexOf("await standSchreiben('abend', {"));
-    const kopf = stand.slice(0, stand.indexOf('});'));
-    for (const feld of ['kontenMitKauf,', 'geplanteKaeufe,', 'verworfen,']) expect(kopf).toContain(feld);
+  it('Stand abend: Summen erst ab der Konten-Schwelle, und nie mit Nullen überschrieben', () => {
+    expect(PLAN_SUMMEN_MIN_KONTEN).toBe(3);
+    expect(lauf20).toContain('...(geplant >= PLAN_SUMMEN_MIN_KONTEN ? { kontenMitKauf, geplanteKaeufe, verworfen } : {}),');
+    expect(lauf20.indexOf('if (!abendStandErsetzen(standAlt, tag, geplant)) {')).toBeLessThan(lauf20.indexOf("await standSchreiben('abend', {"));
     expect(lauf20).toContain('for (const g of Object.keys(verworfen) as Array<keyof PlanVerworfen>) verworfen[g] += plan.verworfen[g];');
+  });
+
+  it('ausgefallene geplante Käufe werden als Summe der Gründe gezählt — Ersatz zählt nicht als Fehlschlag', () => {
+    expect(lauf20).toContain('ohne.bargeldOderPlatz += wahl.keinKurs + wahl.keinPlatz + wahl.keinBargeld + wahl.zuTeuer + wahl.klumpen;');
+    expect(lauf20).toContain('ohne.ersatz += wahl.ersatz;');
   });
 });
