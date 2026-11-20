@@ -537,9 +537,16 @@ async function fuehreAus(
     equity > 0 ? { bargeld: (bargeld / equity) * 100, altbestand: (altbestand / equity) * 100, sockel: (sockel / equity) * 100 } : undefined;
   const belegt = [...alle.values()].filter((p) => umkehrBesitz(p)).length;
   const frei = umkehrParameterFuer(null).maxPositionen - belegt;
-  const kaufbar = (x: PlanKauf): boolean => !alle.has(x.symbol) && !symbolSperreAusVermerk(k.get('risk.abgleich'), x.symbol, now);
+  /* Klasse auch am MORGEN prüfen (Red-Team 20.11.): Der Plan entsteht um
+   * 16:45 ET, der Klassen-Regler läuft um 17:15 ET. Schaltet er eine Klasse
+   * in dieser halben Stunde ab, kaufte der Morgen sie bisher trotzdem. */
+  const klasseAn = klasseErlaubt(clamped);
+  const kaufbar = (x: PlanKauf): boolean =>
+    klasseAn(x.symbol) && !alle.has(x.symbol) && !symbolSperreAusVermerk(k.get('risk.abgleich'), x.symbol, now);
   const kandidaten = kaufen.filter(kaufbar);
-  ohne.gehalten += kaufen.length - kandidaten.length;
+  const klasseAus = kaufen.filter((x) => !klasseAn(x.symbol)).length;
+  ohne.klasseAus += klasseAus;
+  ohne.gehalten += kaufen.length - kandidaten.length - klasseAus;
   const wahl = kaufAuftraegeMitGrund(
     kandidaten,
     preis,
@@ -609,6 +616,8 @@ export interface OhneKauf {
   keinBargeld: number;
   /** 26.10.: Zielbetrag je Platz kleiner als ein ganzes Stück, Bargeld wäre da. */
   zuTeuer: number;
+  /** 20.11.: Klasse zwischen Plan und Kauf abgeschaltet (Regler läuft nach dem Abendlauf). */
+  klasseAus: number;
   /** 20.11.: Klumpen-Limit am Morgen (Korrelationsblock voll). */
   klumpen: number;
   /** 20.11.: Käufe aus der RESERVE — sie ersetzten ausgefallene geplante Käufe. Kein Fehlschlag. */
@@ -620,7 +629,7 @@ export interface OhneKauf {
   gesperrtGruende: Record<string, number>;
 }
 export const leerOhneKauf = (): OhneKauf => ({
-  gesperrt: 0, gehalten: 0, bargeldOderPlatz: 0, keinKurs: 0, keinPlatz: 0, keinBargeld: 0, zuTeuer: 0, klumpen: 0, ersatz: 0, abgelehnt: 0,
+  gesperrt: 0, gehalten: 0, bargeldOderPlatz: 0, keinKurs: 0, keinPlatz: 0, keinBargeld: 0, zuTeuer: 0, klasseAus: 0, klumpen: 0, ersatz: 0, abgelehnt: 0,
   abgelehntGruende: {}, gesperrtGruende: {},
 });
 
@@ -649,6 +658,7 @@ const summiereOhne = (a: OhneKauf, b: OhneKauf): void => {
   a.keinPlatz += b.keinPlatz;
   a.keinBargeld += b.keinBargeld;
   a.zuTeuer += b.zuTeuer;
+  a.klasseAus += b.klasseAus;
   a.klumpen += b.klumpen;
   a.ersatz += b.ersatz;
   a.abgelehnt += b.abgelehnt;

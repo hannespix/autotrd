@@ -398,6 +398,85 @@ export interface KlassenBericht {
   fazit: string;
 }
 
+/* ── Belege je Einstiegsweg (20.11.) ────────────────────────────────────────
+ *
+ * Der Regler misst eine KLASSE — über alle Einstiegswege gemischt. Solange
+ * ein Konto nur einen Weg fährt, ist das dasselbe. Seit dem 20.10. fahren
+ * die Paper-Konten die Kurzfrist-Umkehr (Owner: „Alle auf RSI-2"), und das
+ * Klassen-Gewicht ist dort nur noch EIN Schalter: Darf die Umkehr in dieser
+ * Klasse kaufen? Gemessen wurde er weiter an allem, was die Klasse je
+ * verloren hat — der alten Konfluenz-Engine und dem Sockel.
+ *
+ * Gemessen am 20.11.: 18 Umkehr-Signale × 7 Konten, 6 geplante Käufe,
+ * 50 Verwürfe „Klasse aus". Vier Konten kauften am Tag nach einem
+ * −6-%-Ausverkauf nichts — abgeschaltet von Verlusten, die mit der
+ * Strategie, die sie fahren, nichts zu tun haben. Prozyklisch obendrein:
+ * Sockel-Verluste in der Crash-Woche drücken die Klassen-Kante genau dann,
+ * wenn die Umkehr ihre Signale bekommt.
+ *
+ * Das ist keine Lockerung des Reglers. Schwellen, Schrittweite und Journal
+ * bleiben, wie sie sind — nur der Beleg passt jetzt zu dem, was er
+ * steuert. Verliert die UMKEHR in einer Klasse strukturell, schaltet
+ * derselbe Regler sie mit denselben Schwellen ab.
+ *
+ * ── Was bewusst NICHT geschieht (Red-Team 20.11.) ─────────────────────────
+ *
+ * Die schon abgeschalteten Klassen werden nicht zurückgeholt. Der erste
+ * Entwurf tat das einmalig — und hätte damit einen Zustand gesetzt, ohne zu
+ * messen. Die Messung, die es gibt, spricht dagegen: Die Umkehr selbst
+ * steht am 20.11. bei −0,93 % je Dollar in US-Aktien (24 Trades, 4 Konten),
+ * −2,81 % in Themen-ETFs (11) und −3,63 % in Krypto (17, davon 6 vom
+ * Ausstiegs-Fehler #582 verfälscht). Zu wenig für ein Urteil — aber erst
+ * recht zu wenig, um vier weitere Konten hineinzuschieben. Zurück kommt
+ * eine Klasse auf dem Weg, den der Regler immer hatte: wenn der Beleg
+ * positiv ist.
+ */
+
+/**
+ * Klassen-Belege NUR aus einem Einstiegsweg (pur): eigene Trades aus
+ * `stats.byClassQuelle`, der Gesamtbestand aus `meta/health.trading.
+ * klassen[*].quellen`. Der Gesamtbestand veröffentlicht die Kante je Quelle
+ * erst ab der Konten-Schwelle — darunter ist sie `null` und trägt nichts.
+ *
+ * Bewusst OHNE Schatten: Die Schatten-Reihe misst die Signale der
+ * Konfluenz-Engine. Sie dürfte eine Klasse „zurückholen", die die Umkehr
+ * selbst abgeschaltet hat — mit einem Beleg, der über die Umkehr nichts
+ * sagt.
+ *
+ * KOPIEN ZÄHLEN NICHT (Red-Team 20.11.): Die Schwelle des Gesamtbestands
+ * (`GLOBAL_MIN_TRADES`) ist damit begründet, dass fremde Konten ANDERS
+ * handeln. Ein signalgetriebener Einstiegsweg kauft aber in jedem Konto
+ * dasselbe Signal — 50 Trades aus 7 Konten sind rund 7 unabhängige Wetten,
+ * oft aus derselben Woche. Als Stichprobe des Gesamtbestands zählt deshalb
+ * `n / konten`: die Trades je Konto, also ungefähr die Zahl verschiedener
+ * Signale. Das verschiebt das Urteil in BEIDE Richtungen nach hinten —
+ * Abschalten wie Verstärken —, statt es auf einer Handvoll Signale zu
+ * fällen, von denen es bei der Umkehr keinen Rückweg gäbe (kein Schatten).
+ */
+export function ergebnisseFuerQuelle(
+  quelle: string,
+  eigen: Readonly<Record<string, Readonly<Record<string, { n: number; kantePct?: number | null }>>>> | undefined,
+  global:
+    | Readonly<Record<string, { quellen?: Readonly<Record<string, { n?: number; kantePct?: number | null; konten?: number }>> }>>
+    | undefined,
+  /** Klassen, die auch ohne Beleg in der Liste stehen sollen (z. B. alle mit gesetztem Gewicht). */
+  bekannt: readonly string[] = [],
+): Record<string, KlassenErgebnis> {
+  const out: Record<string, KlassenErgebnis> = {};
+  const zahl = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
+  const kante = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null);
+  for (const klasse of new Set([...Object.keys(eigen ?? {}), ...Object.keys(global ?? {}), ...bekannt])) {
+    const e = eigen?.[klasse]?.[quelle];
+    const g = global?.[klasse]?.quellen?.[quelle];
+    out[klasse] = {
+      n: zahl(e?.n),
+      kantePct: e && zahl(e.n) > 0 ? kante(e.kantePct) : null,
+      ...(g ? { global: { n: Math.floor(zahl(g.n) / Math.max(1, zahl(g.konten))), kantePct: kante(g.kantePct), konten: zahl(g.konten) } } : {}),
+    };
+  }
+  return out;
+}
+
 /**
  * Empfehlung für alle gemessenen Klassen, sortiert nach Kante.
  *
