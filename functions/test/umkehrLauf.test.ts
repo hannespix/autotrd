@@ -27,6 +27,7 @@ import {
   kerzenFuerSignal,
   kerzenTag,
   kontoPlan,
+  planZielWert,
   regelSchluesse,
   planFrisch,
   sitzungVorbei,
@@ -48,6 +49,66 @@ describe('Plan je Konto', () => {
     { symbol: 'AAPL', rsi: 3, schluss: 200 },
     { symbol: 'QQQ', rsi: 8, schluss: 500 },
   ];
+
+  /* 20.11.: 25 Signale nach einer −6-%-Woche, am Morgen kaufte kein Konto.
+   * Die geplanten (stärksten) Signale waren für das Konto zu teuer und fielen
+   * ersatzlos weg; die bezahlbaren dahinter wurden nie versucht. */
+  describe('zu teure Signale werden übersprungen, das nächstbeste rückt nach', () => {
+    it('ohne Preisdeckel bleibt die Auswahl wie bisher: stärkstes Signal zuerst', () => {
+      const p = kontoPlan(new Map(), signale, new Map(), 2);
+      expect(p.kaufen.map((k) => k.symbol)).toEqual(['AAPL', 'XLF']);
+      expect(p.verworfen).toEqual({ gehalten: 0, klasseAus: 0, zuTeuer: 0, klumpen: 0, keinPlatz: 1 });
+    });
+
+    it('mit Zielbetrag 120 $ fällt AAPL (200 $) und QQQ (500 $) heraus — XLF wird gekauft', () => {
+      const p = kontoPlan(new Map(), signale, new Map(), 2, () => true, 120);
+      expect(p.kaufen.map((k) => k.symbol)).toEqual(['XLF']);
+      expect(p.verworfen.zuTeuer).toBe(2);
+      expect(p.verworfen.keinPlatz).toBe(0);
+    });
+
+    it('genau am Zielbetrag ist ein Stück kaufbar; kaputter Deckel filtert nicht', () => {
+      expect(kontoPlan(new Map(), signale, new Map(), 3, () => true, 200).kaufen.map((k) => k.symbol)).toEqual(['AAPL', 'XLF']);
+      for (const kaputt of [0, -5, Number.NaN, null]) {
+        expect(kontoPlan(new Map(), signale, new Map(), 3, () => true, kaputt).kaufen).toHaveLength(3);
+      }
+    });
+
+    it('jedes Signal wird genau einmal gezählt — gekauft oder mit EINEM Grund verworfen', () => {
+      const halten = new Map<string, Position>([['AAPL', pos({ core: true, quelle: 'sockel' })]]);
+      const viele = [
+        ...signale,
+        { symbol: 'XLK', rsi: 4, schluss: 60 },
+        { symbol: 'SMH', rsi: 5, schluss: 70 },
+        { symbol: 'SOXX', rsi: 7, schluss: 80 },
+        { symbol: 'NVDA', rsi: 9, schluss: 90 },
+        { symbol: 'JPM', rsi: 10, schluss: 95 },
+      ];
+      const p = kontoPlan(halten, viele, new Map(), 10, (s) => s !== 'JPM', 100);
+      const v = p.verworfen;
+      expect(v.gehalten).toBe(1); // AAPL
+      expect(v.klasseAus).toBe(1); // JPM
+      expect(v.zuTeuer).toBe(1); // QQQ
+      expect(p.kaufen.length + v.gehalten + v.klasseAus + v.zuTeuer + v.klumpen + v.keinPlatz).toBe(viele.length);
+      expect(v.klumpen).toBeGreaterThan(0); // Tech-Block: XLK, SMH, SOXX, NVDA > MAX_PER_CLUSTER
+    });
+  });
+
+  describe('planZielWert — Zielbetrag je Platz am Abend', () => {
+    it('Bargeld + Bestände zum Schlusskurs, minus Sockel, durch zehn Plätze', () => {
+      const depot = new Map<string, Position>([['AAPL', pos({ qty: 10, avgEntry: 100 })]]);
+      // 1.000 Bargeld + 10 × 150 = 2.500; 20 % Sockel ⇒ 2.000 aktiv ⇒ 200 je Platz.
+      expect(planZielWert(1000, depot, () => 150, 20)).toBeCloseTo(200, 6);
+      // Ohne Kurs zählt der Einstand: 1.000 + 10 × 100 = 2.000 ⇒ 160.
+      expect(planZielWert(1000, depot, () => null, 20)).toBeCloseTo(160, 6);
+    });
+
+    it('ohne belastbares Bargeld oder bei leerem Konto: null ⇒ der Plan filtert nicht nach Preis', () => {
+      expect(planZielWert(undefined, new Map(), () => null, 0)).toBeNull();
+      expect(planZielWert(Number.NaN, new Map(), () => null, 0)).toBeNull();
+      expect(planZielWert(0, new Map(), () => null, 0)).toBeNull();
+    });
+  });
 
   it('kauft nie, was das Konto schon hält (Sockel, Altbestand, Umkehr), tiefster RSI zuerst', () => {
     const halten = new Map<string, Position>([
@@ -392,5 +453,21 @@ describe('Morgen holt einen fehlenden Abendplan nach (21.10.)', () => {
     expect(morgen.indexOf('const nachgeholt = await abendNachholen(now)')).toBeLessThan(morgen.indexOf('for (const k of await umkehrKonten())'));
     expect(morgen).toContain('planNachgeholt: nachgeholt');
     expect(lauf).toContain("return kerzenFuerSignal('etf_regions', snap.bars, now.getTime()).at(-1)?.date ?? null;");
+  });
+});
+
+describe('Abendlauf zählt öffentlich, warum nicht gekauft wird (20.11.)', () => {
+  const lauf20 = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/scheduled/umkehrLauf.ts'), 'utf8');
+
+  it('der Plan bekommt den Zielbetrag des Kontos, Krypto bleibt ohne Preisdeckel', () => {
+    expect(lauf20).toContain("umkehrParameterFuer(null).maxPositionen, klasseErlaubt(clamped), zielWert);");
+    expect(lauf20).toContain("umkehrParameterFuer('crypto').maxPositionen, klasseErlaubt(tore.clamped));");
+  });
+
+  it('Stand abend trägt kontenMitKauf, geplanteKaeufe und die Verwurfs-Gründe (nur Summen)', () => {
+    const stand = lauf20.slice(lauf20.indexOf("await standSchreiben('abend', {"));
+    const kopf = stand.slice(0, stand.indexOf('});'));
+    for (const feld of ['kontenMitKauf,', 'geplanteKaeufe,', 'verworfen,']) expect(kopf).toContain(feld);
+    expect(lauf20).toContain('for (const g of Object.keys(verworfen) as Array<keyof PlanVerworfen>) verworfen[g] += plan.verworfen[g];');
   });
 });

@@ -133,7 +133,31 @@ export interface UmkehrPlan {
   kaufen: PlanKauf[];
   verkaufen: PlanVerkauf[];
   ausgefuehrtAm?: string | null;
+  /** Warum Signale NICHT im Kaufplan stehen (20.11.) — fehlt bei Altplänen. */
+  verworfen?: PlanVerworfen;
 }
+
+/**
+ * Warum ein Signal in KEINEM Kaufplan landete — je Grund gezählt (20.11.).
+ *
+ * Anlass: Am 19.11. standen 25 Signale an (S&P −6 % in einer Woche), am
+ * Morgen danach kaufte kein Konto. Fünf von sieben Konten hatten einen
+ * LEEREN Kaufplan — und nichts sagte, warum: `kontoPlan` filterte still.
+ * Ein Filter, der alles verwirft, sah aus wie ein Abend ohne Signale.
+ */
+export interface PlanVerworfen {
+  /** Konto hält das Symbol schon (Sockel, Altbestand, Umkehr). */
+  gehalten: number;
+  /** Anlageklasse per Klassen-Gewicht 0 abgeschaltet (Regler oder Owner). */
+  klasseAus: number;
+  /** Ein Stück kostet mehr als der Zielbetrag je Platz. */
+  zuTeuer: number;
+  /** Korrelationsblock voll (MAX_PER_CLUSTER). */
+  klumpen: number;
+  /** Alle Plätze belegt bzw. verplant. */
+  keinPlatz: number;
+}
+export const leerVerworfen = (): PlanVerworfen => ({ gehalten: 0, klasseAus: 0, zuTeuer: 0, klumpen: 0, keinPlatz: 0 });
 
 /**
  * Plan eines Kontos aus den Signalen (pur): Verkäufe für eigene
@@ -142,6 +166,17 @@ export interface UmkehrPlan {
  * nie in eine abgeschaltete Klasse (`erlaubt`) und nie mehr als
  * MAX_PER_CLUSTER Positionen eines Korrelationsblocks über das GANZE Depot
  * (Red-Team M6: im Ausverkauf feuern QQQ, XLK, SMH, NVDA … gemeinsam).
+ *
+ * `maxPreis` (20.11.): der Zielbetrag je Platz. Ein Signal, dessen
+ * Schlusskurs darüber liegt, kann das Konto nicht kaufen (ganze Stücke) —
+ * es wird ÜBERSPRUNGEN und das nächstbeste Signal rückt nach. Vorher
+ * belegte es einen Platz im Plan und fiel am Morgen ersatzlos weg: Am
+ * 20.11. gingen so alle fünf geplanten Käufe verloren, während zwanzig
+ * bezahlbare Signale gar nicht versucht wurden. Krypto (Bruchstücke)
+ * übergibt keinen `maxPreis`.
+ *
+ * `verworfen` zählt je Grund, was nicht im Plan landete — jedes Signal
+ * genau einmal, in der Reihenfolge der Prüfung.
  */
 export function kontoPlan(
   positionen: ReadonlyMap<string, Position>,
@@ -149,7 +184,8 @@ export function kontoPlan(
   ausstiege: ReadonlyMap<string, UmkehrAusstiegGrund>,
   maxPositionen: number,
   erlaubt: (symbol: string) => boolean = () => true,
-): { kaufen: PlanKauf[]; verkaufen: PlanVerkauf[] } {
+  maxPreis: number | null = null,
+): { kaufen: PlanKauf[]; verkaufen: PlanVerkauf[]; verworfen: PlanVerworfen } {
   const eigene = [...positionen.entries()].filter(([, p]) => umkehrBesitz(p));
   const verkaufen: PlanVerkauf[] = [];
   for (const [sym] of eigene) {
@@ -158,7 +194,15 @@ export function kontoPlan(
   }
   const verkauft = new Set(verkaufen.map((v) => v.symbol));
   let frei = maxPositionen - (eigene.length - verkaufen.length);
-  const offen = signale.filter((s) => !positionen.has(s.symbol) && erlaubt(s.symbol));
+  const verworfen = leerVerworfen();
+  const deckel = typeof maxPreis === 'number' && Number.isFinite(maxPreis) && maxPreis > 0 ? maxPreis : null;
+  const offen = signale.filter((s) => {
+    if (positionen.has(s.symbol)) verworfen.gehalten += 1;
+    else if (!erlaubt(s.symbol)) verworfen.klasseAus += 1;
+    else if (deckel !== null && s.schluss > deckel) verworfen.zuTeuer += 1;
+    else return true;
+    return false;
+  });
   const reihe = umkehrAuswahl(offen.map((s) => ({ symbol: s.symbol, rsi: s.rsi })), offen.length);
   // Klumpen-Limit innerhalb der UMKEHR (Red-Team-Nachprüfung): Sockel und
   // Altbestand mitzuzählen hätte bei drei Sockel-Aktien jede Umkehr-Aktie
@@ -166,13 +210,40 @@ export function kontoPlan(
   const depot = eigene.map(([s]) => s).filter((s) => !verkauft.has(s));
   const kaufen: PlanKauf[] = [];
   for (const k of reihe) {
-    if (frei <= 0) break;
-    if (!clusterHasRoom(depot, k.symbol)) continue;
+    if (frei <= 0) {
+      verworfen.keinPlatz += 1;
+      continue;
+    }
+    if (!clusterHasRoom(depot, k.symbol)) {
+      verworfen.klumpen += 1;
+      continue;
+    }
     kaufen.push(offen.find((s) => s.symbol === k.symbol)!);
     depot.push(k.symbol);
     frei -= 1;
   }
-  return { kaufen, verkaufen };
+  return { kaufen, verkaufen, verworfen };
+}
+
+/**
+ * Zielbetrag je Platz am ABEND geschätzt (pur): Bargeld plus Bestände zum
+ * letzten Schlusskurs (ohne Kurs zum Einstand), abzüglich Sockel-Anteil,
+ * geteilt durch die Plätze — dieselbe Formel wie am Morgen
+ * (`umkehrPositionsWert`), nur mit den Kursen des Abends. Liefert `null`,
+ * wenn sich nichts Belastbares rechnen lässt: Dann filtert der Plan nicht
+ * nach Preis und verhält sich wie vor dem 20.11.
+ */
+export function planZielWert(
+  bargeld: unknown,
+  positionen: ReadonlyMap<string, Position>,
+  schluss: (symbol: string) => number | null,
+  sockelPct: number,
+): number | null {
+  if (typeof bargeld !== 'number' || !Number.isFinite(bargeld)) return null;
+  let equity = bargeld;
+  for (const [sym, p] of positionen) equity += positionValue(p, schluss(sym));
+  const wert = umkehrPositionsWert(equity, sockelPct);
+  return wert > 0 ? wert : null;
 }
 
 /** Stückzahl: ganze Stücke bei Aktien/ETFs, Krypto auf 6 Stellen. */
@@ -623,6 +694,12 @@ export async function runUmkehrAbend(now = new Date()): Promise<{ konten: number
   const tag = kerzen.get('SPY')?.at(-1)?.date ?? kerzenTag('stocks_us', now.getTime());
 
   let geplant = 0;
+  /* Öffentliche Zählung (20.11.): wie viele Konten überhaupt einen Kauf
+   * planen und warum Signale verworfen wurden — Summen über die Konten,
+   * keine Kontodaten. */
+  let kontenMitKauf = 0;
+  let geplanteKaeufe = 0;
+  const verworfen = leerVerworfen();
   for (const k of konten) {
     try {
       const planRef = k.ref.collection('meta').doc('umkehrPlan');
@@ -633,10 +710,14 @@ export async function runUmkehrAbend(now = new Date()): Promise<{ konten: number
       if (alt?.tag === tag && alt.ausgefuehrtAm) continue;
       const { clamped } = toreFuer(k, now);
       const pos = gehalten.get(k.id) ?? new Map<string, Position>();
-      const plan = kontoPlan(pos, signale, ausstiegeAus(pos, kerzen, boerse), umkehrParameterFuer(null).maxPositionen, klasseErlaubt(clamped));
+      const zielWert = planZielWert(k.get('wallet.paperBalance'), pos, (s) => kerzen.get(s)?.at(-1)?.close ?? null, corePct(clamped));
+      const plan = kontoPlan(pos, signale, ausstiegeAus(pos, kerzen, boerse), umkehrParameterFuer(null).maxPositionen, klasseErlaubt(clamped), zielWert);
       const voll: UmkehrPlan = { tag, erstelltAt: now.toISOString(), ...plan, ausgefuehrtAm: null };
       await planRef.set(voll);
       geplant += 1;
+      if (plan.kaufen.length > 0) kontenMitKauf += 1;
+      geplanteKaeufe += plan.kaufen.length;
+      for (const g of Object.keys(verworfen) as Array<keyof PlanVerworfen>) verworfen[g] += plan.verworfen[g];
     } catch (err) {
       logger.warn(`Umkehr-Abendlauf: Konto ${k.id} übersprungen`, err);
     }
@@ -652,8 +733,13 @@ export async function runUmkehrAbend(now = new Date()): Promise<{ konten: number
     fehlend,
     signale: [...signale].sort((a, b) => a.rsi - b.rsi).slice(0, 30).map((s) => ({ symbol: s.symbol, rsi: s.rsi })),
     signaleN: signale.length,
+    kontenMitKauf,
+    geplanteKaeufe,
+    verworfen,
   });
-  logger.info(`Umkehr-Abendlauf: ${signale.length} Signal(e), ${geplant} Konto/Konten geplant, ${fehlend} ohne Kurse`);
+  logger.info(
+    `Umkehr-Abendlauf: ${signale.length} Signal(e), ${geplant} Konto/Konten geplant (${kontenMitKauf} mit Kauf, ${geplanteKaeufe} Käufe), ${fehlend} ohne Kurse — verworfen ${JSON.stringify(verworfen)}`,
+  );
   return { konten: geplant, signale: signale.length, symbole: symbole.length, fehlend };
 }
 
