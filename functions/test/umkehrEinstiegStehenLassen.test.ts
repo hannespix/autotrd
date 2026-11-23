@@ -24,10 +24,15 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { routeOrder } from '../src/core/orderRouting.js';
 import {
+  EINSTIEG_SPERRE_MAX_MS,
+  NACHLAUF_ANSPRUCH_MS,
   UMKEHR_EINSTIEG_GEDULD_MS,
   nachlaufLaesstArbeiten,
   nachlaufSchutzFaellig,
   umkehrEinstiegBleibtStehen,
+  vermerkBeansprucht,
+  vermerkExistiertSchon,
+  vermerkSperrtEinstieg,
 } from '../src/core/broker.js';
 
 vi.mock('firebase-admin/firestore', () => ({
@@ -197,6 +202,44 @@ describe('wer stehen bleiben darf — und wie lange', () => {
     }
   });
 
+  it('Runde 2, M1: ein stehengelassener Einstieg sperrt weitere Einstiege ins Symbol — befristet', () => {
+    const jetzt = Date.parse('2026-11-24T14:40:00Z');
+    const v = (min: number, mehr: Record<string, unknown> = {}) => ({
+      art: 'einstieg_rest', stehenGelassen: true, at: new Date(jetzt - min * 60_000).toISOString(), ...mehr,
+    });
+    expect(EINSTIEG_SPERRE_MAX_MS).toBe(3 * UMKEHR_EINSTIEG_GEDULD_MS);
+    expect(vermerkSperrtEinstieg(v(1), jetzt)).toBe(true);
+    expect(vermerkSperrtEinstieg(v(29), jetzt)).toBe(true);
+    // ein hängender Vermerk sperrt ein Symbol nicht auf Dauer
+    expect(vermerkSperrtEinstieg(v(30), jetzt)).toBe(false);
+    // ohne Merkmal (Storno-Rest, Netzfehler) und für Exits: keine Sperre aus DIESER Regel
+    expect(vermerkSperrtEinstieg(v(1, { stehenGelassen: undefined }), jetzt)).toBe(false);
+    expect(vermerkSperrtEinstieg(v(1, { stehenGelassen: 'true' }), jetzt)).toBe(false);
+    expect(vermerkSperrtEinstieg(v(1, { art: 'exit_offen' }), jetzt)).toBe(false);
+    // kaputter Zeitstempel oder Zukunft → keine Sperre (nie auf Dauer blockieren)
+    expect(vermerkSperrtEinstieg(v(1, { at: 'quatsch' }), jetzt)).toBe(false);
+    expect(vermerkSperrtEinstieg(v(-5), jetzt)).toBe(false);
+  });
+
+  it('Runde 2, M3: ein beanspruchter Vermerk wird von einem zweiten Lauf übersprungen — bis der Anspruch verfällt', () => {
+    const jetzt = Date.parse('2026-11-24T14:40:00Z');
+    expect(NACHLAUF_ANSPRUCH_MS).toBeLessThan(300_000); // kürzer als der Scan-Takt
+    expect(vermerkBeansprucht(new Date(jetzt + 1000).toISOString(), jetzt)).toBe(true);
+    expect(vermerkBeansprucht(new Date(jetzt).toISOString(), jetzt)).toBe(false);
+    expect(vermerkBeansprucht(new Date(jetzt - 1000).toISOString(), jetzt)).toBe(false);
+    expect(vermerkBeansprucht(undefined, jetzt)).toBe(false);
+    expect(vermerkBeansprucht('quatsch', jetzt)).toBe(false);
+  });
+
+  it('Runde 2, M4: nur ALREADY_EXISTS heißt „Vermerk existiert schon"', () => {
+    expect(vermerkExistiertSchon({ code: 6 })).toBe(true);
+    expect(vermerkExistiertSchon({ code: 'already-exists' })).toBe(true);
+    expect(vermerkExistiertSchon({ code: 3 })).toBe(false); // INVALID_ARGUMENT (z. B. undefined im Kontext)
+    expect(vermerkExistiertSchon({ code: 14 })).toBe(false); // UNAVAILABLE
+    expect(vermerkExistiertSchon(new Error('x'))).toBe(false);
+    expect(vermerkExistiertSchon(null)).toBe(false);
+  });
+
   it('Schutz-Stop nach dem Nachlauf: nur eröffnend, nur im Endzustand, nur mit Fill', () => {
     expect(nachlaufSchutzFaellig(true, true, 2)).toBe(true);
     expect(nachlaufSchutzFaellig(true, false, 2)).toBe(false); // Kauf-Order lebt noch → Wash-Trade
@@ -227,8 +270,9 @@ describe('Quelltext-Wächter: die Verdrahtung', () => {
   });
 
   it('das Merkmal schreibt NUR der Vermerk aus dem Routing — kein anderer Weg kann es setzen', () => {
-    expect(broker).toContain("...(offen.stehenGelassen === true ? { stehenGelassen: true } : {}),");
-    expect(broker.split('stehenGelassen: true').length - 1).toBe(1);
+    // zweimal (Vermerk und sein zweiter Schreibversuch) — beide nur aus `offen.stehenGelassen`
+    expect(broker.split('stehenGelassen: true').length - 1).toBe(2);
+    expect(broker.split("...(offen.stehenGelassen === true ? { stehenGelassen: true } : {}),").length - 1).toBe(2);
     const routing = lies('core', 'orderRouting.ts');
     expect(routing.split('stehenGelassen: true').length - 1).toBe(1);
     expect(lies('scheduled', 'fillSync.ts')).not.toContain('stehenGelassen');
@@ -236,9 +280,11 @@ describe('Quelltext-Wächter: die Verdrahtung', () => {
 
   it('H1: der Nachlauf legt im Endzustand den Schutz-Stop an — VOR dem Löschen des Vermerks', () => {
     const f = broker.slice(broker.indexOf('export async function bucheOffeneOrders'));
-    const schutz = f.indexOf('if (nachlaufSchutzFaellig(eroeffnend, endzustand, stand.filledQty)) {');
+    // nur für den neuen Weg, und mit GEKLEMMTEM Risiko (Runde 2, N1)
+    const schutz = f.indexOf('if (d.stehenGelassen === true && nachlaufSchutzFaellig(eroeffnend, endzustand, stand.filledQty)) {');
     expect(schutz).toBeGreaterThan(0);
-    expect(f.slice(schutz, schutz + 600)).toContain("risikoFuer(strategy.engine, klasse, quelleNach === 'sockel', quelleNach),");
+    expect(f.slice(schutz, schutz + 700)).toContain("risikoFuer(clampStrategyRisk(strategy).engine, klasse, quelleNach === 'sockel', quelleNach),");
+    expect(f.slice(schutz, schutz + 700)).not.toContain('risikoFuer(strategy.engine');
     expect(f.indexOf('await doc.ref.delete().catch(() => undefined);', schutz)).toBeGreaterThan(schutz);
     // und zwar nach der Buchung: eine gescheiterte Buchung springt vorher ab
     expect(f.indexOf('NICHT gebucht')).toBeLessThan(schutz);
@@ -251,6 +297,32 @@ describe('Quelltext-Wächter: die Verdrahtung', () => {
     expect(f).toContain('fillPreis: stand.filledAvgPreis,');
     expect(f).toContain('...(eroeffnend && d.bucket ? { bucket: d.bucket } : {}),');
     expect(f).toContain('...(eroeffnend && d.signalContext ? { signalContext: d.signalContext } : {}),');
+  });
+
+  it('Runde 2, M1: executeTrade weist JEDEN Einstieg neben einer stehengelassenen Order ab — vor dem Routing, nach dem Exit-Zweig', () => {
+    const f = broker.slice(broker.indexOf('export async function executeTrade'));
+    const sperre = f.indexOf('if (eroeffnet && (await stehengelassenerEinstieg(req.uid, req.symbol))) {');
+    expect(sperre).toBeGreaterThan(0);
+    expect(f.slice(sperre, sperre + 400)).toContain("return { executed: false, reason: 'einstieg_order_laeuft' };");
+    expect(sperre).toBeLessThan(f.indexOf('const routing = await routeOrder(verbindung, {'));
+    // Exits berührt sie nie: Die Bedingung hängt an `eroeffnet`, nicht an der Quelle oder Seite.
+    expect(f.slice(sperre - 200, sperre + 200)).not.toContain("req.source === 'engine'");
+  });
+
+  it('Runde 2, M3: der Nachlauf beansprucht den Vermerk, BEVOR er den Broker fragt und bucht', () => {
+    const f = broker.slice(broker.indexOf('export async function bucheOffeneOrders'));
+    const anspruch = f.indexOf('if (!(await beanspruchVermerk(doc.ref))) {');
+    expect(anspruch).toBeGreaterThan(0);
+    expect(anspruch).toBeLessThan(f.indexOf('await alpacaOrderAbfragen(verbindung.mode, d.orderId'));
+    expect(anspruch).toBeLessThan(f.indexOf('const r = await executePaperTrade('));
+    expect(broker).toContain("tx.update(ref, { inArbeitBis: new Date(jetzt + NACHLAUF_ANSPRUCH_MS).toISOString() });");
+  });
+
+  it('Runde 2, M4: ein gescheiterter Vermerk wird ein zweites Mal geschrieben statt als Rumpf zu enden', () => {
+    const f = broker.slice(broker.indexOf('export async function merkeOffeneOrder'), broker.indexOf('export async function bucheOffeneOrders'));
+    expect(f).toContain('if (vermerkExistiertSchon(err)) {');
+    expect(f.split('.create({').length - 1).toBe(2);
+    expect(f).toContain('ohne Nachlauf');
   });
 
   it('M1: der Sockel-Lauf kauft kein Symbol, zu dem noch eine Einstiegs-Order arbeitet', () => {

@@ -198,7 +198,7 @@ describe('Läufe und Gründe', () => {
     expect(umkehrOhneKaufText({ morgen: { ohneKauf: { gehalten: 0 } } })).toBe('');
     // Seit 23.11.: Eine Order, die beim Broker weiterarbeitet, ist kein „abgelehnt".
     const laeuft = umkehrOhneKaufText({ morgen: { ohneKauf: { laeuftNoch: 2, abgelehnt: 0 } } });
-    expect(laeuft).toContain('2× Order lief noch (wird nachgebucht)');
+    expect(laeuft).toContain('2× Order lief noch (wird nachgebucht, falls sie füllt)');
     expect(laeuft).not.toContain('abgelehnt');
     // Seit 23.10. aufgeschlüsselt — und ein älterer Krypto-Stand daneben bleibt beim Sammelgrund.
     const fein: UmkehrStatus = {
