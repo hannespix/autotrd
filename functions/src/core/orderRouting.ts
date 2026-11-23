@@ -499,6 +499,25 @@ export async function routeOrder(
      * Menge — s. Block „Teilausführung einer ERÖFFNENDEN Order".
      */
     schliessend?: boolean;
+    /**
+     * Eröffnende Order nach dem Wartefenster STEHEN LASSEN statt stornieren
+     * (23.11.) — der Nachlauf (`bucheOffeneOrders`) bucht, was sie füllt,
+     * und storniert sie erst nach Ablauf seiner Geduld.
+     *
+     * Der Storno (K-2c) schützt vor einer Doppelposition: Eine Kauf-Order,
+     * die weiterarbeitet, während der nächste Scan dasselbe Symbol erneut
+     * kauft. Diese Gefahr gibt es nur bei Einstiegswegen, die wiederholt
+     * kaufen. Die Kurzfrist-Umkehr kauft je Plan genau EINMAL, und der Scan
+     * eröffnet für Umkehr-Konten nichts — dort wirft der Storno nur Käufe
+     * weg: Am 23.11. füllte Alpaca um 09:35 ET binnen 12 s 1 von 2 PFE und
+     * 0 von 1 XLF, der Rest wurde storniert (10.11.: CVX, PM, XOM; 13.11.:
+     * ABT 2 von 3). Gemessen wird damit eine Strategie, die ihre Signale
+     * am Broker gar nicht bekommt.
+     *
+     * Nur wirksam zusammen mit `stornoBeiKeinFill` (eröffnende Order) und
+     * nur vom Aufrufer zu setzen, der die Einmaligkeit garantiert.
+     */
+    restStehenLassen?: boolean;
   },
   fetchImpl: typeof fetch = fetch,
   warteOpts: { versuche?: number; pauseMs?: number } = {},
@@ -556,6 +575,28 @@ export async function routeOrder(
       fetchImpl,
     );
     if (!fill || !(fill.ausfuehrungskurs > 0)) {
+      if (eroeffnend && auftrag.restStehenLassen === true) {
+        /* Kein Storno: Die Order arbeitet weiter, der Nachlauf bucht ihren
+         * Fill (Begründung am Parameter). Vorher EINE Nachfrage, damit „läuft
+         * noch" nicht behauptet wird, wo der Broker die Order abgelehnt hat
+         * (`warteAufFill` gibt für beides null zurück) — und damit ein Fill
+         * in der letzten Sekunde des Fensters gleich gebucht wird. Scheitert
+         * die Nachfrage, gilt die vorsichtige Lesart: Vermerk, der Nachlauf
+         * klärt es. */
+        const stand = await alpacaOrderAbfragen(verbindung.mode, order.id, verbindung.schluessel, fetchImpl)
+          .catch(() => null);
+        if (stand && ORDER_ENDZUSTAENDE.has(stand.status)) {
+          if (stand.filledQty > 0 && stand.filledAvgPreis > 0) {
+            return { ausgefuehrt: true, fillPreis: stand.filledAvgPreis, fillMenge: stand.filledQty, brokerOrderId: order.id };
+          }
+          return { ausgefuehrt: false, grund: 'kein_fill' };
+        }
+        return {
+          ausgefuehrt: false,
+          grund: 'order_laeuft',
+          offen: { art: 'einstieg_rest', orderId: order.id, clientOrderId: coid },
+        };
+      }
       if (auftrag.stornoBeiKeinFill) {
         /* Die Order darf nicht weiterarbeiten (Begründung am Parameter).
          * Derselbe Helfer wie bei der Teilausführung (Prüfbefund 05.10.):
@@ -616,6 +657,17 @@ export async function routeOrder(
      * Gekoppelt an `stornoBeiKeinFill`, das der Buchungspfad für jede
      * eröffnende Order setzt (broker.ts) — dieselbe Absicht: Eine eröffnende
      * Order darf nach dem Wartefenster nicht unbeaufsichtigt weiterarbeiten. */
+    if (eroeffnend && fill.status === 'partially_filled' && fill.qty < auftrag.qty && auftrag.restStehenLassen === true) {
+      // Teilfill im Fenster, Rest bleibt stehen: Gebucht wird die Menge von
+      // eben; die Differenz bucht der Nachlauf (`gebuchteMenge` am Vermerk).
+      return {
+        ausgefuehrt: true,
+        fillPreis: fill.ausfuehrungskurs,
+        fillMenge: fill.qty,
+        brokerOrderId: order.id,
+        offen: { art: 'einstieg_rest', orderId: order.id, clientOrderId: coid },
+      };
+    }
     if (eroeffnend && fill.status === 'partially_filled' && fill.qty < auftrag.qty) {
       const stand = await einstiegsRestStornieren(
         verbindung,

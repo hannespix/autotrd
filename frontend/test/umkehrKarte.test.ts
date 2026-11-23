@@ -196,6 +196,10 @@ describe('Läufe und Gründe', () => {
     expect(umkehrOhneKaufText(mitKrypto)).toContain('8× schon im Depot');
     expect(umkehrOhneKaufText(mitKrypto)).toContain('2× Order abgelehnt');
     expect(umkehrOhneKaufText({ morgen: { ohneKauf: { gehalten: 0 } } })).toBe('');
+    // Seit 23.11.: Eine Order, die beim Broker weiterarbeitet, ist kein „abgelehnt".
+    const laeuft = umkehrOhneKaufText({ morgen: { ohneKauf: { laeuftNoch: 2, abgelehnt: 0 } } });
+    expect(laeuft).toContain('2× Order lief noch (wird nachgebucht)');
+    expect(laeuft).not.toContain('abgelehnt');
     // Seit 23.10. aufgeschlüsselt — und ein älterer Krypto-Stand daneben bleibt beim Sammelgrund.
     const fein: UmkehrStatus = {
       morgen: { ohneKauf: { bargeldOderPlatz: 6, keinBargeld: 5, keinPlatz: 0, keinKurs: 1 } },

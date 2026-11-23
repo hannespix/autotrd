@@ -35,6 +35,8 @@ export interface UmkehrOhneKauf {
   keinKurs?: number;
   /** Seit 26.10.: Zielbetrag je Platz kleiner als ein ganzes Stück. */
   zuTeuer?: number;
+  /** Seit 23.11.: Order im Wartefenster nicht gefüllt, arbeitet weiter und wird nachgebucht — kein Fehlschlag. */
+  laeuftNoch?: number;
   abgelehnt?: number;
 }
 
@@ -332,6 +334,7 @@ export function umkehrOhneKaufText(s: UmkehrStatus | null): string {
     ['keinPlatz', t('uk.ohneKeinPlatz')],
     ['keinKurs', t('uk.ohneKeinKurs')],
     ['gesperrt', t('uk.ohneGesperrt')],
+    ['laeuftNoch', t('uk.ohneLaeuftNoch')],
     ['abgelehnt', t('uk.ohneAbgelehnt')],
   ] as const) {
     const n = summe(f);

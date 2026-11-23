@@ -487,6 +487,33 @@ export function einstiegsWarteFenster(
 }
 
 /**
+ * Bleibt ein Einstieg nach dem Wartefenster beim Broker stehen (pur)?
+ *
+ * Nur eröffnende MARKET-Orders der Kurzfrist-Umkehr: Sie kauft je Plan
+ * genau einmal (Tagesstempel), der Scan eröffnet für Umkehr-Konten nichts
+ * (`umkehr_modus`) — die Doppelposition, vor der der K-2c-Storno schützt,
+ * kann dort nicht entstehen. Limit-Einstiege (Krypto) behalten ihren
+ * Storno: Ein Limit, das nicht füllt, soll nicht stundenlang im Buch
+ * liegen. Alle anderen Wege unverändert.
+ */
+export function umkehrEinstiegBleibtStehen(eroeffnet: boolean, quelle: string | null, limit: boolean): boolean {
+  return eroeffnet && quelle === 'umkehr' && !limit;
+}
+
+/**
+ * So lange lässt der Nachlauf einen stehengelassenen Umkehr-Einstieg
+ * arbeiten, bevor er ihn storniert. Zehn Minuten sind zwei Scan-Takte:
+ * genug für die Verzögerung zur Eröffnung (gemessen: Sekunden bis wenige
+ * Minuten), und kurz genug, dass kein Kauf Stunden nach dem Signal füllt.
+ */
+export const UMKEHR_EINSTIEG_GEDULD_MS = 10 * 60_000;
+
+/** Darf der Nachlauf eine eröffnende Order noch arbeiten lassen (pur)? */
+export function nachlaufLaesstArbeiten(quelle: string | null | undefined, alterMs: number): boolean {
+  return quelle === 'umkehr' && Number.isFinite(alterMs) && alterMs >= 0 && alterMs < UMKEHR_EINSTIEG_GEDULD_MS;
+}
+
+/**
  * Grenzpreis eines Krypto-EINSTIEGS (pur). Umkehr: Kurs + Puffer (sofort
  * ausführbar, gedeckelt). Alle anderen Wege: Maker-Limit am Kurs (Hebel 1b,
  * unverändert). Ausstiege erreichen diese Funktion nie (nur `eroeffnet`).
@@ -1255,6 +1282,9 @@ export async function executeTrade(
     // bliebe ein Teilfill-Rest beim Broker unbeaufsichtigt liegen und
     // erzeugte „Position nur beim Broker".
     schliessend: schliesst,
+    // 23.11.: Market-Einstiege der Umkehr bleiben nach dem Fenster stehen —
+    // der Nachlauf bucht sie (s. `umkehrEinstiegBleibtStehen`).
+    ...(umkehrEinstiegBleibtStehen(eroeffnet, einstiegFruh, limitPreis > 0) ? { restStehenLassen: true } : {}),
     laufId: lauf,
   }, undefined, einstiegsWarteFenster(eroeffnet, einstiegFruh, limitPreis > 0));
   /* Offen gebliebene Order vormerken (Drift-Paket 08.10.) — in BEIDEN
@@ -1421,6 +1451,8 @@ export async function merkeOffeneOrder(
  * noch, wird sie storniert (ein Einstieg darf nicht unbeaufsichtigt
  * weiterarbeiten) und einmal nachgefragt; gebucht wird die DIFFERENZ zur
  * schon gebuchten Menge als Aufstockung — nie ein zweites Mal dasselbe.
+ * Ausnahme seit 23.11.: Einstiege der Kurzfrist-Umkehr dürfen bis
+ * `UMKEHR_EINSTIEG_GEDULD_MS` weiterarbeiten (s. `nachlaufLaesstArbeiten`).
  * Schließende (`exit_offen`): Ein Fill wird als Exit gebucht; die Order
  * selbst bleibt stehen, solange sie lebt (der Exit ist erwünscht).
  * Ein Vermerk endet, wenn die Order im Endzustand ist oder Alpaca sie
@@ -1468,7 +1500,10 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
         await doc.ref.delete().catch(() => undefined);
         continue;
       }
-      if (eroeffnend && !ORDER_ENDZUSTAENDE.has(stand.status)) {
+      // Stehengelassene Umkehr-Einstiege dürfen bis zur Geduld weiterarbeiten
+      // (23.11.) — alles andere wird wie bisher sofort storniert. `d.quelle`
+      // ist der Stempel des AUFTRAGS, nicht aus der Kennung geraten.
+      if (eroeffnend && !ORDER_ENDZUSTAENDE.has(stand.status) && !nachlaufLaesstArbeiten(d.quelle, alter)) {
         await alpacaOrderStornieren(verbindung.mode, stand.id, verbindung.schluessel)
           .catch(() => 'nicht_stornierbar' as const);
         stand = (await alpacaOrderAbfragen(verbindung.mode, stand.id, verbindung.schluessel).catch(() => null)) ?? stand;
