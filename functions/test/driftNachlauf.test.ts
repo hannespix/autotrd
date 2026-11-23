@@ -261,9 +261,9 @@ describe('Quelltext-Wächter: die Verdrahtung', () => {
     expect(f).toContain("? { aufstockung: true, ...(d.side === 'sell' ? { openShort: true } : {}) }");
     expect(f).toContain("{ restStorniert: endzustand, riskExit: 'exit_nachlauf' }");
     // ein eröffnender Rest wird storniert, bevor gebucht wird
-    // (seit 23.11. mit EINER Ausnahme: Umkehr-Einstiege innerhalb ihrer Geduld —
+    // (seit 23.11. mit EINER Ausnahme: bewusst stehengelassene, ungefüllte Umkehr-Einstiege in ihrer Geduld —
     // gepinnt in umkehrEinstiegStehenLassen.test.ts)
-    expect(f).toContain('if (eroeffnend && !ORDER_ENDZUSTAENDE.has(stand.status) && !nachlaufLaesstArbeiten(d.quelle, alter)) {');
+    expect(f).toContain('if (eroeffnend && !ORDER_ENDZUSTAENDE.has(stand.status) && !nachlaufLaesstArbeiten(d.stehenGelassen, alter, stand.filledQty)) {');
     // ein nicht buchbarer Fill verschwindet nie stumm: der Vermerk bleibt stehen (M1), nach NACHLAUF_MAX_TAGE wird laut aufgegeben
     expect(f).toContain('ohne Endzustand — aufgegeben, Fall für die Übernahme');
   });

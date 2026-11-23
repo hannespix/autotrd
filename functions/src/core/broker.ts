@@ -487,7 +487,8 @@ export function einstiegsWarteFenster(
 }
 
 /**
- * Bleibt ein Einstieg nach dem Wartefenster beim Broker stehen (pur)?
+ * Darf ein Einstieg, der im Wartefenster gar nicht gefüllt hat, beim
+ * Broker stehen bleiben (pur)?
  *
  * Nur eröffnende MARKET-Orders der Kurzfrist-Umkehr: Sie kauft je Plan
  * genau einmal (Tagesstempel), der Scan eröffnet für Umkehr-Konten nichts
@@ -501,16 +502,65 @@ export function umkehrEinstiegBleibtStehen(eroeffnet: boolean, quelle: string | 
 }
 
 /**
- * So lange lässt der Nachlauf einen stehengelassenen Umkehr-Einstieg
- * arbeiten, bevor er ihn storniert. Zehn Minuten sind zwei Scan-Takte:
- * genug für die Verzögerung zur Eröffnung (gemessen: Sekunden bis wenige
- * Minuten), und kurz genug, dass kein Kauf Stunden nach dem Signal füllt.
+ * So lange lässt der Nachlauf einen stehengelassenen, noch UNGEFÜLLTEN
+ * Umkehr-Einstieg arbeiten, bevor er ihn storniert. Zehn Minuten sind zwei
+ * Scan-Takte; weil der Nachlauf nur im 5-Minuten-Scan läuft, sind es
+ * wirksam 10–15 Minuten. Läuft der Scan für das Konto nicht (Engine aus),
+ * arbeitet die Day-Order bis zum Fill oder Börsenschluss; gebucht wird
+ * dann, sobald der Scan wieder läuft.
  */
 export const UMKEHR_EINSTIEG_GEDULD_MS = 10 * 60_000;
 
-/** Darf der Nachlauf eine eröffnende Order noch arbeiten lassen (pur)? */
-export function nachlaufLaesstArbeiten(quelle: string | null | undefined, alterMs: number): boolean {
-  return quelle === 'umkehr' && Number.isFinite(alterMs) && alterMs >= 0 && alterMs < UMKEHR_EINSTIEG_GEDULD_MS;
+/**
+ * Darf der Nachlauf eine eröffnende Order noch arbeiten lassen (pur)?
+ *
+ * Drei Bedingungen, alle nötig: Der Vermerk trägt das Merkmal des bewusst
+ * unterlassenen Stornos (nicht bloß die Quelle — die tragen auch Krypto-
+ * Limits mit hängendem Storno und Netzfehler-Vermerke); die Order ist noch
+ * UNGEFÜLLT (ab dem ersten Stück wird der Rest storniert, s.
+ * `restStehenLassen`); und die Geduld ist nicht abgelaufen. Ein fehlender
+ * oder kaputter Zeitstempel zählt als abgelaufen.
+ */
+export function nachlaufLaesstArbeiten(stehenGelassen: unknown, alterMs: number, filledQty: number): boolean {
+  return (
+    stehenGelassen === true &&
+    !(filledQty > 0) &&
+    Number.isFinite(alterMs) && alterMs >= 0 && alterMs < UMKEHR_EINSTIEG_GEDULD_MS
+  );
+}
+
+/**
+ * Bekommt eine per Nachlauf fertig gewordene eröffnende Order jetzt ihren
+ * Schutz-Stop (pur)? Erst im ENDZUSTAND — solange die Kauf-Order lebt,
+ * weist Alpaca jeden Verkaufs-Stop als Wash-Trade ab — und nur, wenn sie
+ * überhaupt gefüllt hat.
+ */
+export function nachlaufSchutzFaellig(eroeffnend: boolean, endzustand: boolean, filledQty: number): boolean {
+  return eroeffnend && endzustand && filledQty > 0;
+}
+
+/**
+ * Symbole, zu denen ein Konto noch einen eröffnenden Order-Vermerk führt —
+ * dort kann beim Broker eine Kauf-Order arbeiten oder gefüllt sein, die das
+ * Buch noch nicht kennt. Wer kauft und nur das Buch fragt, übersieht sie
+ * (Red-Team 23.11., M1: Der Sockel-Lauf um 09:45 ET hätte dasselbe Symbol
+ * in eine laufende Umkehr-Order gekauft; der Nachlauf hätte den Umkehr-Fill
+ * dann in die Sockel-Position gebucht). Lesefehler → leere Menge: Dieser
+ * Helfer darf keinen Lauf anhalten.
+ */
+export async function offeneEinstiegsSymbole(uid: string): Promise<Set<string>> {
+  const snap = await getFirestore()
+    .collection('users').doc(uid).collection('offeneOrders')
+    .limit(50)
+    .get()
+    .catch(() => null);
+  const symbole = new Set<string>();
+  for (const d of snap?.docs ?? []) {
+    const art = d.get('art') as unknown;
+    const symbol = d.get('symbol') as unknown;
+    if (art !== 'exit_offen' && typeof symbol === 'string' && symbol) symbole.add(symbol);
+  }
+  return symbole;
 }
 
 /**
@@ -1282,8 +1332,9 @@ export async function executeTrade(
     // bliebe ein Teilfill-Rest beim Broker unbeaufsichtigt liegen und
     // erzeugte „Position nur beim Broker".
     schliessend: schliesst,
-    // 23.11.: Market-Einstiege der Umkehr bleiben nach dem Fenster stehen —
-    // der Nachlauf bucht sie (s. `umkehrEinstiegBleibtStehen`).
+    // 23.11.: Ein Market-Einstieg der Umkehr, der im Fenster gar nicht
+    // gefüllt hat, bleibt stehen — der Nachlauf bucht ihn
+    // (s. `umkehrEinstiegBleibtStehen`).
     ...(umkehrEinstiegBleibtStehen(eroeffnet, einstiegFruh, limitPreis > 0) ? { restStehenLassen: true } : {}),
     laufId: lauf,
   }, undefined, einstiegsWarteFenster(eroeffnet, einstiegFruh, limitPreis > 0));
@@ -1297,6 +1348,15 @@ export async function executeTrade(
       soll: qty,
       lauf,
       quelle: schliesst ? null : einstiegsQuelle({ quelle: req.quelle, source: req.source, bucket: req.bucket }),
+      // Was die Nachbuchung braucht, damit ein später Fill dieselbe Position
+      // ergibt wie ein früher (Red-Team 23.11., M4/N1): den ENTSCHEIDUNGSKURS
+      // (sonst misst die Reibung 0 bp Abrutschen — ausgerechnet bei den
+      // verzögerten Fills) und die Statistik-Kennung samt Signal-Kontext.
+      ...(schliesst ? {} : {
+        kurs: req.price,
+        ...(req.bucket ? { bucket: req.bucket } : {}),
+        ...(req.signalContext ? { signalContext: req.signalContext } : {}),
+      }),
     });
   }
   if (!routing.ausgefuehrt) {
@@ -1409,7 +1469,10 @@ export async function merkeOffeneOrder(
   symbol: string,
   side: 'buy' | 'sell',
   offen: OffeneOrderVermerk,
-  mengen: { gebucht: number; soll: number; lauf: string; quelle?: string | null },
+  mengen: {
+    gebucht: number; soll: number; lauf: string; quelle?: string | null;
+    kurs?: number; bucket?: string; signalContext?: TradeRequest['signalContext'];
+  },
 ): Promise<void> {
   const id = offen.clientOrderId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120);
   const ref = getFirestore().collection('users').doc(uid).collection('offeneOrders').doc(id);
@@ -1430,6 +1493,10 @@ export async function merkeOffeneOrder(
       // Einstiegsweg des Auftrags (Task 18): Der Nachlauf bucht sonst eine
       // Position ohne Herkunft — und ein Scan-Zeitstempel allein ist mehrdeutig.
       ...(mengen.quelle ? { quelle: mengen.quelle } : {}),
+      ...(offen.stehenGelassen === true ? { stehenGelassen: true } : {}),
+      ...(typeof mengen.kurs === 'number' && mengen.kurs > 0 ? { kurs: mengen.kurs } : {}),
+      ...(mengen.bucket ? { bucket: mengen.bucket } : {}),
+      ...(mengen.signalContext ? { signalContext: mengen.signalContext } : {}),
       at: new Date().toISOString(),
       versuche: 0,
     });
@@ -1451,8 +1518,10 @@ export async function merkeOffeneOrder(
  * noch, wird sie storniert (ein Einstieg darf nicht unbeaufsichtigt
  * weiterarbeiten) und einmal nachgefragt; gebucht wird die DIFFERENZ zur
  * schon gebuchten Menge als Aufstockung — nie ein zweites Mal dasselbe.
- * Ausnahme seit 23.11.: Einstiege der Kurzfrist-Umkehr dürfen bis
- * `UMKEHR_EINSTIEG_GEDULD_MS` weiterarbeiten (s. `nachlaufLaesstArbeiten`).
+ * Ausnahme seit 23.11.: Ein bewusst stehengelassener, noch ungefüllter
+ * Umkehr-Einstieg darf bis `UMKEHR_EINSTIEG_GEDULD_MS` weiterarbeiten
+ * (s. `nachlaufLaesstArbeiten`). Im Endzustand bekommt die Position ihren
+ * Schutz-Stop.
  * Schließende (`exit_offen`): Ein Fill wird als Exit gebucht; die Order
  * selbst bleibt stehen, solange sie lebt (der Exit ist erwünscht).
  * Ein Vermerk endet, wenn die Order im Endzustand ist oder Alpaca sie
@@ -1481,6 +1550,7 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
       art?: string; clientOrderId?: string; orderId?: string; symbol?: string;
       side?: 'buy' | 'sell'; gebuchteMenge?: number; sollMenge?: number; at?: string; versuche?: number; lauf?: string;
       quelle?: string;
+      stehenGelassen?: boolean; kurs?: number; bucket?: string; signalContext?: TradeRequest['signalContext'];
     };
     if (!d.symbol || (d.side !== 'buy' && d.side !== 'sell') || !d.clientOrderId) {
       await doc.ref.delete().catch(() => undefined);
@@ -1500,10 +1570,13 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
         await doc.ref.delete().catch(() => undefined);
         continue;
       }
-      // Stehengelassene Umkehr-Einstiege dürfen bis zur Geduld weiterarbeiten
-      // (23.11.) — alles andere wird wie bisher sofort storniert. `d.quelle`
-      // ist der Stempel des AUFTRAGS, nicht aus der Kennung geraten.
-      if (eroeffnend && !ORDER_ENDZUSTAENDE.has(stand.status) && !nachlaufLaesstArbeiten(d.quelle, alter)) {
+      // Bewusst stehengelassene, noch UNGEFÜLLTE Einstiege dürfen bis zur
+      // Geduld weiterarbeiten (23.11.) — alles andere wird wie bisher sofort
+      // storniert, auch sie selbst ab dem ersten gefüllten Stück.
+      if (eroeffnend && !ORDER_ENDZUSTAENDE.has(stand.status) && !nachlaufLaesstArbeiten(d.stehenGelassen, alter, stand.filledQty)) {
+        if (d.stehenGelassen === true) {
+          logger.info(`NACHLAUF ${uid} ${d.symbol}: stehengelassener Einstieg wird storniert — gefüllt ${stand.filledQty} von ${zahl(d.sollMenge)} nach ${Math.round(alter / 1000)} s`);
+        }
         await alpacaOrderStornieren(verbindung.mode, stand.id, verbindung.schluessel)
           .catch(() => 'nicht_stornierbar' as const);
         stand = (await alpacaOrderAbfragen(verbindung.mode, stand.id, verbindung.schluessel).catch(() => null)) ?? stand;
@@ -1520,13 +1593,17 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
             uid,
             symbol: d.symbol,
             side: d.side,
-            price: stand.filledAvgPreis,
+            // Entscheidungskurs aus dem Vermerk, wo es ihn gibt — sonst
+            // mäße die Reibung für nachgebuchte Fills 0 bp (M4).
+            price: eroeffnend && zahl(d.kurs) > 0 ? zahl(d.kurs) : stand.filledAvgPreis,
             qty: neu,
             fillPreis: stand.filledAvgPreis,
             brokerOrderId: stand.id,
             source: 'engine',
             assetClass: classify(d.symbol),
             ...(quelleNach ? { quelle: quelleNach } : {}),
+            ...(eroeffnend && d.bucket ? { bucket: d.bucket } : {}),
+            ...(eroeffnend && d.signalContext ? { signalContext: d.signalContext } : {}),
             // Task 31: Ein nachgebuchter SOCKEL-Fill bleibt Sockel — ohne
             // Kennung gehörte die Position dem Scan (Signal-Exit, Stops), und
             // die Doppelkauf-Sperre wiese den Rest einer core-Position ab.
@@ -1565,6 +1642,24 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
         }
       }
       if (endzustand) {
+        /* Schutz-Stop für die fertige Position (Red-Team 23.11., H1): Bisher
+         * legte ihn NUR `executeTrade` nach einem Fill im Fenster an. Eine
+         * per Nachlauf gebuchte Position lag ohne Netz beim Broker — der Scan
+         * führt Umkehr-Positionen nicht, der Puls legt Stops nur für den
+         * Sockel an. `schutzAnlegen` liest die Position frisch, ersetzt einen
+         * älteren Stop durch einen über die Gesamtmenge und wirft nie. Erst
+         * im Endzustand: Vorher wiese Alpaca den Stop als Wash-Trade ab. */
+        if (nachlaufSchutzFaellig(eroeffnend, endzustand, stand.filledQty)) {
+          const klasse = classify(d.symbol);
+          await schutzAnlegen(
+            verbindung,
+            uid,
+            d.symbol,
+            risikoFuer(strategy.engine, klasse, quelleNach === 'sockel', quelleNach),
+            klasse,
+            `nachlauf-${new Date().toISOString().slice(0, 16)}Z`,
+          );
+        }
         await doc.ref.delete().catch(() => undefined);
       } else if (alter > NACHLAUF_MAX_TAGE * 86_400_000) {
         logger.error(`offeneOrders ${uid} ${d.symbol}: Order ${stand.id} seit ${NACHLAUF_MAX_TAGE} Tagen ohne Endzustand — aufgegeben, Fall für die Übernahme`);
