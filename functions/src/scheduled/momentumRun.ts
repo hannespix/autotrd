@@ -65,7 +65,7 @@ import {
   bucketKey,
   positioningSummary,
 } from '../../../shared/src/index.js';
-import { executeTrade, resolveBrokerMode } from '../core/broker.js';
+import { executeTrade, offeneEinstiegsSymbole, resolveBrokerMode } from '../core/broker.js';
 import { kontoTore, symbolSperreAusVermerk } from '../core/kontoTore.js';
 import { mayTrade } from '../core/access.js';
 import { clampStrategyRisk, corePct, maxOpenPositions } from '../core/rulesTrading.js';
@@ -990,6 +990,9 @@ async function rebalanceCoreSleeve(
       const posSnap = await userDoc.ref.collection('positions').get();
       const alle = new Map<string, Position>(posSnap.docs.map((d) => [d.id, d.data() as Position]));
       const sockel = new Map([...alle].filter(([, p]) => p.core === true));
+      // Symbole mit noch arbeitender Einstiegs-Order — das Buch kennt sie
+      // nicht, der Broker schon (Red-Team 23.11., M1).
+      const arbeitend = await offeneEinstiegsSymbole(userDoc.id);
 
       const cash = (userDoc.get('wallet.paperBalance') as number | undefined) ?? 0;
       let equity = cash;
@@ -1077,6 +1080,10 @@ async function rebalanceCoreSleeve(
         // kaufen — der Broker führte beide zu einer Position zusammen und die
         // Besitzgrenze wäre verwischt. Beim nächsten Takt ist es meist frei.
         if (alle.has(o.symbol) && !aufstockung) continue;
+        // Dasselbe gilt für ein Symbol, zu dem noch eine Einstiegs-Order
+        // arbeitet (z. B. ein stehengelassener Umkehr-Kauf von 09:35 ET):
+        // Der Nachlauf buchte deren Fill sonst in die Sockel-Position.
+        if (arbeitend.has(o.symbol)) continue;
         const fractional = cls === 'crypto';
         const roheMenge = (o.notional ?? 0) / preis;
         const qty = fractional ? Math.floor(roheMenge * 1e6) / 1e6 : Math.floor(roheMenge);

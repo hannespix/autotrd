@@ -58,6 +58,7 @@ import {
   type OffeneOrderVermerk,
 } from './orderRouting.js';
 import { schutzAnlegen, schutzAufheben } from './schutzStop.js';
+import { clampStrategyRisk } from './rulesTrading.js';
 
 /**
  * Margin-Budget, das der AUFRUFER mitbringt (Scan bzw. Puls).
@@ -484,6 +485,155 @@ export function einstiegsWarteFenster(
   limit: boolean,
 ): { versuche?: number; pauseMs?: number } {
   return eroeffnet && quelle === 'umkehr' && !limit ? { ...UMKEHR_MARKET_WARTE } : {};
+}
+
+/**
+ * Darf ein Einstieg, der im Wartefenster gar nicht gefüllt hat, beim
+ * Broker stehen bleiben (pur)?
+ *
+ * Nur eröffnende MARKET-Orders der Kurzfrist-Umkehr: Sie kauft je Plan
+ * genau einmal (Tagesstempel), der Scan eröffnet für Umkehr-Konten nichts
+ * (`umkehr_modus`) — die Doppelposition, vor der der K-2c-Storno schützt,
+ * kann dort nicht entstehen. Limit-Einstiege (Krypto) behalten ihren
+ * Storno: Ein Limit, das nicht füllt, soll nicht stundenlang im Buch
+ * liegen. Alle anderen Wege unverändert.
+ */
+export function umkehrEinstiegBleibtStehen(eroeffnet: boolean, quelle: string | null, limit: boolean): boolean {
+  return eroeffnet && quelle === 'umkehr' && !limit;
+}
+
+/**
+ * So lange lässt der Nachlauf einen stehengelassenen, noch UNGEFÜLLTEN
+ * Umkehr-Einstieg arbeiten, bevor er ihn storniert. Zehn Minuten sind zwei
+ * Scan-Takte; weil der Nachlauf nur im 5-Minuten-Scan läuft, sind es
+ * wirksam 10–15 Minuten. Läuft der Scan für das Konto nicht (Engine aus),
+ * arbeitet die Day-Order bis zum Fill oder Börsenschluss; gebucht wird
+ * dann, sobald der Scan wieder läuft.
+ */
+export const UMKEHR_EINSTIEG_GEDULD_MS = 10 * 60_000;
+
+/**
+ * Darf der Nachlauf eine eröffnende Order noch arbeiten lassen (pur)?
+ *
+ * Drei Bedingungen, alle nötig: Der Vermerk trägt das Merkmal des bewusst
+ * unterlassenen Stornos (nicht bloß die Quelle — die tragen auch Krypto-
+ * Limits mit hängendem Storno und Netzfehler-Vermerke); die Order ist noch
+ * UNGEFÜLLT (ab dem ersten Stück wird der Rest storniert, s.
+ * `restStehenLassen`); und die Geduld ist nicht abgelaufen. Ein fehlender
+ * oder kaputter Zeitstempel zählt als abgelaufen.
+ */
+export function nachlaufLaesstArbeiten(stehenGelassen: unknown, alterMs: number, filledQty: number): boolean {
+  return (
+    stehenGelassen === true &&
+    !(filledQty > 0) &&
+    Number.isFinite(alterMs) && alterMs >= 0 && alterMs < UMKEHR_EINSTIEG_GEDULD_MS
+  );
+}
+
+/**
+ * Bekommt eine per Nachlauf fertig gewordene eröffnende Order jetzt ihren
+ * Schutz-Stop (pur)? Erst im ENDZUSTAND — solange die Kauf-Order lebt,
+ * weist Alpaca jeden Verkaufs-Stop als Wash-Trade ab — und nur, wenn sie
+ * überhaupt gefüllt hat.
+ */
+export function nachlaufSchutzFaellig(eroeffnend: boolean, endzustand: boolean, filledQty: number): boolean {
+  return eroeffnend && endzustand && filledQty > 0;
+}
+
+/**
+ * So lange sperrt ein stehengelassener Einstieg weitere Einstiege in sein
+ * Symbol — das Dreifache der Geduld. Danach ist der Vermerk entweder
+ * abgearbeitet oder er hängt (Konto ohne Scan); ein hängender Vermerk soll
+ * ein Symbol nicht auf Dauer sperren.
+ */
+export const EINSTIEG_SPERRE_MAX_MS = 3 * UMKEHR_EINSTIEG_GEDULD_MS;
+
+/** Sperrt dieser Vermerk einen weiteren Einstieg ins selbe Symbol (pur)? */
+export function vermerkSperrtEinstieg(
+  v: { art?: unknown; stehenGelassen?: unknown; at?: unknown },
+  jetztMs: number,
+): boolean {
+  if (v.art === 'exit_offen' || v.stehenGelassen !== true) return false;
+  const alter = jetztMs - Date.parse(String(v.at ?? ''));
+  return Number.isFinite(alter) && alter >= 0 && alter < EINSTIEG_SPERRE_MAX_MS;
+}
+
+/**
+ * Arbeitet zu diesem Symbol noch eine bewusst stehengelassene Einstiegs-
+ * Order? Lesefehler → nein: Scheitert Firestore hier, scheitert auch die
+ * Buchung danach; die Prüfung soll keinen eigenen Ausfallgrund schaffen.
+ */
+export async function stehengelassenerEinstieg(uid: string, symbol: string): Promise<boolean> {
+  try {
+    const snap = await getFirestore()
+      .collection('users').doc(uid).collection('offeneOrders')
+      .where('symbol', '==', symbol)
+      .limit(10)
+      .get();
+    const jetzt = Date.now();
+    return snap.docs.some((d) => vermerkSperrtEinstieg(d.data() as Record<string, unknown>, jetzt));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Den Vermerk für diesen Lauf beanspruchen (Red-Team 23.11., Runde 2, M3).
+ *
+ * Der Nachlauf liest die schon gebuchte Menge AUSSERHALB der Buchungs-
+ * Transaktion, und `aufstockung` umgeht dort die Doppelbuchungs-Sperre.
+ * Zwei gleichzeitige Nachläufe (doppelte Scheduler-Zustellung) buchten
+ * dieselbe Differenz zweimal. Das war schon so, betraf aber nur seltene
+ * Storno-Reste — seit dem Stehenlassen läuft jeder späte Umkehr-Fill über
+ * diesen Weg. Wer den Vermerk nicht bekommt, überspringt ihn; der Anspruch
+ * verfällt nach `NACHLAUF_ANSPRUCH_MS` von selbst (abgestürzter Lauf).
+ */
+export const NACHLAUF_ANSPRUCH_MS = 180_000;
+
+/** Ist der Vermerk gerade von einem anderen Lauf beansprucht (pur)? */
+export function vermerkBeansprucht(inArbeitBis: unknown, jetztMs: number): boolean {
+  const bis = Date.parse(String(inArbeitBis ?? ''));
+  return Number.isFinite(bis) && bis > jetztMs;
+}
+
+async function beanspruchVermerk(ref: FirebaseFirestore.DocumentReference): Promise<boolean> {
+  return getFirestore()
+    .runTransaction(async (tx) => {
+      const v = await tx.get(ref);
+      if (!v.exists) return false;
+      const jetzt = Date.now();
+      if (vermerkBeansprucht(v.get('inArbeitBis'), jetzt)) return false;
+      tx.update(ref, { inArbeitBis: new Date(jetzt + NACHLAUF_ANSPRUCH_MS).toISOString() });
+      return true;
+    })
+    .catch(() => false);
+}
+
+/**
+ * Symbole, zu denen ein Konto noch einen eröffnenden Order-Vermerk führt —
+ * dort kann beim Broker eine Kauf-Order arbeiten oder gefüllt sein, die das
+ * Buch noch nicht kennt. Wer kauft und nur das Buch fragt, übersieht sie
+ * (Red-Team 23.11., M1: Der Sockel-Lauf um 09:45 ET hätte dasselbe Symbol
+ * in eine laufende Umkehr-Order gekauft; der Nachlauf hätte den Umkehr-Fill
+ * dann in die Sockel-Position gebucht). Lesefehler → leere Menge: Dieser
+ * Helfer darf keinen Lauf anhalten.
+ */
+export async function offeneEinstiegsSymbole(uid: string): Promise<Set<string>> {
+  const symbole = new Set<string>();
+  try {
+    const snap = await getFirestore()
+      .collection('users').doc(uid).collection('offeneOrders')
+      .limit(50)
+      .get();
+    for (const d of snap.docs) {
+      const art = d.get('art') as unknown;
+      const symbol = d.get('symbol') as unknown;
+      if (art !== 'exit_offen' && typeof symbol === 'string' && symbol) symbole.add(symbol);
+    }
+  } catch {
+    // leer — s. o.
+  }
+  return symbole;
 }
 
 /**
@@ -1239,6 +1389,18 @@ export async function executeTrade(
     }
   }
 
+  /* Kein zweiter Einstieg neben einer bewusst stehengelassenen Kauf-Order
+   * (Red-Team 23.11., Runde 2, M1) — gleich von welchem Weg, auch von Hand:
+   * Der zweite Kauf ergäbe eine Buch-Position NEBEN der arbeitenden Order
+   * (Alpaca wiese dann Schutz-Stop und Exit als Wash-Trade ab), und der
+   * Nachlauf buchte den Umkehr-Fill in die fremde Position. Die Sperre
+   * endet von selbst: mit dem Vermerk, spätestens nach
+   * `EINSTIEG_SPERRE_MAX_MS`. Exits berührt sie nie. */
+  if (eroeffnet && (await stehengelassenerEinstieg(req.uid, req.symbol))) {
+    logger.info(`executeTrade ${req.uid} ${req.symbol}: Einstiegs-Order arbeitet noch beim Broker — kein zweiter Einstieg`);
+    return { executed: false, reason: 'einstieg_order_laeuft' };
+  }
+
   const routing = await routeOrder(verbindung, {
     uid: req.uid,
     symbol: req.symbol,
@@ -1255,6 +1417,10 @@ export async function executeTrade(
     // bliebe ein Teilfill-Rest beim Broker unbeaufsichtigt liegen und
     // erzeugte „Position nur beim Broker".
     schliessend: schliesst,
+    // 23.11.: Ein Market-Einstieg der Umkehr, der im Fenster gar nicht
+    // gefüllt hat, bleibt stehen — der Nachlauf bucht ihn
+    // (s. `umkehrEinstiegBleibtStehen`).
+    ...(umkehrEinstiegBleibtStehen(eroeffnet, einstiegFruh, limitPreis > 0) ? { restStehenLassen: true } : {}),
     laufId: lauf,
   }, undefined, einstiegsWarteFenster(eroeffnet, einstiegFruh, limitPreis > 0));
   /* Offen gebliebene Order vormerken (Drift-Paket 08.10.) — in BEIDEN
@@ -1267,6 +1433,15 @@ export async function executeTrade(
       soll: qty,
       lauf,
       quelle: schliesst ? null : einstiegsQuelle({ quelle: req.quelle, source: req.source, bucket: req.bucket }),
+      // Was die Nachbuchung braucht, damit ein später Fill dieselbe Position
+      // ergibt wie ein früher (Red-Team 23.11., M4/N1): den ENTSCHEIDUNGSKURS
+      // (sonst misst die Reibung 0 bp Abrutschen — ausgerechnet bei den
+      // verzögerten Fills) und die Statistik-Kennung samt Signal-Kontext.
+      ...(schliesst ? {} : {
+        kurs: req.price,
+        ...(req.bucket ? { bucket: req.bucket } : {}),
+        ...(req.signalContext ? { signalContext: req.signalContext } : {}),
+      }),
     });
   }
   if (!routing.ausgefuehrt) {
@@ -1373,13 +1548,22 @@ export interface NachlaufStand {
   offen: number;
 }
 
+/** Meldet Firestore „Dokument existiert schon" (gRPC 6 / ALREADY_EXISTS)? */
+export function vermerkExistiertSchon(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === 6 || code === 'already-exists' || code === 'ALREADY_EXISTS';
+}
+
 /** Vermerk anlegen — idempotent je Order (Kennung = Client-Kennung). */
 export async function merkeOffeneOrder(
   uid: string,
   symbol: string,
   side: 'buy' | 'sell',
   offen: OffeneOrderVermerk,
-  mengen: { gebucht: number; soll: number; lauf: string; quelle?: string | null },
+  mengen: {
+    gebucht: number; soll: number; lauf: string; quelle?: string | null;
+    kurs?: number; bucket?: string; signalContext?: TradeRequest['signalContext'];
+  },
 ): Promise<void> {
   const id = offen.clientOrderId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120);
   const ref = getFirestore().collection('users').doc(uid).collection('offeneOrders').doc(id);
@@ -1400,15 +1584,44 @@ export async function merkeOffeneOrder(
       // Einstiegsweg des Auftrags (Task 18): Der Nachlauf bucht sonst eine
       // Position ohne Herkunft — und ein Scan-Zeitstempel allein ist mehrdeutig.
       ...(mengen.quelle ? { quelle: mengen.quelle } : {}),
+      ...(offen.stehenGelassen === true ? { stehenGelassen: true } : {}),
+      ...(typeof mengen.kurs === 'number' && mengen.kurs > 0 ? { kurs: mengen.kurs } : {}),
+      ...(mengen.bucket ? { bucket: mengen.bucket } : {}),
+      ...(mengen.signalContext ? { signalContext: mengen.signalContext } : {}),
       at: new Date().toISOString(),
       versuche: 0,
     });
-  } catch {
-    // Nur die Broker-Kennung nachtragen — der Zähler des Nachlaufs darf von
-    // einem späteren Lauf mit 0 nicht gesenkt werden (Nachprüfung 08.10.).
-    await ref
-      .set({ ...(offen.orderId ? { orderId: offen.orderId } : {}) }, { merge: true })
-      .catch((err: unknown) => logger.warn(`offeneOrders ${uid} ${symbol}: Vermerk nicht geschrieben`, err));
+  } catch (err) {
+    if (vermerkExistiertSchon(err)) {
+      // Nur die Broker-Kennung nachtragen — der Zähler des Nachlaufs darf von
+      // einem späteren Lauf mit 0 nicht gesenkt werden (Nachprüfung 08.10.).
+      await ref
+        .set({ ...(offen.orderId ? { orderId: offen.orderId } : {}) }, { merge: true })
+        .catch((e: unknown) => logger.warn(`offeneOrders ${uid} ${symbol}: Vermerk nicht geschrieben`, e));
+    } else {
+      /* Jeder ANDERE Fehler ist kein „existiert schon" (Runde 2, M4): Bisher
+       * blieb dann ein Rumpf-Vermerk nur mit `orderId` zurück, den der
+       * Nachlauf als ungültig löschte — die Order war verwaist. Zweiter
+       * Versuch mit dem Pflichtteil allein; der Signal-Kontext ist das
+       * einzige verschachtelte Feld und damit der wahrscheinlichste Grund. */
+      logger.error(`offeneOrders ${uid} ${symbol}: Vermerk nicht angelegt — zweiter Versuch ohne Kontext`, err);
+      await ref
+        .create({
+          art: offen.art,
+          clientOrderId: offen.clientOrderId,
+          ...(offen.orderId ? { orderId: offen.orderId } : {}),
+          symbol,
+          side,
+          gebuchteMenge: mengen.gebucht,
+          sollMenge: mengen.soll,
+          lauf: mengen.lauf,
+          ...(mengen.quelle ? { quelle: mengen.quelle } : {}),
+          ...(offen.stehenGelassen === true ? { stehenGelassen: true } : {}),
+          at: new Date().toISOString(),
+          versuche: 0,
+        })
+        .catch((e: unknown) => logger.error(`offeneOrders ${uid} ${symbol}: Vermerk auch im zweiten Versuch nicht geschrieben — Order ${offen.orderId ?? offen.clientOrderId} ohne Nachlauf`, e));
+    }
   }
   logger.warn(`OFFENE ORDER ${uid} ${symbol} ${side} (${offen.art}) — wird im nächsten Scan nachgefragt`);
 }
@@ -1421,6 +1634,10 @@ export async function merkeOffeneOrder(
  * noch, wird sie storniert (ein Einstieg darf nicht unbeaufsichtigt
  * weiterarbeiten) und einmal nachgefragt; gebucht wird die DIFFERENZ zur
  * schon gebuchten Menge als Aufstockung — nie ein zweites Mal dasselbe.
+ * Ausnahme seit 23.11.: Ein bewusst stehengelassener, noch ungefüllter
+ * Umkehr-Einstieg darf bis `UMKEHR_EINSTIEG_GEDULD_MS` weiterarbeiten
+ * (s. `nachlaufLaesstArbeiten`). Im Endzustand bekommt die Position ihren
+ * Schutz-Stop.
  * Schließende (`exit_offen`): Ein Fill wird als Exit gebucht; die Order
  * selbst bleibt stehen, solange sie lebt (der Exit ist erwünscht).
  * Ein Vermerk endet, wenn die Order im Endzustand ist oder Alpaca sie
@@ -1449,6 +1666,7 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
       art?: string; clientOrderId?: string; orderId?: string; symbol?: string;
       side?: 'buy' | 'sell'; gebuchteMenge?: number; sollMenge?: number; at?: string; versuche?: number; lauf?: string;
       quelle?: string;
+      stehenGelassen?: boolean; kurs?: number; bucket?: string; signalContext?: TradeRequest['signalContext'];
     };
     if (!d.symbol || (d.side !== 'buy' && d.side !== 'sell') || !d.clientOrderId) {
       await doc.ref.delete().catch(() => undefined);
@@ -1459,6 +1677,11 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
     // Lauf-Kennung (mom-/core-/man-); ein Scan-Zeitstempel bleibt offen.
     const quelleNach = eroeffnend ? (d.quelle ?? quelleAusLauf(d.clientOrderId)) : null;
     const alter = Date.now() - Date.parse(String(d.at ?? ''));
+    // Ein anderer Lauf arbeitet gerade an diesem Vermerk → nicht doppelt buchen.
+    if (!(await beanspruchVermerk(doc.ref))) {
+      offen += 1;
+      continue;
+    }
     try {
       let stand = d.orderId
         ? await alpacaOrderAbfragen(verbindung.mode, d.orderId, verbindung.schluessel)
@@ -1468,7 +1691,13 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
         await doc.ref.delete().catch(() => undefined);
         continue;
       }
-      if (eroeffnend && !ORDER_ENDZUSTAENDE.has(stand.status)) {
+      // Bewusst stehengelassene, noch UNGEFÜLLTE Einstiege dürfen bis zur
+      // Geduld weiterarbeiten (23.11.) — alles andere wird wie bisher sofort
+      // storniert, auch sie selbst ab dem ersten gefüllten Stück.
+      if (eroeffnend && !ORDER_ENDZUSTAENDE.has(stand.status) && !nachlaufLaesstArbeiten(d.stehenGelassen, alter, stand.filledQty)) {
+        if (d.stehenGelassen === true) {
+          logger.info(`NACHLAUF ${uid} ${d.symbol}: stehengelassener Einstieg wird storniert — gefüllt ${stand.filledQty} von ${zahl(d.sollMenge)} nach ${Math.round(alter / 1000)} s`);
+        }
         await alpacaOrderStornieren(verbindung.mode, stand.id, verbindung.schluessel)
           .catch(() => 'nicht_stornierbar' as const);
         stand = (await alpacaOrderAbfragen(verbindung.mode, stand.id, verbindung.schluessel).catch(() => null)) ?? stand;
@@ -1485,13 +1714,17 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
             uid,
             symbol: d.symbol,
             side: d.side,
-            price: stand.filledAvgPreis,
+            // Entscheidungskurs aus dem Vermerk, wo es ihn gibt — sonst
+            // mäße die Reibung für nachgebuchte Fills 0 bp (M4).
+            price: eroeffnend && zahl(d.kurs) > 0 ? zahl(d.kurs) : stand.filledAvgPreis,
             qty: neu,
             fillPreis: stand.filledAvgPreis,
             brokerOrderId: stand.id,
             source: 'engine',
             assetClass: classify(d.symbol),
             ...(quelleNach ? { quelle: quelleNach } : {}),
+            ...(eroeffnend && d.bucket ? { bucket: d.bucket } : {}),
+            ...(eroeffnend && d.signalContext ? { signalContext: d.signalContext } : {}),
             // Task 31: Ein nachgebuchter SOCKEL-Fill bleibt Sockel — ohne
             // Kennung gehörte die Position dem Scan (Signal-Exit, Stops), und
             // die Doppelkauf-Sperre wiese den Rest einer core-Position ab.
@@ -1530,6 +1763,29 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
         }
       }
       if (endzustand) {
+        /* Schutz-Stop für die fertige Position (Red-Team 23.11., H1): Bisher
+         * legte ihn NUR `executeTrade` nach einem Fill im Fenster an. Eine
+         * per Nachlauf gebuchte Position lag ohne Netz beim Broker — der Scan
+         * führt Umkehr-Positionen nicht, der Puls legt Stops nur für den
+         * Sockel an. `schutzAnlegen` liest die Position frisch, ersetzt einen
+         * älteren Stop durch einen über die Gesamtmenge und wirft nie. Erst
+         * im Endzustand: Vorher wiese Alpaca den Stop als Wash-Trade ab.
+         * NUR für stehengelassene Einstiege (Runde 2, N1): Bei allen anderen
+         * Vermerken hat `executeTrade` den Stop schon gelegt — ihn hier zu
+         * ersetzen, brächte nur das Risiko, dass das Neuanlegen scheitert. */
+        if (d.stehenGelassen === true && nachlaufSchutzFaellig(eroeffnend, endzustand, stand.filledQty)) {
+          const klasse = classify(d.symbol);
+          await schutzAnlegen(
+            verbindung,
+            uid,
+            d.symbol,
+            // GEKLEMMT (Runde 2, N1): Der Scan reicht hier die rohe Strategie.
+            // Mit `stopLossPct: 0` plante `schutzAnlegen` sonst „kein Stop".
+            risikoFuer(clampStrategyRisk(strategy).engine, klasse, quelleNach === 'sockel', quelleNach),
+            klasse,
+            `nachlauf-${new Date().toISOString().slice(0, 16)}Z`,
+          );
+        }
         await doc.ref.delete().catch(() => undefined);
       } else if (alter > NACHLAUF_MAX_TAGE * 86_400_000) {
         logger.error(`offeneOrders ${uid} ${d.symbol}: Order ${stand.id} seit ${NACHLAUF_MAX_TAGE} Tagen ohne Endzustand — aufgegeben, Fall für die Übernahme`);

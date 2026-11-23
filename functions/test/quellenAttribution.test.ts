@@ -98,7 +98,8 @@ describe('Task 18 — Quelle beim Öffnen gestempelt, beim Schließen kopiert', 
   });
 
   it('Vermerke tragen den Einstiegsweg, Nachbuchungen lesen ihn (oder die Lauf-Kennung)', () => {
-    expect(zaehl(broker, '      ...(mengen.quelle ? { quelle: mengen.quelle } : {}),')).toBe(1);
+    // zweimal seit 23.11.: der Vermerk und sein zweiter Schreibversuch (ohne Signal-Kontext) — beide tragen den Weg
+    expect(zaehl(broker, '      ...(mengen.quelle ? { quelle: mengen.quelle } : {}),')).toBe(2);
     expect(zaehl(broker, 'quelle: schliesst ? null : einstiegsQuelle({ quelle: req.quelle, source: req.source, bucket: req.bucket }),')).toBe(1);
     expect(zaehl(broker, '      ...(quelle ? { quelle } : {}),')).toBe(1); // unbookedFills
     expect(zaehl(broker, 'schliesst ? null : einstiegsQuelle({ quelle: req.quelle, source: req.source, bucket: req.bucket }),\n    );')).toBe(1);

@@ -588,6 +588,10 @@ async function fuehreAus(
       kaeufe += 1;
       const fill = (r.trade as { brokerFillPrice?: unknown } | undefined)?.brokerFillPrice;
       if (klasse === 'crypto' && typeof fill === 'number' && fill > 0 && a.preis > 0) abrutschen.push((fill / a.preis - 1) * 100);
+    } else if (r.reason === 'broker_order_laeuft') {
+      // Kein Fehlschlag (23.11.): Die Order arbeitet beim Broker weiter, der
+      // Nachlauf bucht ihren Fill. Vorher zählte das als „abgelehnt".
+      ohne.laeuftNoch += 1;
     } else {
       ohne.abgelehnt += 1;
       zaehleGrund(ohne.abgelehntGruende, r.reason ?? 'ohne_grund', 1);
@@ -622,6 +626,8 @@ export interface OhneKauf {
   klumpen: number;
   /** 20.11.: Käufe aus der RESERVE — sie ersetzten ausgefallene geplante Käufe. Kein Fehlschlag. */
   ersatz: number;
+  /** 23.11.: Order im Wartefenster nicht gefüllt, arbeitet beim Broker weiter — der Nachlauf bucht. Kein Fehlschlag. */
+  laeuftNoch: number;
   /** Ausführung abgelehnt (Buchung/Broker). */
   abgelehnt: number;
   /** Gründe als feste Codes mit Anzahl (26.10.: 8 Krypto-Ablehnungen, 4 Sperren — ohne Grund). */
@@ -629,7 +635,7 @@ export interface OhneKauf {
   gesperrtGruende: Record<string, number>;
 }
 export const leerOhneKauf = (): OhneKauf => ({
-  gesperrt: 0, gehalten: 0, bargeldOderPlatz: 0, keinKurs: 0, keinPlatz: 0, keinBargeld: 0, zuTeuer: 0, klasseAus: 0, klumpen: 0, ersatz: 0, abgelehnt: 0,
+  gesperrt: 0, gehalten: 0, bargeldOderPlatz: 0, keinKurs: 0, keinPlatz: 0, keinBargeld: 0, zuTeuer: 0, klasseAus: 0, klumpen: 0, ersatz: 0, laeuftNoch: 0, abgelehnt: 0,
   abgelehntGruende: {}, gesperrtGruende: {},
 });
 
@@ -661,6 +667,7 @@ const summiereOhne = (a: OhneKauf, b: OhneKauf): void => {
   a.klasseAus += b.klasseAus;
   a.klumpen += b.klumpen;
   a.ersatz += b.ersatz;
+  a.laeuftNoch += b.laeuftNoch;
   a.abgelehnt += b.abgelehnt;
   for (const [k, n] of Object.entries(b.abgelehntGruende)) zaehleGrund(a.abgelehntGruende, k, n);
   for (const [k, n] of Object.entries(b.gesperrtGruende)) zaehleGrund(a.gesperrtGruende, k, n);
