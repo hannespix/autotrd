@@ -411,6 +411,15 @@ export async function schutzAnlegen(
      * jemand einen neuen Stop gelegt, wird der nicht wieder storniert.
      */
     erwarteterLink?: string | null;
+    /**
+     * Nach dem Anlegen den Bestand beim Broker NACHLESEN und die Order
+     * zurücknehmen, wenn er fehlt (Red-Team 24.11., Runde 2, M-1). Schließt
+     * das Fenster zwischen der Bestandsprüfung des Aufrufers und dem
+     * Versand: Füllt genau dort ein Verkauf, stünde der Stop ohne Bestand
+     * im Markt. Für die Heilung; nach einem eröffnenden Fill ist der
+     * Bestand durch den Fill selbst belegt.
+     */
+    bestandNachlesen?: boolean;
   } = {},
 ): Promise<boolean> {
   try {
@@ -523,6 +532,17 @@ export async function schutzAnlegen(
       await alpacaOrderStornieren(verbindung.mode, order.id, verbindung.schluessel, fetchImpl).catch(() => undefined);
       logger.warn(`schutzAnlegen ${uid} ${symbol}: Position weg oder Link nicht schreibbar — neue Schutz-Order ${order.id} zurückgenommen`);
       return false;
+    }
+    if (opts.bestandNachlesen === true) {
+      // Wirft die Nachfrage, gilt der Bestand als unbelegt — zurücknehmen.
+      const danach = await alpacaPosition(verbindung.mode, symbol, verbindung.schluessel, fetchImpl).catch(() => 'unklar' as const);
+      const gedeckt = danach !== 'unklar' && danach !== null && danach.seite === (pos.side === 'short' ? 'short' : 'long') && danach.qty >= plan.qty * 0.995;
+      if (!gedeckt) {
+        await alpacaOrderStornieren(verbindung.mode, order.id, verbindung.schluessel, fetchImpl).catch(() => undefined);
+        await posRef(uid, symbol).update({ schutz: null }).catch(() => undefined);
+        logger.warn(`schutzAnlegen ${uid} ${symbol}: Bestand beim Broker nach dem Anlegen nicht belegt — Schutz-Order ${order.id} zurückgenommen`);
+        return false;
+      }
     }
     logger.info(`Schutz-Stop ${uid} ${symbol}: ${plan.qty} @ ${plan.stopPreis}`);
     return true;
@@ -643,10 +663,10 @@ export async function heileSchutz(
     if (!bestandDecktStop(bestand, pos.qty)) return 'kein_bestand';
     // `schutzAnlegen` liest die Position frisch, plant selbst (Umkehr und
     // Sockel bekommen ihre Notbremse, Bruchstücke nichts) und wirft nie.
-    const neu = await schutzAnlegen(verbindung, uid, symbol, risk, klasse, laufId, fetchImpl, { erwarteterLink: id ?? null });
+    const neu = await schutzAnlegen(verbindung, uid, symbol, risk, klasse, laufId, fetchImpl, { erwarteterLink: id ?? null, bestandNachlesen: true });
     return neu ? 'angelegt' : 'nicht_angelegt';
   } catch (err) {
-    logger.warn(`heileSchutz ${uid} ${symbol}: Stand der Schutz-Order nicht lesbar`, err);
+    logger.warn(`heileSchutz ${uid} ${symbol}: Nachfrage beim Broker gescheitert (Order oder Bestand)`, err);
     return 'unklar';
   }
 }

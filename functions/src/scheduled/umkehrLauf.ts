@@ -559,7 +559,11 @@ async function fuehreAus(
   const schutzRunde = async (): Promise<void> => {
     try {
       // Hausarbeit darf den Handel der folgenden Konten nicht verdrängen.
-      if (Date.now() - now.getTime() > SCHUTZ_RUNDE_BUDGET_MS) return;
+      const ueberBudget = (): boolean => Date.now() - now.getTime() > SCHUTZ_RUNDE_BUDGET_MS;
+      if (ueberBudget()) {
+        logger.info(`Umkehr ${k.id}: Schutz-Runde entfällt — der Lauf ist schon zu lange unterwegs`);
+        return;
+      }
       /* Offene Order-Vermerke (Red-Team 24.11., H1): Arbeitet zu einem
        * Symbol noch eine Order — etwa ein Verkauf, der im Fenster nicht
        * gefüllt hat —, führt das Buch die Position noch, der Broker bald
@@ -579,6 +583,12 @@ async function fuehreAus(
       if (!verbindung) return;
       const kennung = `${laufId}-heil-${now.toISOString().slice(11, 16).replace(':', '')}`;
       for (const [sym, p] of faellig) {
+        // Auch INNERHALB der Runde (Red-Team Runde 2, M-2): Bei zähem Broker
+        // kostet jede Position Sekunden.
+        if (ueberBudget()) {
+          logger.info(`Umkehr ${k.id}: Schutz-Runde abgebrochen — Zeitbudget erreicht`);
+          break;
+        }
         const klasse = classify(sym);
         const befund = await heileSchutz(verbindung, k.id, sym, p, umkehrRisk(umkehrParameterFuer(klasse)), klasse, kennung);
         if (befund === 'angelegt') logger.info(`Umkehr ${k.id} ${sym}: Schutz-Stop fehlte — neu angelegt`);

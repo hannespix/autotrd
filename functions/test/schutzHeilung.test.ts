@@ -116,11 +116,12 @@ describe('heileSchutz', () => {
       { ok: false, status: 422, body: { message: 'order is not cancelable' } }, // schutzAnlegen: DELETE
       { body: { id: 'alt1', status: 'canceled', filled_qty: '0' } }, // … sieht nach
       { body: { id: 'neu1', status: 'accepted', client_order_id: 'x' } },
+      { body: { symbol: 'XLB', qty: '7', qty_available: '0', side: 'long' } }, // Nachlesen: Bestand da (jetzt vom Stop reserviert)
     );
     const pos = { ...POS, schutz: { orderId: 'alt1', stopPreis: 42.5, qty: 7 } } as unknown as Position;
     const b = await heileSchutz(VERBINDUNG, 'u1', 'XLB', pos, RISK, 'etf_sectors', 'umk-2026-11-24-heil-1435', f as never);
     expect(b).toBe('angelegt');
-    expect(methoden(f)).toEqual(['GET', 'GET', 'DELETE', 'GET', 'POST']);
+    expect(methoden(f)).toEqual(['GET', 'GET', 'DELETE', 'GET', 'POST', 'GET']);
     expect(String(f.mock.calls[1]?.[0])).toContain('/v2/positions/XLB');
     const post = f.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === 'POST');
     const koerper = JSON.parse(String((post?.[1] as { body?: string }).body)) as { side: string; type: string; stop_price: string | number; qty: string | number };
@@ -163,12 +164,47 @@ describe('heileSchutz', () => {
     const f = folge(
       { body: { symbol: 'XLB', qty: '7', qty_available: '7', side: 'long' } },
       { body: { id: 'neu2', status: 'accepted', client_order_id: 'x' } },
+      { body: { symbol: 'XLB', qty: '7', qty_available: '0', side: 'long' } },
     );
     expect(await heileSchutz(VERBINDUNG, 'u1', 'XLB', POS, RISK, 'etf_sectors', 'l', f as never)).toBe('angelegt');
-    expect(methoden(f)).toEqual(['GET', 'POST']);
+    expect(methoden(f)).toEqual(['GET', 'POST', 'GET']);
     const ohne = folge({ body: { symbol: 'XLB', qty: '3', qty_available: '3', side: 'long' } });
     expect(await heileSchutz(VERBINDUNG, 'u1', 'XLB', POS, RISK, 'etf_sectors', 'l', ohne as never)).toBe('kein_bestand');
     expect(ohne).toHaveBeenCalledTimes(1);
+  });
+
+  it('Runde 2, M-1: ein Verkauf füllt ZWISCHEN Bestandsprüfung und Versand → der neue Stop wird sofort zurückgenommen, Link gelöst', async () => {
+    holt.mockResolvedValue({ exists: true, data: () => ({ ...POS }) });
+    const f = folge(
+      { body: { symbol: 'XLB', qty: '7', qty_available: '7', side: 'long' } }, // vorher: alles da
+      { body: { id: 'neu3', status: 'accepted', client_order_id: 'x' } }, // Stop angenommen
+      { ok: false, status: 404, body: { message: 'position does not exist' } }, // nachher: Bestand weg
+      { ok: true, status: 200 }, // Storno des neuen Stops
+    );
+    expect(await heileSchutz(VERBINDUNG, 'u1', 'XLB', POS, RISK, 'etf_sectors', 'l', f as never)).toBe('nicht_angelegt');
+    expect(methoden(f)).toEqual(['GET', 'POST', 'GET', 'DELETE']);
+    expect(String(f.mock.calls[3]?.[0])).toContain('/v2/orders/neu3');
+    // erst der Link, dann seine Rücknahme
+    const schreibt = (setzt.mock.calls as unknown as Array<[{ schutz?: unknown }]>).map((c) => c[0]?.schutz);
+    expect(schreibt.at(-1)).toBeNull();
+  });
+
+  it('Runde 2, M-1: scheitert das Nachlesen, gilt der Bestand als unbelegt → ebenfalls Rücknahme', async () => {
+    holt.mockResolvedValue({ exists: true, data: () => ({ ...POS }) });
+    const f = folge(
+      { body: { symbol: 'XLB', qty: '7', qty_available: '7', side: 'long' } },
+      { body: { id: 'neu4', status: 'accepted', client_order_id: 'x' } },
+      { ok: false, status: 500, body: 'kaputt' },
+      { ok: true, status: 200 },
+    );
+    expect(await heileSchutz(VERBINDUNG, 'u1', 'XLB', POS, RISK, 'etf_sectors', 'l', f as never)).toBe('nicht_angelegt');
+    expect(methoden(f)).toEqual(['GET', 'POST', 'GET', 'DELETE']);
+  });
+
+  it('N-1: Positions-Antwort ohne `qty_available` → unklar statt „alles reserviert"', async () => {
+    const f = folge(toterLink, { body: { symbol: 'XLB', qty: '7', side: 'long' } });
+    expect(await heileSchutz(VERBINDUNG, 'u1', 'XLB', mitLink, RISK, 'etf_sectors', 'l', f as never)).toBe('unklar');
+    expect(methoden(f)).toEqual(['GET', 'GET']);
   });
 
   it('die Bestands-Nachfrage scheitert → unklar, keine Order', async () => {
@@ -230,6 +266,21 @@ describe('heileSchutz', () => {
     const pos = { ...POS, broker: false } as unknown as Position;
     expect(await heileSchutz(VERBINDUNG, 'u1', 'XLB', pos, RISK, 'etf_sectors', 'l', f as never)).toBe('kein_broker');
     expect(f).not.toHaveBeenCalled();
+  });
+});
+
+describe('alpacaPosition: „weiß nicht" sieht nie aus wie „kein Bestand" oder „Bestand da"', () => {
+  it('404 → null; Short und Krypto-Pfad; 5xx wirft', async () => {
+    const { alpacaPosition } = await import('../src/core/alpacaBroker.js');
+    const S = VERBINDUNG.schluessel;
+    expect(await alpacaPosition('paper', 'XLB', S, folge({ ok: false, status: 404, body: { message: 'x' } }) as never)).toBeNull();
+    expect(await alpacaPosition('paper', 'TXG', S, folge({ body: { qty: '-48', qty_available: '0', side: 'short' } }) as never))
+      .toEqual({ qty: 48, seite: 'short', verfuegbar: 0 });
+    const krypto = folge({ body: { qty: '0.5', qty_available: '0.5', side: 'long' } });
+    expect(await alpacaPosition('paper', 'BTC-USD', S, krypto as never)).toEqual({ qty: 0.5, seite: 'long', verfuegbar: 0.5 });
+    expect(String(krypto.mock.calls[0]?.[0])).toContain('/v2/positions/BTCUSD');
+    await expect(alpacaPosition('paper', 'XLB', S, folge({ ok: false, status: 500, body: 'kaputt' }) as never)).rejects.toThrow();
+    await expect(alpacaPosition('paper', 'XLB', S, folge({ body: { qty: '7', side: 'long' } }) as never)).rejects.toThrow('qty_available');
   });
 });
 
@@ -301,7 +352,10 @@ describe('Quelltext-Wächter', () => {
     expect(f).toContain('.filter(([sym]) => !symbolSperreAusVermerk(abgleich, sym, now))');
     // Lesefehler der Vermerke → keine Runde (kein .catch auf der Abfrage)
     expect(f).toContain("const vermerke = await k.ref.collection('offeneOrders').limit(50).get();");
-    expect(f).toContain('if (Date.now() - now.getTime() > SCHUTZ_RUNDE_BUDGET_MS) return;');
+    expect(f).toContain('const ueberBudget = (): boolean => Date.now() - now.getTime() > SCHUTZ_RUNDE_BUDGET_MS;');
+    // vor der Runde UND vor jeder Position (Runde 2, M-2)
+    expect(f.split('if (ueberBudget()) {').length - 1).toBe(2);
+    expect(f).toContain('break;');
     // sie kommt NACH Verkäufen und Nachholrunde: verkaufte Positionen sind dann aus `alle` gelöscht
     expect(lauf.indexOf('const schutzRunde = async')).toBeGreaterThan(lauf.indexOf('if (nachholen.length > 0) {'));
   });
@@ -312,6 +366,8 @@ describe('Quelltext-Wächter', () => {
     // der Bestand wird VOR dem Anlegen geprüft
     expect(f.indexOf("if (!bestandDecktStop(bestand, pos.qty)) return 'kein_bestand';")).toBeGreaterThan(0);
     expect(f.indexOf("if (!bestandDecktStop(bestand, pos.qty)) return 'kein_bestand';")).toBeLessThan(f.indexOf('await schutzAnlegen('));
+    // und NACH dem Anlegen nachgelesen (Runde 2, M-1)
+    expect(f).toContain('{ erwarteterLink: id ?? null, bestandNachlesen: true }');
     expect(f).not.toContain('posRef(');
     expect(f).not.toContain('executePaperTrade');
     expect(f).not.toContain('alpacaOrderStornieren');

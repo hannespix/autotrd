@@ -568,6 +568,12 @@ export async function alpacaPosition(
     throw err;
   }
   const qty = zahl(r['qty']);
+  /* Fehlt das Feld, ist die Antwort nicht die erwartete (Red-Team 24.11.,
+   * N-1): Als 0 gelesen hieße das „alles reserviert" — die Heilung täte
+   * dann nie etwas und das Log beschuldigte den Broker. Lieber laut. */
+  if (r['qty_available'] === undefined || r['qty_available'] === null) {
+    throw new AlpacaFehler(`Positions-Antwort für ${symbol} ohne qty_available`);
+  }
   return {
     qty: Math.abs(qty),
     seite: String(r['side'] ?? '') === 'short' || qty < 0 ? 'short' : 'long',
