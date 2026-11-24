@@ -530,12 +530,37 @@ describe('pflegeSchutz legt ein fehlendes Netz an', () => {
 });
 
 describe('schutzAnlegen (Sockel-Nachzug, Task 29 — Red-Team 16.10.)', () => {
-  it('alte Order „nicht stornierbar" (schon gefüllt) ⇒ KEINE neue Verkaufs-Order', async () => {
+  it('alte Order „nicht stornierbar" UND gefüllt ⇒ KEINE neue Verkaufs-Order', async () => {
     holt.mockResolvedValue(posSnap({ ...POS, core: true, schutz: { orderId: 'alt1', stopPreis: 98, qty: 10 } }));
-    const f = folge({ ok: false, status: 422, body: { message: 'order is not cancelable' } });
+    const f = folge(
+      { ok: false, status: 422, body: { message: 'order is not cancelable' } },
+      { body: { id: 'alt1', status: 'filled', filled_qty: '10', filled_avg_price: '97.9' } },
+    );
     await schutzAnlegen(VERBINDUNG, 'u1', 'AAPL', RISK, 'stocks_us', 'puls1', f as never);
-    expect(f).toHaveBeenCalledTimes(1); // nur der Storno-Versuch, kein POST
+    expect(f).toHaveBeenCalledTimes(2); // Storno-Versuch + Nachfrage, kein POST
     expect(setzt).not.toHaveBeenCalled();
+  });
+
+  it('24.11.: „nicht stornierbar", Verbleib UNKLAR (Nachfrage scheitert) ⇒ ebenfalls keine neue', async () => {
+    holt.mockResolvedValue(posSnap({ ...POS, core: true, schutz: { orderId: 'alt1', stopPreis: 98, qty: 10 } }));
+    const f = folge({ ok: false, status: 422, body: { message: 'order is not cancelable' } }, { ok: false, status: 500, body: 'kaputt' });
+    await schutzAnlegen(VERBINDUNG, 'u1', 'AAPL', RISK, 'stocks_us', 'puls1', f as never);
+    expect(f).toHaveBeenCalledTimes(2);
+    expect(setzt).not.toHaveBeenCalled();
+  });
+
+  it('24.11.: „nicht stornierbar", weil LÄNGST STORNIERT (toter Link nach gescheitertem Exit) ⇒ die Position bekommt wieder einen Stop', async () => {
+    holt.mockResolvedValue(posSnap({ ...POS, core: true, schutz: { orderId: 'alt1', stopPreis: 98, qty: 10 } }));
+    const f = folge(
+      { ok: false, status: 422, body: { message: 'order is not cancelable' } },
+      { body: { id: 'alt1', status: 'canceled', filled_qty: '0' } },
+      { body: { id: 'neu5', status: 'accepted', client_order_id: 'x' } },
+    );
+    await schutzAnlegen(VERBINDUNG, 'u1', 'AAPL', RISK, 'stocks_us', 'puls1', f as never);
+    const methoden = f.mock.calls.map((c) => (c[1] as RequestInit | undefined)?.method ?? 'GET');
+    expect(methoden).toEqual(['DELETE', 'GET', 'POST']);
+    const letzter = setzt.mock.calls.at(-1)?.[0] as { schutz?: { orderId: string } };
+    expect(letzter?.schutz).toMatchObject({ orderId: 'neu5' });
   });
 
   it('24.11.: alte Order storniert, aber erst nach dem ENDZUSTAND geht die neue raus', async () => {

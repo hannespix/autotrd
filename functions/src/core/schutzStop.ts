@@ -421,17 +421,29 @@ export async function schutzAnlegen(
       // volle Menge wäre dann ungedeckt — bei Alpaca ein GTC-Leerverkauf,
       // den niemand mehr storniert. Nichts anlegen; fillSync bucht den Fill.
       if (storno === 'nicht_stornierbar') {
-        logger.warn(`schutzAnlegen ${uid} ${symbol}: alte Schutz-Order nicht stornierbar (vermutlich gefüllt) — keine neue`);
-        return;
+        /* 422 heißt „gefüllt" ODER „längst storniert" (Red-Team 24.11.,
+         * M1/M2). Bisher galt beides als gefüllt — eine Position, deren
+         * Stop einmal storniert war (gescheiterter Exit, gescheiterter
+         * Nachzug), bekam dadurch NIE wieder einen. Einmal nachsehen: Nur
+         * ein Fill oder ein unklarer Stand verbietet die neue Order. */
+        const alt = await alpacaOrderAbfragen(verbindung.mode, pos.schutz.orderId, verbindung.schluessel, fetchImpl)
+          .catch(() => 'unbekannt' as const);
+        const totOhneFill = alt === null || (alt !== 'unbekannt' && ORDER_ENDZUSTAENDE.has(alt.status) && !(alt.filledQty > 0));
+        if (!totOhneFill) {
+          logger.warn(`schutzAnlegen ${uid} ${symbol}: alte Schutz-Order nicht stornierbar (gefüllt oder unklar) — keine neue`);
+          return;
+        }
       }
       /* Angenommen ist nicht vollzogen (24.11., s. `schutzAufheben`): Solange
        * die alte Order die Stücke hält, wiese Alpaca die neue mit 403 ab —
        * und die Position stünde ohne Stop da. Erst den Endzustand abwarten.
-       * Hat die alte dabei doch noch gefüllt, gilt dasselbe wie oben. */
+       * Nur „weg" oder „tot ohne Fill" erlaubt die neue: Hat die alte
+       * gefüllt, sind die Stücke weg; lebt sie noch, hält sie sie fest. */
       if (storno === 'storniert') {
-        const ende = await warteAufStornoEnde(verbindung, pos.schutz.orderId, fetchImpl, {});
-        if (typeof ende === 'object' && ende.filledQty > 0) {
-          logger.warn(`schutzAnlegen ${uid} ${symbol}: alte Schutz-Order hat während des Stornos gefüllt — keine neue`);
+        const ende = await warteAufStornoEnde(verbindung, uid, symbol, pos.schutz.orderId, fetchImpl, {});
+        const frei = ende.art === 'weg' || (ende.art === 'ende' && !(ende.stand.filledQty > 0));
+        if (!frei) {
+          logger.warn(`schutzAnlegen ${uid} ${symbol}: alte Schutz-Order ${ende.art === 'offen' ? 'noch nicht storniert' : 'hat gefüllt'} — keine neue in diesem Lauf`);
           return;
         }
       }
@@ -490,6 +502,15 @@ export async function schutzAnlegen(
 
 export type SchutzAufhebung =
   | { stand: 'frei' }
+  /**
+   * Der Storno ist angenommen, aber im Wartefenster nicht vollzogen — die
+   * Stop-Order hält die Stücke noch (24.11.). Der Aufrufer sendet seinen
+   * Exit JETZT NICHT: Solange der Stop lebt, wiese Alpaca ihn ab; füllte
+   * der Stop in dem Moment, träfe der Exit auf Bestand 0 und eröffnete
+   * einen Leerverkauf. Der nächste Versuch (Puls: eine Minute, Scan: fünf,
+   * Umkehr-Lauf: Nachholrunde) geht wieder hier durch.
+   */
+  | { stand: 'offen' }
   | {
       stand: 'gefuellt';
       fillPreis: number;
@@ -539,6 +560,7 @@ export async function schutzAufheben(
   );
   if (befund === 'weg') return { stand: 'frei' };
 
+  const gefuelltIn = (x: AlpacaOrderStand | null): boolean => x !== null && x.filledQty > 0 && x.filledAvgPreis > 0;
   let stand: AlpacaOrderStand | null;
   if (befund === 'storniert') {
     /* „Storniert" heißt bei Alpaca: Storno ANGENOMMEN, nicht vollzogen
@@ -549,19 +571,15 @@ export async function schutzAufheben(
      * (12.11.) und einen Notbremsen-Exit im Puls (05.11.): Der Stop war
      * weg, der Verkauf kam nicht, die Position blieb ungeschützt liegen.
      * Deshalb: nachfragen, bis die Order tot ist. */
-    const ende = await warteAufStornoEnde(verbindung, schutz.orderId, fetchImpl, warte);
-    if (ende === 'weg') return { stand: 'frei' };
-    if (ende === 'unbestaetigt') {
-      // Nach dem Fenster immer noch nicht tot: den Exit trotzdem versuchen
-      // (er wiederholt sich bei Reservierung selbst, s. routeOrder) — ein
-      // Ausstieg wird von dieser Prüfung nie verhindert.
-      logger.warn(`schutzAufheben ${uid} ${symbol}: Storno nach dem Wartefenster nicht bestätigt`);
-      return { stand: 'frei' };
-    }
-    // Tot und ohne Fill → frei. Mit Fill → der Stop war schneller: weiter
-    // in denselben Zweig wie bei „nicht stornierbar".
-    if (!(ende.filledQty > 0 && ende.filledAvgPreis > 0)) return { stand: 'frei' };
-    stand = ende;
+    const ende = await warteAufStornoEnde(verbindung, uid, symbol, schutz.orderId, fetchImpl, warte);
+    if (ende.art === 'weg') return { stand: 'frei' };
+    // Tot und ohne Fill → frei.
+    if (ende.art === 'ende' && !gefuelltIn(ende.stand)) return { stand: 'frei' };
+    // Lebt noch und hat nichts gefüllt → der Exit wartet (s. Typ).
+    if (ende.art === 'offen' && !gefuelltIn(ende.stand)) return { stand: 'offen' };
+    // Mit Fill (tot oder teilgefüllt lebend) → der Stop war schneller:
+    // weiter in denselben Zweig wie bei „nicht stornierbar".
+    stand = ende.stand;
   } else {
     // `nicht_stornierbar`: nachsehen, ob (und wie viel) ausgeführt wurde.
     stand = await alpacaOrderAbfragen(
@@ -570,6 +588,20 @@ export async function schutzAufheben(
       verbindung.schluessel,
       fetchImpl,
     );
+    /* Steht sie in `pending_cancel` (Storno aus einem früheren Versuch läuft
+     * noch), ohne gefüllt zu haben: ebenfalls den Endzustand abwarten.
+     * Bisher ging der Exit hier sofort raus und lief in dieselbe
+     * Reservierung. NUR dieser eine Zustand: Jeder andere, den Alpaca nicht
+     * stornieren lässt (`replaced` nach einem Trailing-Ersatz, `stopped`,
+     * `suspended` …), steht nicht in ORDER_ENDZUSTAENDE und käme dort nie
+     * an — der Exit wäre auf Dauer vertagt. Für sie gilt wie bisher „frei". */
+    if (stand !== null && !gefuelltIn(stand) && stand.status === 'pending_cancel') {
+      const ende = await warteAufStornoEnde(verbindung, uid, symbol, schutz.orderId, fetchImpl, warte);
+      if (ende.art === 'weg') return { stand: 'frei' };
+      if (ende.art === 'ende' && !gefuelltIn(ende.stand)) return { stand: 'frei' };
+      if (ende.art === 'offen' && !gefuelltIn(ende.stand)) return { stand: 'offen' };
+      stand = ende.stand;
+    }
   }
   if (stand && stand.filledQty > 0 && stand.filledAvgPreis > 0) {
     /* Teilgefüllt und noch aktiv (`partially_filled`, `pending_cancel`):
@@ -605,45 +637,79 @@ export async function schutzAufheben(
       restStorniert: ORDER_ENDZUSTAENDE.has(endstand.status),
     };
   }
-  // Nicht stornierbar, aber auch nichts ausgeführt (z. B. pending_cancel):
-  // den eigenen Exit trotzdem versuchen. Schlägt er an der Reservierung
-  // fehl, bucht er NICHTS — der Abgleich bleibt das Sicherheitsnetz.
-  logger.warn(`schutzAufheben ${uid} ${symbol}: nicht stornierbar, ohne Fill`);
+  // Nicht stornierbar, nichts ausgeführt, und tot (oder Alpaca kennt sie
+  // nicht mehr): Die Stücke sind frei — der eigene Exit darf raus.
+  logger.info(`schutzAufheben ${uid} ${symbol}: Stop-Order schon tot, ohne Fill`);
   return { stand: 'frei' };
 }
 
-/** So oft wird nach einem angenommenen Storno nachgefragt … */
-export const STORNO_WARTE_VERSUCHE = 10;
-/** … mit dieser Pause dazwischen (zusammen höchstens ~3 s je Exit). */
+/** So oft wird nach einem angenommenen Storno höchstens nachgefragt … */
+export const STORNO_WARTE_VERSUCHE = 12;
+/** … mit dieser Pause dazwischen … */
 export const STORNO_WARTE_PAUSE_MS = 300;
+/**
+ * … und nie länger als diese Frist insgesamt, auf der WANDUHR (Red-Team
+ * 24.11., M3): Jede Nachfrage hat für sich 15 s Timeout — ohne Frist könnte
+ * ein hängender Broker einen Exit zwei Minuten aufhalten und den
+ * Minuten-Puls (55 s) sprengen.
+ */
+export const STORNO_WARTE_FRIST_MS = 4000;
+
+export type StornoEnde =
+  /** Alpaca kennt die Order nicht mehr (404). */
+  | { art: 'weg' }
+  /** Endzustand erreicht — am Stand erkennt der Aufrufer einen Fill, der dem Storno zuvorkam. */
+  | { art: 'ende'; stand: AlpacaOrderStand }
+  /** Frist um, Order lebt noch (oder jede Nachfrage scheiterte: `stand: null`). */
+  | { art: 'offen'; stand: AlpacaOrderStand | null };
 
 /**
- * Nach einem ANGENOMMENEN Storno warten, bis die Order im Endzustand steht.
- *
- * `weg`: Alpaca kennt sie nicht mehr (404). `unbestaetigt`: Das Fenster ist
- * um oder jede Nachfrage scheiterte — der Aufrufer versucht seinen Exit
- * trotzdem. Sonst der Endstand, an dem der Aufrufer einen Fill erkennt, der
- * dem Storno zuvorkam.
+ * Nach einem Storno warten, bis die Order im Endzustand steht — höchstens
+ * `STORNO_WARTE_FRIST_MS`. Loggt die gemessene Dauer in BEIDEN Ausgängen:
+ * Wie lange Alpaca für einen Storno braucht, wusste bis 24.11. niemand
+ * (Red-Team H2), und an dieser Zahl hängt, ob das Fenster reicht.
  */
-async function warteAufStornoEnde(
+export async function warteAufStornoEnde(
   verbindung: BrokerVerbindung,
+  uid: string,
+  symbol: string,
   orderId: string,
   fetchImpl: FetchLike,
-  warte: { versuche?: number; pauseMs?: number },
-): Promise<AlpacaOrderStand | 'weg' | 'unbestaetigt'> {
+  warte: { versuche?: number; pauseMs?: number; fristMs?: number } = {},
+): Promise<StornoEnde> {
   const versuche = warte.versuche ?? STORNO_WARTE_VERSUCHE;
   const pause = warte.pauseMs ?? STORNO_WARTE_PAUSE_MS;
+  const frist = warte.fristMs ?? STORNO_WARTE_FRIST_MS;
+  const start = Date.now();
+  let letzter: AlpacaOrderStand | null = null;
+  let fragen = 0;
   for (let i = 0; i < versuche; i += 1) {
+    const rest = frist - (Date.now() - start);
+    if (rest <= 0) break;
+    fragen += 1;
     try {
-      const stand = await alpacaOrderAbfragen(verbindung.mode, orderId, verbindung.schluessel, fetchImpl);
-      if (stand === null) return 'weg';
-      if (ORDER_ENDZUSTAENDE.has(stand.status)) return stand;
+      // Die einzelne Nachfrage darf die Frist nicht überziehen.
+      const stand = await Promise.race([
+        alpacaOrderAbfragen(verbindung.mode, orderId, verbindung.schluessel, fetchImpl),
+        new Promise<'zeit'>((r) => setTimeout(() => r('zeit'), rest)),
+      ]);
+      if (stand === 'zeit') break;
+      if (stand === null) {
+        logger.info(`Storno ${uid} ${symbol}: Order nach ${Date.now() - start} ms weg (${fragen} Nachfrage(n))`);
+        return { art: 'weg' };
+      }
+      letzter = stand;
+      if (ORDER_ENDZUSTAENDE.has(stand.status)) {
+        logger.info(`Storno ${uid} ${symbol}: ${stand.status} nach ${Date.now() - start} ms (${fragen} Nachfrage(n))`);
+        return { art: 'ende', stand };
+      }
     } catch {
       // Netzfehler ist kein Endzustand — weiter fragen.
     }
     if (i < versuche - 1 && pause > 0) await new Promise((r) => setTimeout(r, pause));
   }
-  return 'unbestaetigt';
+  logger.warn(`Storno ${uid} ${symbol}: nach ${Date.now() - start} ms nicht vollzogen (${fragen} Nachfrage(n), Stand ${letzter?.status ?? 'unbekannt'})`);
+  return { art: 'offen', stand: letzter };
 }
 
 export type SchutzBefund =

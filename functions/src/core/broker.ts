@@ -1240,6 +1240,17 @@ export async function executeTrade(
      * gelungenen Buchung (Nachprüfung M-B): Scheitert sie, soll der nächste
      * Lauf den Fill über den Link erneut finden und die Buchung wiederholen
      * — nicht den Rest mit der ungebuchten Menge verkaufen. */
+    /* Der Stop hält die Stücke noch (24.11.): JETZT nicht verkaufen. Alpaca
+     * wiese den Exit ab, solange der Stop lebt — und füllte der Stop in
+     * diesem Moment, träfe der Exit auf Bestand 0 und eröffnete einen
+     * Leerverkauf. Kein verhinderter Ausstieg, sondern ein vertagter: Der
+     * nächste Puls/Scan (oder die Nachholrunde des Umkehr-Laufs) geht
+     * wieder durch `schutzAufheben` und findet den Stop dann tot oder
+     * gefüllt. */
+    if (aufhebung.stand === 'offen') {
+      logger.warn(`executeTrade ${req.uid} ${req.symbol}: Schutz-Stop noch nicht storniert — Exit wird im nächsten Lauf wiederholt`);
+      return { executed: false, reason: 'broker_schutz_storno_offen' };
+    }
     if (aufhebung.stand === 'gefuellt' && await fillSchonGebucht(req.uid, aufhebung.orderId)) {
       // Schon gebucht (vom Scan oder einem früheren Puls): nichts doppelt
       // buchen — aber NICHT aufhören. Der Rest der Position geht jetzt

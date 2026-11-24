@@ -260,7 +260,8 @@ describe('Anschluss im Lauf (Quelltext-Wächter)', () => {
   });
 
   it('gescheiterte Umkehr-Ausstiege werden gezählt, gemeldet und im Kryptolauf nachgeholt', () => {
-    expect(umkehr).toContain("zaehleGrund(verkaufFehl, r.reason ?? 'unbekannt', 1);");
+    // seit 24.11. zweimal: nach dem ersten Versuch (nicht nachholbar) und nach der Nachholrunde
+    expect(umkehr.split('zaehleGrund(verkaufFehl, grund, 1);').length - 1).toBe(2);
     expect(umkehr).toContain("zaehleGrund(verkaufFehl, 'kein_kurs', 1);");
     // Nachgeholtes zählt im Stand mit — auch wenn im selben Lauf neue Konten handeln.
     expect(umkehr.indexOf('for (const [g, n] of Object.entries(nachFehl)) zaehleGrund(verkaufFehl, g, n);'))

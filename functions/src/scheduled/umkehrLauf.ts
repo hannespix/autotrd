@@ -488,6 +488,19 @@ async function fuehreAus(
   if (quotes.size === 0 && (verkaufen.length > 0 || kaufen.length > 0)) throw new KeineKurse();
 
   // 1) Verkäufe
+  const verkaufe = async (v: PlanVerkauf, px: number): Promise<string | null> => {
+    const r = await executeTrade(
+      { uid: k.id, symbol: v.symbol, side: 'sell', price: px, source: 'engine', riskExit: v.grund, assetClass: classify(v.symbol) },
+      clamped,
+      laufId,
+    );
+    if (!r.executed) return r.reason ?? 'unbekannt';
+    verkaeufe += 1;
+    if (r.trade?.teilSchluss !== true) alle.delete(v.symbol);
+    return null;
+  };
+  const nachholen: Array<{ v: PlanVerkauf; px: number }> = [];
+  let ersterAufschub = 0;
   for (const v of verkaufen) {
     const p = alle.get(v.symbol);
     if (!p || !umkehrBesitz(p)) continue;
@@ -498,17 +511,37 @@ async function fuehreAus(
       zaehleGrund(verkaufFehl, 'kein_kurs', 1);
       continue;
     }
-    const r = await executeTrade(
-      { uid: k.id, symbol: v.symbol, side: 'sell', price: px, source: 'engine', riskExit: v.grund, assetClass: classify(v.symbol) },
-      clamped,
-      laufId,
-    );
-    if (r.executed) {
-      verkaeufe += 1;
-      if (r.trade?.teilSchluss !== true) alle.delete(v.symbol);
-    } else {
-      zaehleGrund(verkaufFehl, r.reason ?? 'unbekannt', 1);
-      logger.warn(`Umkehr ${k.id} ${v.symbol}: Ausstieg (${v.grund}) nicht ausgeführt — ${r.reason ?? 'unbekannt'}`);
+    const grund = await verkaufe(v, px);
+    if (grund === null) continue;
+    if (verkaufNachholbar(grund)) {
+      // Der Schutz-Stop hält die Stücke noch — gleich noch einmal (s. u.).
+      if (nachholen.length === 0) ersterAufschub = Date.now();
+      nachholen.push({ v, px });
+      continue;
+    }
+    zaehleGrund(verkaufFehl, grund, 1);
+    logger.warn(`Umkehr ${k.id} ${v.symbol}: Ausstieg (${v.grund}) nicht ausgeführt — ${grund}`);
+  }
+  /* 1b) Nachholrunde (24.11.). Scan und Puls wiederholen einen vertagten
+   * Exit von selbst, nach fünf bzw. einer Minute. Dieser Lauf kommt erst
+   * MORGEN wieder — und nur, wenn das Signal dann noch anliegt. Am 19.11.
+   * blieben so drei XLY-Positionen fünf Tage länger im Depot als die Regel
+   * vorsieht, ohne Broker-Stop. Deshalb hier ein zweiter Versuch, VOR den
+   * Käufen (ein gelungener Verkauf gibt Platz und Bargeld frei). Er geht
+   * wieder durch `executeTrade` und damit durch `schutzAufheben`: Ist der
+   * Stop inzwischen tot, geht der Verkauf raus; hat er gefüllt, wird SEIN
+   * Fill gebucht — nie ein blinder zweiter Verkauf. */
+  if (nachholen.length > 0) {
+    const rest = UMKEHR_VERKAUF_NACHHOL_MS - (Date.now() - ersterAufschub);
+    if (rest > 0) await new Promise((r) => setTimeout(r, rest));
+    for (const { v, px } of nachholen) {
+      const grund = await verkaufe(v, px);
+      if (grund === null) {
+        logger.info(`Umkehr ${k.id} ${v.symbol}: Ausstieg (${v.grund}) in der Nachholrunde ausgeführt`);
+        continue;
+      }
+      zaehleGrund(verkaufFehl, grund, 1);
+      logger.warn(`Umkehr ${k.id} ${v.symbol}: Ausstieg (${v.grund}) auch in der Nachholrunde nicht ausgeführt — ${grund}`);
     }
   }
 
@@ -600,6 +633,23 @@ async function fuehreAus(
   // Geplante Käufe, die NICHT zur Order wurden (Ersatz aus der Reserve zählt hier nicht).
   ohne.bargeldOderPlatz += wahl.keinKurs + wahl.keinPlatz + wahl.keinBargeld + wahl.zuTeuer + wahl.klumpen;
   return { kaeufe, verkaeufe, ohne, abrutschen, verkaufFehl, ...(anteile ? { anteile } : {}) };
+}
+
+/**
+ * So lange nach dem ersten vertagten Verkauf wartet die Nachholrunde.
+ * Alpaca storniert asynchron; zur Eröffnung dauerte ein Storno im
+ * Papierkonto nachweislich länger als zwei Sekunden (23.11., Kauf-Storno).
+ * Die genaue Dauer misst `warteAufStornoEnde` seit 24.11. mit.
+ */
+export const UMKEHR_VERKAUF_NACHHOL_MS = 15_000;
+
+/**
+ * Lohnt ein zweiter Versuch im selben Lauf (pur)? Nur, wenn der Verkauf an
+ * der Reservierung durch den eigenen Schutz-Stop hing — nicht bei Netz-
+ * oder Buchungsfehlern, deren Verbleib unklar ist.
+ */
+export function verkaufNachholbar(grund: string): boolean {
+  return grund === 'broker_schutz_storno_offen' || grund === 'broker_stuecke_reserviert';
 }
 
 /**
