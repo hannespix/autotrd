@@ -41,6 +41,8 @@ import {
   umkehrAusstieg,
   umkehrAuswahl,
   umkehrBesitz,
+  umkehrNotbremseLevel,
+  umkehrRisk,
   umkehrEinstieg,
   umkehrParameterFuer,
   umkehrPositionsWert,
@@ -50,6 +52,8 @@ import {
 } from '../../../shared/src/index.js';
 import { UMKEHR_KRYPTO_LIMIT_PUFFER, executeTrade, kapitalDeckel, resolveBrokerMode } from '../core/broker.js';
 import { kontoTore, symbolSperreAusVermerk } from '../core/kontoTore.js';
+import { brokerVerbindung } from '../core/orderRouting.js';
+import { heileSchutz } from '../core/schutzStop.js';
 import { mayTrade } from '../core/access.js';
 import { clampStrategyRisk, corePct } from '../core/rulesTrading.js';
 import { getMarketSnapshot, getSparkBatch, mitGrenze, type DailyBar } from '../core/marketData.js';
@@ -545,12 +549,39 @@ async function fuehreAus(
     }
   }
 
+  /* 1c) Schutz-Runde (Task 45, 24.11.): Jede verbleibende Umkehr-Position
+   * am Broker bekommt ihren Stop zurück, wenn er fehlt. Bisher kam ein
+   * einmal stornierter Stop nie wieder (s. `heileSchutz`). Läuft am Ende —
+   * nach Verkäufen und Käufen — und darf den Lauf nie anhalten. */
+  const schutzRunde = async (): Promise<void> => {
+    try {
+      const faellig = [...alle.entries()]
+        .filter(([sym, p]) => umkehrSchutzPruefbar(p, preis(sym), classify(sym)))
+        .slice(0, SCHUTZ_RUNDE_MAX);
+      if (faellig.length === 0) return;
+      const verbindung = await brokerVerbindung(k.id).catch(() => null);
+      if (!verbindung) return;
+      const kennung = `${laufId}-heil-${now.toISOString().slice(11, 16).replace(':', '')}`;
+      for (const [sym, p] of faellig) {
+        const klasse = classify(sym);
+        const befund = await heileSchutz(verbindung, k.id, sym, p, umkehrRisk(umkehrParameterFuer(klasse)), klasse, kennung);
+        if (befund === 'anlegen') logger.info(`Umkehr ${k.id} ${sym}: Schutz-Stop fehlte — neu angelegt`);
+        else if (befund === 'gefuellt') logger.warn(`Umkehr ${k.id} ${sym}: Schutz-Stop hat gefüllt, Position steht noch im Buch — der nächste Exit bucht den Fill`);
+      }
+    } catch (err) {
+      logger.warn(`Umkehr ${k.id}: Schutz-Runde fehlgeschlagen`, err);
+    }
+  };
+
   // 2) Käufe
   if (einstiegSperre !== null && kaufen.length > 0) {
     ohne.gesperrt += kaufen.length;
     zaehleGrund(ohne.gesperrtGruende, einstiegSperre, kaufen.length);
   }
-  if (einstiegSperre !== null || kaufen.length === 0) return { kaeufe, verkaeufe, ohne, abrutschen, verkaufFehl };
+  if (einstiegSperre !== null || kaufen.length === 0) {
+    await schutzRunde();
+    return { kaeufe, verkaeufe, ohne, abrutschen, verkaufFehl };
+  }
   // (Anteile erst ab hier: Ohne Kaufabsicht misst die Kennzahl nichts, was blockiert.)
   // Kontostand FRISCH nach den Verkäufen — der Snapshot von oben kennt die Erlöse nicht.
   const frisch = await k.ref.get();
@@ -632,7 +663,33 @@ async function fuehreAus(
   }
   // Geplante Käufe, die NICHT zur Order wurden (Ersatz aus der Reserve zählt hier nicht).
   ohne.bargeldOderPlatz += wahl.keinKurs + wahl.keinPlatz + wahl.keinBargeld + wahl.zuTeuer + wahl.klumpen;
+  await schutzRunde();
   return { kaeufe, verkaeufe, ohne, abrutschen, verkaufFehl, ...(anteile ? { anteile } : {}) };
+}
+
+/** Höchstens so viele Positionen je Konto prüft die Schutz-Runde (eine Nachfrage je Position). */
+export const SCHUTZ_RUNDE_MAX = 12;
+
+/**
+ * Abstand des Kurses zur Notbremse, unter dem die Schutz-Runde eine
+ * Position NICHT anfasst. Steht der Kurs an der Notbremse, kann der
+ * Minuten-Puls sie in derselben Sekunde verkaufen — ein gleichzeitig neu
+ * angelegter Stop hielte die Stücke fest oder stünde ohne Bestand im Markt.
+ */
+export const SCHUTZ_RUNDE_ABSTAND = 1.03;
+
+/**
+ * Prüft die Schutz-Runde diese Position (pur)? Nur Long-Positionen der
+ * Umkehr am Broker, mit Kurs, und nur mit Abstand zur Notbremse.
+ */
+export function umkehrSchutzPruefbar(
+  p: Pick<Position, 'broker' | 'side' | 'avgEntry' | 'quelle' | 'core' | 'qty'>,
+  kurs: number | null,
+  klasse: string | null,
+): boolean {
+  if (p.broker !== true || p.side === 'short' || !umkehrBesitz(p as Position)) return false;
+  if (kurs === null || !(kurs > 0) || !(p.avgEntry > 0) || !(p.qty > 0)) return false;
+  return kurs > umkehrNotbremseLevel(p.avgEntry, umkehrParameterFuer(klasse)) * SCHUTZ_RUNDE_ABSTAND;
 }
 
 /**

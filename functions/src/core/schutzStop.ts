@@ -446,6 +446,9 @@ export async function schutzAnlegen(
           logger.warn(`schutzAnlegen ${uid} ${symbol}: alte Schutz-Order ${ende.art === 'offen' ? 'noch nicht storniert' : 'hat gefüllt'} — keine neue in diesem Lauf`);
           return;
         }
+        // Das Warten kann Sekunden gedauert haben: Ist die Position inzwischen
+        // geschlossen, gibt es nichts mehr zu schützen (Red-Team 24.11., M-5).
+        if (!(await posRef(uid, symbol).get()).exists) return;
       }
     }
 
@@ -497,6 +500,90 @@ export async function schutzAnlegen(
     logger.info(`Schutz-Stop ${uid} ${symbol}: ${plan.qty} @ ${plan.stopPreis}`);
   } catch (err) {
     logger.warn(`schutzAnlegen ${uid} ${symbol} fehlgeschlagen`, err);
+  }
+}
+
+/* ── Fehlenden Schutz-Stop wiederherstellen (Task 45, 24.11.) ───────────────
+ *
+ * Ein Broker-Stop entstand bisher nur nach einem eröffnenden Fill. War er
+ * einmal weg — der Exit hatte ihn storniert und scheiterte dann selbst, das
+ * erste Anlegen schlug fehl —, kam er für Umkehr-Positionen nie zurück: Der
+ * Scan führt sie nicht (`pflegeSchutz` sieht sie nie), der Puls legt Stops
+ * nur für den Sockel an. Am 24.11. lagen so elf Positionen ohne Netz beim
+ * Broker.
+ *
+ * `pflegeSchutz` taugt hier nicht als Abkürzung: Findet es einen gefüllten
+ * Stop, löst es die Verknüpfung und erwartet, dass der Aufrufer den Fill
+ * bucht. Diese Heilung bucht nichts — einen gefüllten Stop fasst sie nicht
+ * an; den bucht der Exit-Weg über `schutzAufheben`.
+ */
+
+/** So lange muss eine Stop-Order tot sein, bevor sie ersetzt wird. */
+export const SCHUTZ_HEIL_RUHE_MS = 5 * 60_000;
+
+/** Zustände, in denen eine Stop-Order endgültig nichts mehr hält. */
+const SCHUTZ_TOT = new Set(['canceled', 'expired', 'rejected']);
+
+export type SchutzHeilBefund =
+  /** Kein Stop da (kein Link, Order unbekannt, oder lange genug tot) → neu anlegen. */
+  | 'anlegen'
+  /** Die Order lebt (oder ist in einem Zustand, den wir nicht als tot kennen) → nichts tun. */
+  | 'steht'
+  /** Der Stop hat (teil)gefüllt → nicht anfassen; den Fill bucht der Exit-Weg. */
+  | 'gefuellt'
+  /** Eben erst gestorben → vielleicht läuft gerade ein Exit, der sie storniert hat. */
+  | 'zu_frisch';
+
+/**
+ * Was ist mit dem Stop einer Position zu tun (pur)?
+ *
+ * Die Ruhezeit ist die Sicherung gegen das gefährlichste Rennen: Ein Exit
+ * storniert den Stop und verkauft; sähe die Heilung in dieser Sekunde nur
+ * „Stop tot", legte sie einen neuen an — der hielte die Stücke wieder fest
+ * (Exit abgewiesen) oder stünde, wenn der Verkauf schon durch ist, als
+ * Verkaufs-Stop ohne Bestand im Markt. Fehlt die Zeitangabe, gilt die
+ * Order als frisch.
+ */
+export function schutzHeilBefund(stand: AlpacaOrderStand | null | 'kein_link', jetztMs: number): SchutzHeilBefund {
+  if (stand === 'kein_link' || stand === null) return 'anlegen';
+  if (stand.filledQty > 0) return 'gefuellt';
+  if (!SCHUTZ_TOT.has(stand.status)) return 'steht';
+  const seit = Date.parse(stand.geaendertAm ?? '');
+  if (!Number.isFinite(seit)) return 'zu_frisch';
+  return jetztMs - seit >= SCHUTZ_HEIL_RUHE_MS ? 'anlegen' : 'zu_frisch';
+}
+
+/**
+ * Den Stop einer Broker-Position prüfen und, wenn er fehlt, neu anlegen.
+ * Wirft nie und bucht nichts. `unklar`: Die Nachfrage ist gescheitert —
+ * dann lieber nichts tun als auf Verdacht eine zweite Verkaufs-Order
+ * senden.
+ */
+export async function heileSchutz(
+  verbindung: BrokerVerbindung,
+  uid: string,
+  symbol: string,
+  pos: Position,
+  risk: RiskConfig,
+  klasse: string | null,
+  laufId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<SchutzHeilBefund | 'unklar' | 'kein_broker'> {
+  if (pos.broker !== true) return 'kein_broker';
+  try {
+    const id = pos.schutz?.orderId;
+    const stand = id
+      ? await alpacaOrderAbfragen(verbindung.mode, id, verbindung.schluessel, fetchImpl)
+      : ('kein_link' as const);
+    const befund = schutzHeilBefund(stand, Date.now());
+    if (befund !== 'anlegen') return befund;
+    // `schutzAnlegen` liest die Position frisch, plant selbst (Umkehr und
+    // Sockel bekommen ihre Notbremse, Bruchstücke nichts) und wirft nie.
+    await schutzAnlegen(verbindung, uid, symbol, risk, klasse, laufId, fetchImpl);
+    return 'anlegen';
+  } catch (err) {
+    logger.warn(`heileSchutz ${uid} ${symbol}: Stand der Schutz-Order nicht lesbar`, err);
+    return 'unklar';
   }
 }
 

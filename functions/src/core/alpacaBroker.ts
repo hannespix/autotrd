@@ -930,6 +930,11 @@ export interface AlpacaOrderStand {
   side?: 'buy' | 'sell';
   /** Order-Typ laut Broker (market/limit/stop/stop_limit …). */
   typ?: string;
+  /**
+   * Letzte Zustandsänderung laut Broker (`updated_at`, ISO) — sagt, wie
+   * lange eine Order schon tot ist. Leer, wenn Alpaca nichts liefert.
+   */
+  geaendertAm?: string;
 }
 
 /**
@@ -965,6 +970,7 @@ export async function alpacaOrderAbfragen(
     clientOrderId: String(d['client_order_id'] ?? ''),
     side: String(d['side'] ?? '') === 'sell' ? 'sell' : 'buy',
     typ: String(d['type'] ?? ''),
+    geaendertAm: String(d['updated_at'] ?? d['canceled_at'] ?? d['expired_at'] ?? ''),
   };
 }
 
