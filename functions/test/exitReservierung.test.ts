@@ -195,6 +195,39 @@ describe('schutzAufheben: ein Zustand, der nie endet, vertagt den Exit nicht auf
   });
 });
 
+describe('schutzAufheben: scheitert die Prüfung selbst, wird nicht blind verkauft (Runde 2, H-A)', () => {
+  const kaputt = { ok: false, status: 500, body: 'kaputt' };
+
+  it('Storno wirft (5xx), Order lebt ungefüllt → vertagt: der Stop hält die Stücke', async () => {
+    const f = folge(kaputt, order('new'));
+    const b = await schutzAufheben(VERBINDUNG, 'u1', 'XLB', { orderId: 'o1' }, f as never, { versuche: 2, pauseMs: 0 });
+    expect(b).toEqual({ stand: 'offen' });
+  });
+
+  it('Storno wirft, Order ist GEFÜLLT → ihr Fill zählt, kein eigener Verkauf', async () => {
+    const f = folge(kaputt, order('filled', '7', '48.1'));
+    const b = await schutzAufheben(VERBINDUNG, 'u1', 'XLB', { orderId: 'o1' }, f as never, { versuche: 2, pauseMs: 0 });
+    expect(b).toMatchObject({ stand: 'gefuellt', fillQty: 7, fillPreis: 48.1, restStorniert: true });
+  });
+
+  it('Storno wirft, Order ist tot ohne Fill (oder unbekannt) → frei', async () => {
+    const tot = folge(kaputt, order('canceled'));
+    expect(await schutzAufheben(VERBINDUNG, 'u1', 'XLB', { orderId: 'o1' }, tot as never)).toEqual({ stand: 'frei' });
+    const weg = folge(kaputt, { ok: false, status: 404, body: { message: 'not found' } });
+    expect(await schutzAufheben(VERBINDUNG, 'u1', 'XLB', { orderId: 'o1' }, weg as never)).toEqual({ stand: 'frei' });
+  });
+
+  it('Storno wirft UND die Nachfrage wirft → Verbleib unklar → vertagt, kein Wurf nach außen', async () => {
+    const f = folge(kaputt);
+    await expect(schutzAufheben(VERBINDUNG, 'u1', 'XLB', { orderId: 'o1' }, f as never)).resolves.toEqual({ stand: 'offen' });
+  });
+
+  it('422 („sehr wahrscheinlich gefüllt") und die Nachfrage wirft → vertagt statt „frei"', async () => {
+    const f = folge({ ok: false, status: 422, body: { message: 'not cancelable' } }, kaputt);
+    await expect(schutzAufheben(VERBINDUNG, 'u1', 'XLB', { orderId: 'o1' }, f as never)).resolves.toEqual({ stand: 'offen' });
+  });
+});
+
 describe('warteAufStornoEnde: eine Frist auf der Wanduhr', () => {
   it('die Vorgaben bleiben kurz (der Minuten-Puls hat 55 s)', () => {
     expect(STORNO_WARTE_FRIST_MS).toBeLessThanOrEqual(5000);
@@ -263,9 +296,8 @@ describe('routeOrder: reservierte Stücke sind ein eigener, ehrlicher Grund — 
 describe('Umkehr-Lauf: Nachholrunde für vertagte Verkäufe', () => {
   it('nachgeholt wird nur, was am eigenen Schutz-Stop hing', () => {
     expect(verkaufNachholbar('broker_schutz_storno_offen')).toBe(true);
-    expect(verkaufNachholbar('broker_stuecke_reserviert')).toBe(true);
-    // unklarer Verbleib oder echter Fehler: kein zweiter Versuch im selben Lauf
-    for (const g of ['broker_broker_fehler', 'broker_kein_fill', 'broker_exit_laeuft', 'fill_schon_gebucht', 'kein_kurs', 'unbekannt', '']) {
+    // unbekannter Halter, unklarer Verbleib oder echter Fehler: kein zweiter Versuch im selben Lauf
+    for (const g of ['broker_stuecke_reserviert', 'broker_broker_fehler', 'broker_kein_fill', 'broker_exit_laeuft', 'fill_schon_gebucht', 'kein_kurs', 'unbekannt', '']) {
       expect(verkaufNachholbar(g)).toBe(false);
     }
     expect(UMKEHR_VERKAUF_NACHHOL_MS).toBeGreaterThanOrEqual(10_000);

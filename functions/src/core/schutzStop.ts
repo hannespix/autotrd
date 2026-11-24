@@ -552,12 +552,21 @@ export async function schutzAufheben(
   fetchImpl: FetchLike = fetch,
   warte: { versuche?: number; pauseMs?: number } = {},
 ): Promise<SchutzAufhebung> {
-  const befund = await alpacaOrderStornieren(
-    verbindung.mode,
-    schutz.orderId,
-    verbindung.schluessel,
-    fetchImpl,
-  );
+  /* Scheitert der Storno SELBST (429, 5xx, Timeout), ist der Verbleib der
+   * Stop-Order unklar (Red-Team 24.11., Runde 2, H-A). Bisher warf diese
+   * Funktion dann, `executeTrade` las den Wurf als „frei" — und verkaufte
+   * blind, ausgerechnet in den Minuten, in denen Stop-Fill und API-Fehler
+   * zusammenfallen. Jetzt wird nachgesehen wie bei „nicht stornierbar";
+   * lebt der Stop noch oder bleibt er unklar, wartet der Exit. */
+  let stornoWarf = false;
+  let befund: 'storniert' | 'weg' | 'nicht_stornierbar';
+  try {
+    befund = await alpacaOrderStornieren(verbindung.mode, schutz.orderId, verbindung.schluessel, fetchImpl);
+  } catch (err) {
+    logger.warn(`schutzAufheben ${uid} ${symbol}: Storno der Schutz-Order gescheitert — Verbleib wird nachgesehen`, err);
+    stornoWarf = true;
+    befund = 'nicht_stornierbar';
+  }
   if (befund === 'weg') return { stand: 'frei' };
 
   const gefuelltIn = (x: AlpacaOrderStand | null): boolean => x !== null && x.filledQty > 0 && x.filledAvgPreis > 0;
@@ -582,12 +591,18 @@ export async function schutzAufheben(
     stand = ende.stand;
   } else {
     // `nicht_stornierbar`: nachsehen, ob (und wie viel) ausgeführt wurde.
-    stand = await alpacaOrderAbfragen(
-      verbindung.mode,
-      schutz.orderId,
-      verbindung.schluessel,
-      fetchImpl,
-    );
+    // 422 heißt sehr oft „schon gefüllt" — scheitert auch die Nachfrage,
+    // wird NICHT blind verkauft (H-A), sondern vertagt.
+    try {
+      stand = await alpacaOrderAbfragen(verbindung.mode, schutz.orderId, verbindung.schluessel, fetchImpl);
+    } catch (err) {
+      logger.warn(`schutzAufheben ${uid} ${symbol}: Verbleib der Schutz-Order unklar — Exit wird vertagt`, err);
+      return { stand: 'offen' };
+    }
+    // Der Storno kam nie an und die Order lebt ungefüllt: Sie hält die Stücke.
+    if (stornoWarf && stand !== null && !gefuelltIn(stand) && !ORDER_ENDZUSTAENDE.has(stand.status)) {
+      return { stand: 'offen' };
+    }
     /* Steht sie in `pending_cancel` (Storno aus einem früheren Versuch läuft
      * noch), ohne gefüllt zu haben: ebenfalls den Endzustand abwarten.
      * Bisher ging der Exit hier sofort raus und lief in dieselbe

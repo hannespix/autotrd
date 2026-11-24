@@ -644,12 +644,18 @@ async function fuehreAus(
 export const UMKEHR_VERKAUF_NACHHOL_MS = 15_000;
 
 /**
- * Lohnt ein zweiter Versuch im selben Lauf (pur)? Nur, wenn der Verkauf an
- * der Reservierung durch den eigenen Schutz-Stop hing — nicht bei Netz-
- * oder Buchungsfehlern, deren Verbleib unklar ist.
+ * Lohnt ein zweiter Versuch im selben Lauf (pur)? Nur, wenn der Exit
+ * VERTAGT wurde, weil der eigene Schutz-Stop noch lebte — dann wurde
+ * nichts gesendet, und der zweite Versuch prüft den Stop erneut.
+ *
+ * Nicht bei `broker_stuecke_reserviert` (Red-Team 24.11., Runde 2, M-1):
+ * Dort hatte `schutzAufheben` schon „frei" gemeldet, es hält also eine
+ * Order die Stücke, die das Buch nicht kennt. Ein zweiter Versuch sähe
+ * dasselbe — oder träfe, wenn diese Order inzwischen füllt, auf Bestand 0.
+ * Und nicht bei Netz- oder Buchungsfehlern, deren Verbleib unklar ist.
  */
 export function verkaufNachholbar(grund: string): boolean {
-  return grund === 'broker_schutz_storno_offen' || grund === 'broker_stuecke_reserviert';
+  return grund === 'broker_schutz_storno_offen';
 }
 
 /**
