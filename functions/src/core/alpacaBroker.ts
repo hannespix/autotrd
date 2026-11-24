@@ -544,6 +544,37 @@ export async function alpacaPositionen(
   });
 }
 
+/**
+ * EINE Position beim Broker — mit der frei verfügbaren Menge.
+ *
+ * `verfuegbar` (`qty_available`) ist, was keine offene Order reserviert:
+ * Liegt sie unter `qty`, hält eine Verkaufs-Order die Stücke. `null`: Der
+ * Broker führt das Symbol nicht (404). Jeder andere Fehler wirft — „weiß
+ * nicht" darf nie wie „kein Bestand" oder „Bestand da" aussehen.
+ */
+export async function alpacaPosition(
+  mode: BrokerMode,
+  symbol: string,
+  schluessel: AlpacaSchluessel | null = null,
+  fetchImpl: FetchLike = fetch,
+): Promise<{ qty: number; seite: 'long' | 'short'; verfuegbar: number } | null> {
+  let r: Record<string, unknown>;
+  try {
+    // Krypto ohne Schrägstrich: Im Pfad steht `BTCUSD`, nicht `BTC/USD`.
+    const pfad = encodeURIComponent(zuAlpacaSymbol(symbol).replace('/', ''));
+    r = (await alpacaFetch(mode, `/v2/positions/${pfad}`, schluessel, {}, fetchImpl)) as Record<string, unknown>;
+  } catch (err) {
+    if (err instanceof AlpacaFehler && err.status === 404) return null;
+    throw err;
+  }
+  const qty = zahl(r['qty']);
+  return {
+    qty: Math.abs(qty),
+    seite: String(r['side'] ?? '') === 'short' || qty < 0 ? 'short' : 'long',
+    verfuegbar: Math.max(0, zahl(r['qty_available'])),
+  };
+}
+
 /** Antwort von `/v2/clock` — die Börsen-Uhr des Brokers (Alpaca-Sync Punkt 2). */
 export interface AlpacaUhrAblesung {
   isOpen: boolean;

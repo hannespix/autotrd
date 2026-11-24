@@ -492,7 +492,10 @@ async function fuehreAus(
   if (quotes.size === 0 && (verkaufen.length > 0 || kaufen.length > 0)) throw new KeineKurse();
 
   // 1) Verkäufe
+  /** Symbole mit Verkaufsversuch in DIESEM Lauf — die Schutz-Runde lässt sie aus. */
+  const verkaufVersucht = new Set<string>();
   const verkaufe = async (v: PlanVerkauf, px: number): Promise<string | null> => {
+    verkaufVersucht.add(v.symbol);
     const r = await executeTrade(
       { uid: k.id, symbol: v.symbol, side: 'sell', price: px, source: 'engine', riskExit: v.grund, assetClass: classify(v.symbol) },
       clamped,
@@ -555,8 +558,21 @@ async function fuehreAus(
    * nach Verkäufen und Käufen — und darf den Lauf nie anhalten. */
   const schutzRunde = async (): Promise<void> => {
     try {
+      // Hausarbeit darf den Handel der folgenden Konten nicht verdrängen.
+      if (Date.now() - now.getTime() > SCHUTZ_RUNDE_BUDGET_MS) return;
+      /* Offene Order-Vermerke (Red-Team 24.11., H1): Arbeitet zu einem
+       * Symbol noch eine Order — etwa ein Verkauf, der im Fenster nicht
+       * gefüllt hat —, führt das Buch die Position noch, der Broker bald
+       * nicht mehr. Lesefehler → keine Runde. */
+      const vermerke = await k.ref.collection('offeneOrders').limit(50).get();
+      const mitVermerk = new Set(vermerke.docs.map((d) => String(d.get('symbol') ?? '')));
+      const abgleich = k.get('risk.abgleich') as unknown;
       const faellig = [...alle.entries()]
         .filter(([sym, p]) => umkehrSchutzPruefbar(p, preis(sym), classify(sym)))
+        // in diesem Lauf verkauft oder zu verkaufen versucht: nie
+        .filter(([sym]) => !verkaufVersucht.has(sym) && !mitVermerk.has(sym))
+        // Buch und Broker führen das Symbol verschieden: nie
+        .filter(([sym]) => !symbolSperreAusVermerk(abgleich, sym, now))
         .slice(0, SCHUTZ_RUNDE_MAX);
       if (faellig.length === 0) return;
       const verbindung = await brokerVerbindung(k.id).catch(() => null);
@@ -565,8 +581,10 @@ async function fuehreAus(
       for (const [sym, p] of faellig) {
         const klasse = classify(sym);
         const befund = await heileSchutz(verbindung, k.id, sym, p, umkehrRisk(umkehrParameterFuer(klasse)), klasse, kennung);
-        if (befund === 'anlegen') logger.info(`Umkehr ${k.id} ${sym}: Schutz-Stop fehlte — neu angelegt`);
+        if (befund === 'angelegt') logger.info(`Umkehr ${k.id} ${sym}: Schutz-Stop fehlte — neu angelegt`);
+        else if (befund === 'kein_bestand') logger.warn(`Umkehr ${k.id} ${sym}: Schutz-Stop fehlt, aber der Broker führt die Stücke nicht frei — kein neuer`);
         else if (befund === 'gefuellt') logger.warn(`Umkehr ${k.id} ${sym}: Schutz-Stop hat gefüllt, Position steht noch im Buch — der nächste Exit bucht den Fill`);
+        else if (befund === 'nicht_angelegt') logger.info(`Umkehr ${k.id} ${sym}: Schutz-Stop fehlt, wurde aber nicht angelegt (kein Plan oder abgewiesen)`);
       }
     } catch (err) {
       logger.warn(`Umkehr ${k.id}: Schutz-Runde fehlgeschlagen`, err);
@@ -669,6 +687,13 @@ async function fuehreAus(
 
 /** Höchstens so viele Positionen je Konto prüft die Schutz-Runde (eine Nachfrage je Position). */
 export const SCHUTZ_RUNDE_MAX = 12;
+
+/**
+ * Ist der Lauf schon so lange unterwegs, entfällt die Schutz-Runde: Die
+ * Konten laufen nacheinander (540 s insgesamt), und der Handel der
+ * folgenden geht vor. Die Runde kommt beim nächsten Lauf wieder.
+ */
+export const SCHUTZ_RUNDE_BUDGET_MS = 300_000;
 
 /**
  * Abstand des Kurses zur Notbremse, unter dem die Schutz-Runde eine

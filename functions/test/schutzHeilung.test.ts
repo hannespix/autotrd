@@ -19,12 +19,13 @@ const holt = vi.fn();
 const setzt = vi.fn(async () => undefined);
 vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({
-    doc: () => ({ get: holt, set: setzt }),
+    doc: () => ({ get: holt, set: setzt, update: setzt }),
     collection: () => ({
       doc: () => ({
         get: holt,
         set: setzt,
-        collection: () => ({ doc: () => ({ get: holt, set: setzt }) }),
+        update: setzt,
+        collection: () => ({ doc: () => ({ get: holt, set: setzt, update: setzt }) }),
       }),
     }),
   }),
@@ -33,8 +34,8 @@ vi.mock('firebase-admin/firestore', () => ({
   Timestamp: { now: () => 0 },
 }));
 
-const { SCHUTZ_HEIL_RUHE_MS, heileSchutz, schutzHeilBefund } = await import('../src/core/schutzStop.js');
-const { SCHUTZ_RUNDE_ABSTAND, SCHUTZ_RUNDE_MAX, umkehrSchutzPruefbar } = await import('../src/scheduled/umkehrLauf.js');
+const { SCHUTZ_HEIL_RUHE_MS, bestandDecktStop, heileSchutz, schutzHeilBefund } = await import('../src/core/schutzStop.js');
+const { SCHUTZ_RUNDE_ABSTAND, SCHUTZ_RUNDE_BUDGET_MS, SCHUTZ_RUNDE_MAX, umkehrSchutzPruefbar } = await import('../src/scheduled/umkehrLauf.js');
 
 const VERBINDUNG = { mode: 'paper' as const, schluessel: { keyId: 'PKTEST0000000001', secret: 'GEHEIM0000000001' } };
 const RISK = { stopLossPct: 15, takeProfitPct: 0, trailingStopPct: 0, atrStopMult: 0, atrTakeMult: 0, maxHoldDays: 0 };
@@ -111,14 +112,16 @@ describe('heileSchutz', () => {
     holt.mockResolvedValue({ exists: true, data: () => ({ ...POS, schutz: { orderId: 'alt1', stopPreis: 42.5, qty: 7 } }) });
     const f = folge(
       { body: { id: 'alt1', status: 'canceled', filled_qty: '0', updated_at: '2026-11-24T14:35:22Z' } }, // Heilung fragt
+      { body: { symbol: 'XLB', qty: '7', qty_available: '7', side: 'long' } }, // Bestand beim Broker
       { ok: false, status: 422, body: { message: 'order is not cancelable' } }, // schutzAnlegen: DELETE
       { body: { id: 'alt1', status: 'canceled', filled_qty: '0' } }, // … sieht nach
       { body: { id: 'neu1', status: 'accepted', client_order_id: 'x' } },
     );
     const pos = { ...POS, schutz: { orderId: 'alt1', stopPreis: 42.5, qty: 7 } } as unknown as Position;
     const b = await heileSchutz(VERBINDUNG, 'u1', 'XLB', pos, RISK, 'etf_sectors', 'umk-2026-11-24-heil-1435', f as never);
-    expect(b).toBe('anlegen');
-    expect(methoden(f)).toContain('POST');
+    expect(b).toBe('angelegt');
+    expect(methoden(f)).toEqual(['GET', 'GET', 'DELETE', 'GET', 'POST']);
+    expect(String(f.mock.calls[1]?.[0])).toContain('/v2/positions/XLB');
     const post = f.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === 'POST');
     const koerper = JSON.parse(String((post?.[1] as { body?: string }).body)) as { side: string; type: string; stop_price: string | number; qty: string | number };
     expect(koerper.side).toBe('sell');
@@ -130,6 +133,65 @@ describe('heileSchutz', () => {
       .map((c) => c[0]?.schutz?.orderId)
       .filter(Boolean);
     expect(links).toEqual(['neu1']);
+  });
+
+  const toterLink = { body: { id: 'alt1', status: 'canceled', filled_qty: '0', updated_at: '2026-11-24T14:35:22Z' } };
+  const mitLink = { ...POS, schutz: { orderId: 'alt1', stopPreis: 42.5, qty: 7 } } as unknown as Position;
+
+  it('H1: der Broker führt die Stücke NICHT mehr (Verkauf hat gefüllt, Buch hinkt nach) → keine Order', async () => {
+    const f = folge(toterLink, { ok: false, status: 404, body: { message: 'position does not exist' } });
+    expect(await heileSchutz(VERBINDUNG, 'u1', 'XLB', mitLink, RISK, 'etf_sectors', 'l', f as never)).toBe('kein_bestand');
+    expect(methoden(f)).toEqual(['GET', 'GET']);
+    expect(holt).not.toHaveBeenCalled();
+  });
+
+  it('H1: die Stücke sind RESERVIERT (ein Verkauf arbeitet noch, oder ein Stop, den das Buch nicht kennt) → keine Order', async () => {
+    const f = folge(toterLink, { body: { symbol: 'XLB', qty: '7', qty_available: '0', side: 'long' } });
+    expect(await heileSchutz(VERBINDUNG, 'u1', 'XLB', mitLink, RISK, 'etf_sectors', 'l', f as never)).toBe('kein_bestand');
+    expect(methoden(f)).toEqual(['GET', 'GET']);
+  });
+
+  it('H2: Konto beim Broker zurückgesetzt (Order UND Position unbekannt) → keine Order, auch ohne Ruhezeit-Schutz', async () => {
+    const weg = { ok: false, status: 404, body: { message: 'not found' } };
+    const f = folge(weg, weg);
+    expect(await heileSchutz(VERBINDUNG, 'u1', 'XLB', mitLink, RISK, 'etf_sectors', 'l', f as never)).toBe('kein_bestand');
+    expect(methoden(f)).toEqual(['GET', 'GET']);
+  });
+
+  it('kein Link an der Position: derselbe Weg — erst der Bestand, dann die Order', async () => {
+    holt.mockResolvedValue({ exists: true, data: () => ({ ...POS }) });
+    const f = folge(
+      { body: { symbol: 'XLB', qty: '7', qty_available: '7', side: 'long' } },
+      { body: { id: 'neu2', status: 'accepted', client_order_id: 'x' } },
+    );
+    expect(await heileSchutz(VERBINDUNG, 'u1', 'XLB', POS, RISK, 'etf_sectors', 'l', f as never)).toBe('angelegt');
+    expect(methoden(f)).toEqual(['GET', 'POST']);
+    const ohne = folge({ body: { symbol: 'XLB', qty: '3', qty_available: '3', side: 'long' } });
+    expect(await heileSchutz(VERBINDUNG, 'u1', 'XLB', POS, RISK, 'etf_sectors', 'l', ohne as never)).toBe('kein_bestand');
+    expect(ohne).toHaveBeenCalledTimes(1);
+  });
+
+  it('die Bestands-Nachfrage scheitert → unklar, keine Order', async () => {
+    const f = folge(toterLink, { ok: false, status: 500, body: 'kaputt' });
+    await expect(heileSchutz(VERBINDUNG, 'u1', 'XLB', mitLink, RISK, 'etf_sectors', 'l', f as never)).resolves.toBe('unklar');
+    expect(methoden(f)).toEqual(['GET', 'GET']);
+  });
+
+  it('M5: die neue Order wird abgewiesen → „nicht_angelegt", nie „angelegt"', async () => {
+    holt.mockResolvedValue({ exists: true, data: () => ({ ...POS }) });
+    const f = folge(
+      { body: { symbol: 'XLB', qty: '7', qty_available: '7', side: 'long' } },
+      { ok: false, status: 403, body: { message: 'insufficient qty available for order' } },
+    );
+    expect(await heileSchutz(VERBINDUNG, 'u1', 'XLB', POS, RISK, 'etf_sectors', 'l', f as never)).toBe('nicht_angelegt');
+    expect(setzt).not.toHaveBeenCalled();
+  });
+
+  it('der frische Link weicht vom geprüften ab (jemand hat inzwischen einen Stop gelegt) → nichts storniert, nichts angelegt', async () => {
+    holt.mockResolvedValue({ exists: true, data: () => ({ ...POS, schutz: { orderId: 'frisch7', stopPreis: 42.5, qty: 7 } }) });
+    const f = folge(toterLink, { body: { symbol: 'XLB', qty: '7', qty_available: '7', side: 'long' } });
+    expect(await heileSchutz(VERBINDUNG, 'u1', 'XLB', mitLink, RISK, 'etf_sectors', 'l', f as never)).toBe('nicht_angelegt');
+    expect(methoden(f)).toEqual(['GET', 'GET']);
   });
 
   it('der Stop LEBT → eine Nachfrage, sonst nichts (kein Storno, keine neue Order)', async () => {
@@ -171,6 +233,27 @@ describe('heileSchutz', () => {
   });
 });
 
+describe('bestandDecktStop (pur): ein Sell-Stop ohne Bestand ist ein Leerverkauf', () => {
+  it('long, volle Menge da und frei → ja', () => {
+    expect(bestandDecktStop({ qty: 7, seite: 'long', verfuegbar: 7 }, 7)).toBe(true);
+    expect(bestandDecktStop({ qty: 9, seite: 'long', verfuegbar: 9 }, 7)).toBe(true); // Broker führt mehr (Fremdbestand): gedeckt
+  });
+
+  it('nichts da, zu wenig da, reserviert oder short → nein', () => {
+    expect(bestandDecktStop(null, 7)).toBe(false);
+    expect(bestandDecktStop({ qty: 3, seite: 'long', verfuegbar: 3 }, 7)).toBe(false);
+    expect(bestandDecktStop({ qty: 7, seite: 'long', verfuegbar: 0 }, 7)).toBe(false);
+    expect(bestandDecktStop({ qty: 7, seite: 'long', verfuegbar: 6 }, 7)).toBe(false);
+    expect(bestandDecktStop({ qty: 7, seite: 'short', verfuegbar: 7 }, 7)).toBe(false);
+    expect(bestandDecktStop({ qty: 7, seite: 'long', verfuegbar: 7 }, 0)).toBe(false);
+  });
+
+  it('Krypto: der Gebührenabzug (≤ 0,3 %) macht aus „gedeckt" kein „ungedeckt"', () => {
+    expect(bestandDecktStop({ qty: 0.9975, seite: 'long', verfuegbar: 0.9975 }, 1)).toBe(true);
+    expect(bestandDecktStop({ qty: 0.99, seite: 'long', verfuegbar: 0.99 }, 1)).toBe(false);
+  });
+});
+
 describe('umkehrSchutzPruefbar: welche Positionen die Schutz-Runde anfasst', () => {
   const p = { broker: true, side: 'long', avgEntry: 50, quelle: 'umkehr', qty: 7 } as never;
 
@@ -195,8 +278,9 @@ describe('umkehrSchutzPruefbar: welche Positionen die Schutz-Runde anfasst', () 
     expect(umkehrSchutzPruefbar({ ...(p as object), qty: 0 } as never, 51, 'etf_sectors')).toBe(false);
   });
 
-  it('die Runde ist je Konto gedeckelt (eine Nachfrage je Position)', () => {
+  it('die Runde ist je Konto gedeckelt und entfällt, wenn der Lauf schon lange unterwegs ist', () => {
     expect(SCHUTZ_RUNDE_MAX).toBeLessThanOrEqual(15);
+    expect(SCHUTZ_RUNDE_BUDGET_MS).toBeLessThan(540_000);
   });
 });
 
@@ -210,6 +294,14 @@ describe('Quelltext-Wächter', () => {
     expect(f).toContain('} catch (err) {');
     expect(f).toContain('.filter(([sym, p]) => umkehrSchutzPruefbar(p, preis(sym), classify(sym)))');
     expect(f).toContain('.slice(0, SCHUTZ_RUNDE_MAX);');
+    // H1: nie ein Symbol mit Verkaufsversuch in diesem Lauf oder mit offenem Order-Vermerk
+    expect(f).toContain('.filter(([sym]) => !verkaufVersucht.has(sym) && !mitVermerk.has(sym))');
+    expect(lauf).toContain('verkaufVersucht.add(v.symbol);\n    const r = await executeTrade(');
+    // H2: nie ein Symbol, das Buch und Broker verschieden führen
+    expect(f).toContain('.filter(([sym]) => !symbolSperreAusVermerk(abgleich, sym, now))');
+    // Lesefehler der Vermerke → keine Runde (kein .catch auf der Abfrage)
+    expect(f).toContain("const vermerke = await k.ref.collection('offeneOrders').limit(50).get();");
+    expect(f).toContain('if (Date.now() - now.getTime() > SCHUTZ_RUNDE_BUDGET_MS) return;');
     // sie kommt NACH Verkäufen und Nachholrunde: verkaufte Positionen sind dann aus `alle` gelöscht
     expect(lauf.indexOf('const schutzRunde = async')).toBeGreaterThan(lauf.indexOf('if (nachholen.length > 0) {'));
   });
@@ -217,6 +309,9 @@ describe('Quelltext-Wächter', () => {
   it('heileSchutz bucht nichts und löst keinen Link — es ruft nur schutzAnlegen', () => {
     const f = schutz.slice(schutz.indexOf('export async function heileSchutz'), schutz.indexOf('export type SchutzAufhebung'));
     expect(f).toContain("if (befund !== 'anlegen') return befund;");
+    // der Bestand wird VOR dem Anlegen geprüft
+    expect(f.indexOf("if (!bestandDecktStop(bestand, pos.qty)) return 'kein_bestand';")).toBeGreaterThan(0);
+    expect(f.indexOf("if (!bestandDecktStop(bestand, pos.qty)) return 'kein_bestand';")).toBeLessThan(f.indexOf('await schutzAnlegen('));
     expect(f).not.toContain('posRef(');
     expect(f).not.toContain('executePaperTrade');
     expect(f).not.toContain('alpacaOrderStornieren');
@@ -224,6 +319,8 @@ describe('Quelltext-Wächter', () => {
 
   it('schutzAnlegen liest die Position nach dem Warten neu (M-5)', () => {
     const f = schutz.slice(schutz.indexOf('export async function schutzAnlegen'), schutz.indexOf('export const SCHUTZ_HEIL_RUHE_MS'));
-    expect(f).toContain('if (!(await posRef(uid, symbol).get()).exists) return;');
+    expect(f).toContain('if (!(await posRef(uid, symbol).get()).exists) return false;');
+    // und schreibt nirgends mehr mit set(merge): kein Geister-Dokument
+    expect(f).not.toContain('{ merge: true }');
   });
 });

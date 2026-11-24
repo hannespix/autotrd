@@ -32,7 +32,8 @@ const { holt, setzt } = vi.hoisted(() => ({
   setzt: vi.fn(async () => undefined),
 }));
 vi.mock('firebase-admin/firestore', () => ({
-  getFirestore: () => ({ doc: () => ({ get: holt, set: setzt }) }),
+  // `update` schreibt seit 24.11. den Stop-Link (nur wenn die Position existiert) — dieselbe Attrappe wie `set`.
+  getFirestore: () => ({ doc: () => ({ get: holt, set: setzt, update: setzt }) }),
 }));
 
 const SCHLUESSEL = { keyId: 'PKTEST0000000001', secret: 'GEHEIM0000000001' };
@@ -498,9 +499,9 @@ describe('pflegeSchutz legt ein fehlendes Netz an', () => {
     // `quelle` seit 23.08.: Die Marke wird beim ANLEGEN festgehalten. Hier
     // ist highWater gleich avgEntry, das Trailing also nicht scharf — der
     // Einstands-Stop setzt das Niveau.
+    // seit 24.11. per `update` (ohne merge-Option): Der Link entsteht nur an einer Position, die es noch gibt
     expect(setzt).toHaveBeenCalledWith(
       { schutz: { orderId: 'neu1', stopPreis: expect.any(Number), qty: 6, quelle: 'einstand' } },
-      { merge: true },
     );
   });
 
@@ -586,6 +587,26 @@ describe('schutzAnlegen (Sockel-Nachzug, Task 29 — Red-Team 16.10.)', () => {
     );
     await schutzAnlegen(VERBINDUNG, 'u1', 'AAPL', RISK, 'stocks_us', 'puls1', f as never);
     expect(f).toHaveBeenCalledTimes(2); // DELETE + Nachfrage, kein POST
+    expect(setzt).not.toHaveBeenCalled();
+  });
+
+  it('24.11.: Position zwischen Order und Link verschwunden ⇒ die neue Schutz-Order wird zurückgenommen (kein Stop ohne Buch)', async () => {
+    holt.mockResolvedValue(posSnap({ ...POS, schutz: null }));
+    setzt.mockRejectedValueOnce(Object.assign(new Error('NOT_FOUND'), { code: 5 }));
+    const f = folge({ body: { id: 'neu9', status: 'accepted', client_order_id: 'x' } }, { ok: true, status: 200 });
+    const neu = await schutzAnlegen(VERBINDUNG, 'u1', 'AAPL', RISK, 'stocks_us', 'puls1', f as never);
+    expect(neu).toBe(false);
+    const methoden = f.mock.calls.map((c) => (c[1] as RequestInit | undefined)?.method ?? 'GET');
+    expect(methoden).toEqual(['POST', 'DELETE']);
+    expect(String(f.mock.calls[1]?.[0])).toContain('/v2/orders/neu9');
+  });
+
+  it('24.11.: `erwarteterLink` — trägt die frische Position inzwischen einen ANDEREN Stop, wird nichts storniert und nichts angelegt', async () => {
+    holt.mockResolvedValue(posSnap({ ...POS, schutz: { orderId: 'frisch7', stopPreis: 98, qty: 10 } }));
+    const f = folge({ body: {} });
+    expect(await schutzAnlegen(VERBINDUNG, 'u1', 'AAPL', RISK, 'stocks_us', 'puls1', f as never, { erwarteterLink: 'alt1' })).toBe(false);
+    expect(await schutzAnlegen(VERBINDUNG, 'u1', 'AAPL', RISK, 'stocks_us', 'puls1', f as never, { erwarteterLink: null })).toBe(false);
+    expect(f).not.toHaveBeenCalled();
     expect(setzt).not.toHaveBeenCalled();
   });
 
