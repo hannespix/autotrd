@@ -372,7 +372,8 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
     expect(lauf).toContain("quelle: 'umkehr',");
     expect(lauf).toContain("signature: 'umkehr'");
     expect(lauf).toContain('plan.verkaufen, plan.kaufen, `umk-${plan.tag}`, now, plan.reserve ?? []);');
-    expect(lauf).toContain('if (einstiegSperre !== null || kaufen.length === 0) return { kaeufe, verkaeufe, ohne, abrutschen, verkaufFehl };');
+    // seit 24.11. mit Schutz-Runde davor — das Einstiegs-Tor hält weiterhin nur KÄUFE auf
+    expect(lauf).toContain('if (einstiegSperre !== null || kaufen.length === 0) {\n    await schutzRunde();\n    return { kaeufe, verkaeufe, ohne, abrutschen, verkaufFehl };\n  }');
     expect(lauf.indexOf('// 1) Verkäufe')).toBeLessThan(lauf.indexOf('// 2) Käufe'));
     // Jeder Plan genau einmal (M1), Verkauf nie zum erfundenen Kurs (M3).
     expect(lauf).toContain('      if (plan.ausgefuehrtAm) continue;');

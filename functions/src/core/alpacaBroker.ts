@@ -544,6 +544,43 @@ export async function alpacaPositionen(
   });
 }
 
+/**
+ * EINE Position beim Broker — mit der frei verfügbaren Menge.
+ *
+ * `verfuegbar` (`qty_available`) ist, was keine offene Order reserviert:
+ * Liegt sie unter `qty`, hält eine Verkaufs-Order die Stücke. `null`: Der
+ * Broker führt das Symbol nicht (404). Jeder andere Fehler wirft — „weiß
+ * nicht" darf nie wie „kein Bestand" oder „Bestand da" aussehen.
+ */
+export async function alpacaPosition(
+  mode: BrokerMode,
+  symbol: string,
+  schluessel: AlpacaSchluessel | null = null,
+  fetchImpl: FetchLike = fetch,
+): Promise<{ qty: number; seite: 'long' | 'short'; verfuegbar: number } | null> {
+  let r: Record<string, unknown>;
+  try {
+    // Krypto ohne Schrägstrich: Im Pfad steht `BTCUSD`, nicht `BTC/USD`.
+    const pfad = encodeURIComponent(zuAlpacaSymbol(symbol).replace('/', ''));
+    r = (await alpacaFetch(mode, `/v2/positions/${pfad}`, schluessel, {}, fetchImpl)) as Record<string, unknown>;
+  } catch (err) {
+    if (err instanceof AlpacaFehler && err.status === 404) return null;
+    throw err;
+  }
+  const qty = zahl(r['qty']);
+  /* Fehlt das Feld, ist die Antwort nicht die erwartete (Red-Team 24.11.,
+   * N-1): Als 0 gelesen hieße das „alles reserviert" — die Heilung täte
+   * dann nie etwas und das Log beschuldigte den Broker. Lieber laut. */
+  if (r['qty_available'] === undefined || r['qty_available'] === null) {
+    throw new AlpacaFehler(`Positions-Antwort für ${symbol} ohne qty_available`);
+  }
+  return {
+    qty: Math.abs(qty),
+    seite: String(r['side'] ?? '') === 'short' || qty < 0 ? 'short' : 'long',
+    verfuegbar: Math.max(0, zahl(r['qty_available'])),
+  };
+}
+
 /** Antwort von `/v2/clock` — die Börsen-Uhr des Brokers (Alpaca-Sync Punkt 2). */
 export interface AlpacaUhrAblesung {
   isOpen: boolean;
@@ -930,6 +967,11 @@ export interface AlpacaOrderStand {
   side?: 'buy' | 'sell';
   /** Order-Typ laut Broker (market/limit/stop/stop_limit …). */
   typ?: string;
+  /**
+   * Letzte Zustandsänderung laut Broker (`updated_at`, ISO) — sagt, wie
+   * lange eine Order schon tot ist. Leer, wenn Alpaca nichts liefert.
+   */
+  geaendertAm?: string;
 }
 
 /**
@@ -965,6 +1007,7 @@ export async function alpacaOrderAbfragen(
     clientOrderId: String(d['client_order_id'] ?? ''),
     side: String(d['side'] ?? '') === 'sell' ? 'sell' : 'buy',
     typ: String(d['type'] ?? ''),
+    geaendertAm: String(d['updated_at'] ?? d['canceled_at'] ?? d['expired_at'] ?? ''),
   };
 }
 

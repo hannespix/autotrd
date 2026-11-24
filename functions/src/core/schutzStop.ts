@@ -53,6 +53,7 @@ import {
   alpacaOrderAbfragen,
   alpacaOrderErsetzen,
   alpacaOrderStornieren,
+  alpacaPosition,
   alpacaStopOrder,
   clientOrderId,
 } from './alpacaBroker.js';
@@ -402,12 +403,34 @@ export async function schutzAnlegen(
   klasse: string | null,
   laufId: string,
   fetchImpl: FetchLike = fetch,
-): Promise<void> {
+  opts: {
+    /**
+     * Nur anlegen, wenn die frisch gelesene Position noch GENAU diesen
+     * Stop-Link trägt (`null` = keinen). Für Aufrufer, die ihre Entscheidung
+     * an einem älteren Stand getroffen haben (Schutz-Runde): Hat inzwischen
+     * jemand einen neuen Stop gelegt, wird der nicht wieder storniert.
+     */
+    erwarteterLink?: string | null;
+    /**
+     * Nach dem Anlegen den Bestand beim Broker NACHLESEN und die Order
+     * zurücknehmen, wenn er fehlt (Red-Team 24.11., Runde 2, M-1). Schließt
+     * das Fenster zwischen der Bestandsprüfung des Aufrufers und dem
+     * Versand: Füllt genau dort ein Verkauf, stünde der Stop ohne Bestand
+     * im Markt. Für die Heilung; nach einem eröffnenden Fill ist der
+     * Bestand durch den Fill selbst belegt.
+     */
+    bestandNachlesen?: boolean;
+  } = {},
+): Promise<boolean> {
   try {
     const snap = await posRef(uid, symbol).get();
-    if (!snap.exists) return; // Position schon wieder zu — nichts zu schützen.
+    if (!snap.exists) return false; // Position schon wieder zu — nichts zu schützen.
     const pos = snap.data() as Position;
-    if (pos.broker !== true) return;
+    if (pos.broker !== true) return false;
+    if (opts.erwarteterLink !== undefined && (pos.schutz?.orderId ?? null) !== opts.erwarteterLink) {
+      logger.info(`schutzAnlegen ${uid} ${symbol}: Stop-Link hat sich geändert — nichts zu tun`);
+      return false;
+    }
 
     if (pos.schutz?.orderId) {
       const storno = await alpacaOrderStornieren(
@@ -431,7 +454,7 @@ export async function schutzAnlegen(
         const totOhneFill = alt === null || (alt !== 'unbekannt' && ORDER_ENDZUSTAENDE.has(alt.status) && !(alt.filledQty > 0));
         if (!totOhneFill) {
           logger.warn(`schutzAnlegen ${uid} ${symbol}: alte Schutz-Order nicht stornierbar (gefüllt oder unklar) — keine neue`);
-          return;
+          return false;
         }
       }
       /* Angenommen ist nicht vollzogen (24.11., s. `schutzAufheben`): Solange
@@ -444,8 +467,11 @@ export async function schutzAnlegen(
         const frei = ende.art === 'weg' || (ende.art === 'ende' && !(ende.stand.filledQty > 0));
         if (!frei) {
           logger.warn(`schutzAnlegen ${uid} ${symbol}: alte Schutz-Order ${ende.art === 'offen' ? 'noch nicht storniert' : 'hat gefüllt'} — keine neue in diesem Lauf`);
-          return;
+          return false;
         }
+        // Das Warten kann Sekunden gedauert haben: Ist die Position inzwischen
+        // geschlossen, gibt es nichts mehr zu schützen (Red-Team 24.11., M-5).
+        if (!(await posRef(uid, symbol).get()).exists) return false;
       }
     }
 
@@ -455,9 +481,11 @@ export async function schutzAnlegen(
     const wirksam = pos.core === true ? sockelRisk() : umkehrBesitz(pos) ? umkehrRisk(umkehrParameterFuer(klasse)) : risk;
     const plan = planeSchutzStop(lageAusPosition(pos), wirksam, klasse, await schutzAsset(verbindung, symbol, klasse, fetchImpl));
     if (!plan.anlegen) {
-      if (pos.schutz) await posRef(uid, symbol).set({ schutz: null }, { merge: true });
+      // `update`, nicht `set(merge)`: Ist die Position inzwischen gelöscht,
+      // entstünde sonst ein Geister-Dokument nur mit `schutz`.
+      if (pos.schutz) await posRef(uid, symbol).update({ schutz: null }).catch(() => undefined);
       logger.debug(`schutzAnlegen ${uid} ${symbol}: kein Broker-Stop (${plan.grund})`);
-      return;
+      return false;
     }
     const order = await alpacaStopOrder(
       verbindung.mode,
@@ -480,10 +508,16 @@ export async function schutzAnlegen(
     );
     if (!order.id) {
       logger.warn(`schutzAnlegen ${uid} ${symbol}: keine Order-Kennung`);
-      return;
+      return false;
     }
-    await posRef(uid, symbol).set(
-      {
+    /* Der Link wird mit `update` geschrieben (Red-Team 24.11.): Das gelingt
+     * nur, wenn die Position noch existiert. Ist sie inzwischen geschlossen
+     * (ein Exit lief parallel) oder scheitert das Schreiben, stünde der Stop
+     * ohne Buch im Markt — als Waise, die spätere Exits blockiert oder ohne
+     * Bestand auslöst. Dann wird er sofort zurückgenommen; ein fehlender
+     * Stop heilt beim nächsten Lauf, ein verwaister nie. */
+    const verknuepft = await posRef(uid, symbol)
+      .update({
         schutz: {
           orderId: order.id,
           stopPreis: plan.stopPreis,
@@ -491,12 +525,149 @@ export async function schutzAnlegen(
           ...(plan.limitPreis !== undefined ? { limitPreis: plan.limitPreis } : {}),
           ...(plan.marke ? { quelle: plan.marke } : {}),
         },
-      },
-      { merge: true },
-    );
+      })
+      .then(() => true)
+      .catch(() => false);
+    if (!verknuepft) {
+      await alpacaOrderStornieren(verbindung.mode, order.id, verbindung.schluessel, fetchImpl).catch(() => undefined);
+      logger.warn(`schutzAnlegen ${uid} ${symbol}: Position weg oder Link nicht schreibbar — neue Schutz-Order ${order.id} zurückgenommen`);
+      return false;
+    }
+    if (opts.bestandNachlesen === true) {
+      // Wirft die Nachfrage, gilt der Bestand als unbelegt — zurücknehmen.
+      const danach = await alpacaPosition(verbindung.mode, symbol, verbindung.schluessel, fetchImpl).catch(() => 'unklar' as const);
+      const gedeckt = danach !== 'unklar' && danach !== null && danach.seite === (pos.side === 'short' ? 'short' : 'long') && danach.qty >= plan.qty * 0.995;
+      if (!gedeckt) {
+        await alpacaOrderStornieren(verbindung.mode, order.id, verbindung.schluessel, fetchImpl).catch(() => undefined);
+        await posRef(uid, symbol).update({ schutz: null }).catch(() => undefined);
+        logger.warn(`schutzAnlegen ${uid} ${symbol}: Bestand beim Broker nach dem Anlegen nicht belegt — Schutz-Order ${order.id} zurückgenommen`);
+        return false;
+      }
+    }
     logger.info(`Schutz-Stop ${uid} ${symbol}: ${plan.qty} @ ${plan.stopPreis}`);
+    return true;
   } catch (err) {
     logger.warn(`schutzAnlegen ${uid} ${symbol} fehlgeschlagen`, err);
+    return false;
+  }
+}
+
+/* ── Fehlenden Schutz-Stop wiederherstellen (Task 45, 24.11.) ───────────────
+ *
+ * Ein Broker-Stop entstand bisher nur nach einem eröffnenden Fill. War er
+ * einmal weg — der Exit hatte ihn storniert und scheiterte dann selbst, das
+ * erste Anlegen schlug fehl —, kam er für Umkehr-Positionen nie zurück: Der
+ * Scan führt sie nicht (`pflegeSchutz` sieht sie nie), der Puls legt Stops
+ * nur für den Sockel an. Am 24.11. lagen so elf Positionen ohne Netz beim
+ * Broker.
+ *
+ * `pflegeSchutz` taugt hier nicht als Abkürzung: Findet es einen gefüllten
+ * Stop, löst es die Verknüpfung und erwartet, dass der Aufrufer den Fill
+ * bucht. Diese Heilung bucht nichts — einen gefüllten Stop fasst sie nicht
+ * an; den bucht der Exit-Weg über `schutzAufheben`.
+ */
+
+/** So lange muss eine Stop-Order tot sein, bevor sie ersetzt wird. */
+export const SCHUTZ_HEIL_RUHE_MS = 5 * 60_000;
+
+/** Zustände, in denen eine Stop-Order endgültig nichts mehr hält. */
+const SCHUTZ_TOT = new Set(['canceled', 'expired', 'rejected']);
+
+export type SchutzHeilBefund =
+  /** Kein Stop da (kein Link, Order unbekannt, oder lange genug tot) → neu anlegen. */
+  | 'anlegen'
+  /** Die Order lebt (oder ist in einem Zustand, den wir nicht als tot kennen) → nichts tun. */
+  | 'steht'
+  /** Der Stop hat (teil)gefüllt → nicht anfassen; den Fill bucht der Exit-Weg. */
+  | 'gefuellt'
+  /** Eben erst gestorben → vielleicht läuft gerade ein Exit, der sie storniert hat. */
+  | 'zu_frisch';
+
+/**
+ * Was ist mit dem Stop einer Position zu tun (pur)?
+ *
+ * Die Ruhezeit ist die Sicherung gegen das gefährlichste Rennen: Ein Exit
+ * storniert den Stop und verkauft; sähe die Heilung in dieser Sekunde nur
+ * „Stop tot", legte sie einen neuen an — der hielte die Stücke wieder fest
+ * (Exit abgewiesen) oder stünde, wenn der Verkauf schon durch ist, als
+ * Verkaufs-Stop ohne Bestand im Markt. Fehlt die Zeitangabe, gilt die
+ * Order als frisch.
+ */
+export function schutzHeilBefund(stand: AlpacaOrderStand | null | 'kein_link', jetztMs: number): SchutzHeilBefund {
+  if (stand === 'kein_link' || stand === null) return 'anlegen';
+  if (stand.filledQty > 0) return 'gefuellt';
+  if (!SCHUTZ_TOT.has(stand.status)) return 'steht';
+  const seit = Date.parse(stand.geaendertAm ?? '');
+  if (!Number.isFinite(seit)) return 'zu_frisch';
+  return jetztMs - seit >= SCHUTZ_HEIL_RUHE_MS ? 'anlegen' : 'zu_frisch';
+}
+
+/** Ergebnis einer Heilung — für Log und Zählung ehrlich getrennt. */
+export type SchutzHeilung =
+  | Exclude<SchutzHeilBefund, 'anlegen'>
+  /** Neue Stop-Order steht und ist an der Position verknüpft. */
+  | 'angelegt'
+  /** Es fehlte einer, aber angelegt wurde nichts (kein Plan, abgewiesen, Position weg). */
+  | 'nicht_angelegt'
+  /** Der Broker führt die Stücke nicht (mehr) frei — s. `bestandDecktStop`. */
+  | 'kein_bestand'
+  | 'unklar'
+  | 'kein_broker';
+
+/**
+ * Deckt der Broker-Bestand einen neuen Verkaufs-Stop (pur)?
+ *
+ * Ein Sell-Stop ohne Bestand ist bei Alpaca keine abgewiesene, sondern eine
+ * ERÖFFNENDE Order: ein Leerverkauf, sobald er auslöst (Red-Team 24.11.,
+ * H1/H2). Das Buch allein beweist den Bestand nicht — ein Verkauf kann beim
+ * Broker schon gefüllt haben, bevor der Nachlauf ihn bucht; ein Papierkonto
+ * kann zurückgesetzt sein. Deshalb: long, die volle Buch-Menge vorhanden
+ * UND frei verfügbar. Ist etwas reserviert, hält eine andere Order die
+ * Stücke (ein arbeitender Exit, ein Stop, den das Buch nicht kennt) — auch
+ * dann kein zweiter. Das halbe Prozent Luft deckt den Krypto-Gebührenabzug.
+ */
+export function bestandDecktStop(
+  bestand: { qty: number; seite: 'long' | 'short'; verfuegbar: number } | null,
+  buchMenge: number,
+): boolean {
+  if (bestand === null || bestand.seite !== 'long' || !(buchMenge > 0)) return false;
+  const noetig = buchMenge * 0.995;
+  return bestand.qty >= noetig && bestand.verfuegbar >= noetig;
+}
+
+/**
+ * Den Stop einer Broker-Position prüfen und, wenn er fehlt, neu anlegen.
+ * Wirft nie und bucht nichts. `unklar`: Eine Nachfrage ist gescheitert —
+ * dann lieber nichts tun als auf Verdacht eine Verkaufs-Order senden.
+ */
+export async function heileSchutz(
+  verbindung: BrokerVerbindung,
+  uid: string,
+  symbol: string,
+  pos: Position,
+  risk: RiskConfig,
+  klasse: string | null,
+  laufId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<SchutzHeilung> {
+  if (pos.broker !== true) return 'kein_broker';
+  try {
+    const id = pos.schutz?.orderId;
+    const stand = id
+      ? await alpacaOrderAbfragen(verbindung.mode, id, verbindung.schluessel, fetchImpl)
+      : ('kein_link' as const);
+    const befund = schutzHeilBefund(stand, Date.now());
+    if (befund !== 'anlegen') return befund;
+    // Erst der Bestand beim Broker, dann die Order (s. `bestandDecktStop`).
+    const bestand = await alpacaPosition(verbindung.mode, symbol, verbindung.schluessel, fetchImpl);
+    if (!bestandDecktStop(bestand, pos.qty)) return 'kein_bestand';
+    // `schutzAnlegen` liest die Position frisch, plant selbst (Umkehr und
+    // Sockel bekommen ihre Notbremse, Bruchstücke nichts) und wirft nie.
+    const neu = await schutzAnlegen(verbindung, uid, symbol, risk, klasse, laufId, fetchImpl, { erwarteterLink: id ?? null, bestandNachlesen: true });
+    return neu ? 'angelegt' : 'nicht_angelegt';
+  } catch (err) {
+    logger.warn(`heileSchutz ${uid} ${symbol}: Nachfrage beim Broker gescheitert (Order oder Bestand)`, err);
+    return 'unklar';
   }
 }
 
