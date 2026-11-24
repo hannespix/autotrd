@@ -2,7 +2,12 @@
  * Holt die jüngsten scanmarket-Logs aus Cloud Logging — die Diagnose-Brücke,
  * wenn ein Direkt-Invoke 500 liefert und niemand die GCP-Konsole offen hat.
  *
- *   node scripts-ci/fetch-scan-logs.mjs [minuten] [severity] [dienst]
+ *   node scripts-ci/fetch-scan-logs.mjs [minuten] [severity] [dienst] [ende] [suche]
+ *
+ * `ende` (24.11.): Das Fenster endet so viele Minuten VOR jetzt — sonst sind
+ * nur die 50 jüngsten Einträge lesbar und ein Lauf von vorgestern liegt
+ * hinter dem von heute. `suche`: nur Einträge, deren Text diese Zeichenfolge
+ * enthält (z. B. „HTTP 403"), damit die 50 Zeilen nicht im Rauschen enden.
  *
  * Default: 30 Minuten, severity>=WARNING, Dienst scanmarket. Der Dienst ist
  * seit 22.10. wählbar: Der Umkehr-Abendlauf scheiterte geplant (Scheduler
@@ -23,6 +28,18 @@ if (!/^[a-z][a-z0-9-]{0,62}$/.test(dienst)) {
   process.exit(2);
 }
 
+const ende = Number(process.argv[5] ?? 0);
+if (!Number.isFinite(minutes) || !Number.isFinite(ende) || ende < 0 || ende >= minutes) {
+  console.error(`Ungültiges Fenster: minuten=${process.argv[2]} ende=${process.argv[5]}`);
+  process.exit(2);
+}
+// Der Suchtext landet im Logging-Filter — nur harmlose Zeichen zulassen.
+const suche = process.argv[6] ?? '';
+if (suche && !/^[A-Za-z0-9ÄÖÜäöüß _.:()-]{1,60}$/.test(suche)) {
+  console.error('Ungültiger Suchtext (erlaubt: Buchstaben, Ziffern, Leerzeichen, _ . : ( ) -, höchstens 60 Zeichen)');
+  process.exit(2);
+}
+
 const sa = readServiceAccount();
 const project = projectFromFirebaserc();
 const token = await mintAccessToken(sa);
@@ -32,7 +49,9 @@ const filter = [
   'resource.type="cloud_run_revision"',
   `resource.labels.service_name="${dienst}"`,
   `timestamp>="${since}"`,
+  ...(ende > 0 ? [`timestamp<="${new Date(Date.now() - ende * 60_000).toISOString()}"`] : []),
   `severity>=${severity}`,
+  ...(suche ? [`(textPayload:"${suche}" OR jsonPayload.message:"${suche}")`] : []),
 ].join(' AND ');
 
 const data = await gfetch('https://logging.googleapis.com/v2/entries:list', {

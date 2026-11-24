@@ -378,7 +378,9 @@ describe('Verdrahtung — jede Stelle kennt die Umkehr', () => {
     expect(lauf).toContain('      if (plan.ausgefuehrtAm) continue;');
     // 10.11.: ohne Kurs weiterhin kein Verkauf — aber als offener Ausstieg gezählt.
     expect(lauf).toContain("    if (px === null) {\n      // Kein Kurs ⇒ kein Verkauf zum erfundenen Preis (M3)");
-    expect(lauf).toContain("      zaehleGrund(verkaufFehl, 'kein_kurs', 1);\n      continue;\n    }\n    const r = await executeTrade(\n      { uid: k.id, symbol: v.symbol, side: 'sell'");
+    expect(lauf).toContain("      zaehleGrund(verkaufFehl, 'kein_kurs', 1);\n      continue;\n    }\n    const grund = await verkaufe(v, px);");
+    // der Verkauf selbst (seit 24.11. als Helfer, weil die Nachholrunde ihn ein zweites Mal ruft)
+    expect(lauf).toContain("const r = await executeTrade(\n      { uid: k.id, symbol: v.symbol, side: 'sell', price: px, source: 'engine', riskExit: v.grund, assetClass: classify(v.symbol) },");
     // Krypto: eigener Tageslauf direkt nach dem UTC-Tagesschluss (H1), KÄUFE je Tag einmal.
     // 22.10.: Vortageskerze kam erst nach 04:10 UTC — Versuche bis mittags.
     // 10.11.: Gestempelte Konten holen nur noch AUSSTIEGE nach (leere Kaufliste) —

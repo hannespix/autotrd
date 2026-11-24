@@ -376,6 +376,28 @@ export interface OffeneOrderVermerk {
 export const ORDER_ENDZUSTAENDE = new Set(['filled', 'canceled', 'expired', 'rejected', 'done_for_day']);
 
 /**
+ * Hat Alpaca die Order abgewiesen, weil die Stücke für eine ANDERE offene
+ * Order reserviert sind (pur)? 403 mit „insufficient qty available for
+ * order" bzw. dem Feld `held_for_orders`. Erkannt am WORTLAUT, nicht am
+ * Code: 40310000 trägt bei Alpaca auch „insufficient buying power". Zu
+ * wenig Kaufkraft und andere 403er (Wash-Trade, Kontosperre) zählen nicht.
+ *
+ * `routeOrder` wiederholt die Order daraufhin NICHT selbst (Red-Team 24.11.,
+ * H1): Ob die Reservierung verschwindet, weil der Storno vollzogen ist oder
+ * weil der Stop GEFÜLLT hat, sieht es nicht — im zweiten Fall träfe die
+ * Wiederholung auf Bestand 0 und eröffnete einen Leerverkauf. Es meldet nur
+ * den ehrlichen Grund (`stuecke_reserviert`); wer wiederholt, geht wieder
+ * durch `schutzAufheben`, das den Verbleib des Stops prüft.
+ */
+export function stueckeReserviert(err: unknown): boolean {
+  return (
+    err instanceof AlpacaFehler &&
+    err.status === 403 &&
+    /insufficient qty available|held_for_orders/i.test(err.message)
+  );
+}
+
+/**
  * Rest einer teilgefüllten ERÖFFNENDEN Order stornieren und die endgültige
  * Menge ermitteln (Befund 05.10., CCG; Prüfbefund desselben Tages).
  *
@@ -568,7 +590,7 @@ export async function routeOrder(
   );
 
   try {
-    const order = await alpacaOrder(
+    const sende = (): ReturnType<typeof alpacaOrder> => alpacaOrder(
       verbindung.mode,
       {
         symbol: auftrag.symbol,
@@ -580,6 +602,7 @@ export async function routeOrder(
       verbindung.schluessel,
       fetchImpl,
     );
+    const order = await sende();
     if (!order.id) return { ausgefuehrt: false, grund: 'keine_order_id' };
 
     const fill = await warteAufFill(
@@ -901,6 +924,11 @@ export async function routeOrder(
     // durch `keineSchluesselImText` in alpacaFetch, bevor sie hier ankommt.
     const text = err instanceof Error ? err.message : String(err);
     logger.warn(`routeOrder ${auftrag.symbol} ${auftrag.side}: ${text.slice(0, 200)}`);
+    // Abgewiesen, nichts angelegt — und der Aufrufer darf es später erneut
+    // versuchen (s. `stueckeReserviert`).
+    if (auftrag.schliessend === true && stueckeReserviert(err)) {
+      return { ausgefuehrt: false, grund: 'stuecke_reserviert' };
+    }
     /* Eröffnende Order mit UNBEKANNTEM Verbleib (Drift-Paket 08.10.): Der
      * Fehler kann NACH der Annahme durch Alpaca gekommen sein (Netz, 5xx,
      * Timeout). Dann füllt eine Market-Order trotzdem — bisher ohne Buch,
