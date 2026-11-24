@@ -424,6 +424,17 @@ export async function schutzAnlegen(
         logger.warn(`schutzAnlegen ${uid} ${symbol}: alte Schutz-Order nicht stornierbar (vermutlich gefüllt) — keine neue`);
         return;
       }
+      /* Angenommen ist nicht vollzogen (24.11., s. `schutzAufheben`): Solange
+       * die alte Order die Stücke hält, wiese Alpaca die neue mit 403 ab —
+       * und die Position stünde ohne Stop da. Erst den Endzustand abwarten.
+       * Hat die alte dabei doch noch gefüllt, gilt dasselbe wie oben. */
+      if (storno === 'storniert') {
+        const ende = await warteAufStornoEnde(verbindung, pos.schutz.orderId, fetchImpl, {});
+        if (typeof ende === 'object' && ende.filledQty > 0) {
+          logger.warn(`schutzAnlegen ${uid} ${symbol}: alte Schutz-Order hat während des Stornos gefüllt — keine neue`);
+          return;
+        }
+      }
     }
 
     // Sockel (Task 29, Owner 16.10.): Die Broker-Order spiegelt NUR die
@@ -518,6 +529,7 @@ export async function schutzAufheben(
   symbol: string,
   schutz: { orderId: string; quelle?: SchutzMarke },
   fetchImpl: FetchLike = fetch,
+  warte: { versuche?: number; pauseMs?: number } = {},
 ): Promise<SchutzAufhebung> {
   const befund = await alpacaOrderStornieren(
     verbindung.mode,
@@ -525,15 +537,40 @@ export async function schutzAufheben(
     verbindung.schluessel,
     fetchImpl,
   );
-  if (befund === 'storniert' || befund === 'weg') return { stand: 'frei' };
+  if (befund === 'weg') return { stand: 'frei' };
 
-  // `nicht_stornierbar`: nachsehen, ob (und wie viel) ausgeführt wurde.
-  const stand = await alpacaOrderAbfragen(
-    verbindung.mode,
-    schutz.orderId,
-    verbindung.schluessel,
-    fetchImpl,
-  );
+  let stand: AlpacaOrderStand | null;
+  if (befund === 'storniert') {
+    /* „Storniert" heißt bei Alpaca: Storno ANGENOMMEN, nicht vollzogen
+     * (24.11.). Bis die Order im Endzustand steht, hält sie die Stücke
+     * weiter reserviert — der eigene Exit direkt danach wird mit 403
+     * „insufficient qty available" abgewiesen. Genau das traf am 24.11.
+     * elf Umkehr-Ausstiege in einem Morgenlauf, davor XLY (19.11.), XOM
+     * (12.11.) und einen Notbremsen-Exit im Puls (05.11.): Der Stop war
+     * weg, der Verkauf kam nicht, die Position blieb ungeschützt liegen.
+     * Deshalb: nachfragen, bis die Order tot ist. */
+    const ende = await warteAufStornoEnde(verbindung, schutz.orderId, fetchImpl, warte);
+    if (ende === 'weg') return { stand: 'frei' };
+    if (ende === 'unbestaetigt') {
+      // Nach dem Fenster immer noch nicht tot: den Exit trotzdem versuchen
+      // (er wiederholt sich bei Reservierung selbst, s. routeOrder) — ein
+      // Ausstieg wird von dieser Prüfung nie verhindert.
+      logger.warn(`schutzAufheben ${uid} ${symbol}: Storno nach dem Wartefenster nicht bestätigt`);
+      return { stand: 'frei' };
+    }
+    // Tot und ohne Fill → frei. Mit Fill → der Stop war schneller: weiter
+    // in denselben Zweig wie bei „nicht stornierbar".
+    if (!(ende.filledQty > 0 && ende.filledAvgPreis > 0)) return { stand: 'frei' };
+    stand = ende;
+  } else {
+    // `nicht_stornierbar`: nachsehen, ob (und wie viel) ausgeführt wurde.
+    stand = await alpacaOrderAbfragen(
+      verbindung.mode,
+      schutz.orderId,
+      verbindung.schluessel,
+      fetchImpl,
+    );
+  }
   if (stand && stand.filledQty > 0 && stand.filledAvgPreis > 0) {
     /* Teilgefüllt und noch aktiv (`partially_filled`, `pending_cancel`):
      * den Rest stornieren und EINMAL nachfragen — Alpaca storniert
@@ -573,6 +610,40 @@ export async function schutzAufheben(
   // fehl, bucht er NICHTS — der Abgleich bleibt das Sicherheitsnetz.
   logger.warn(`schutzAufheben ${uid} ${symbol}: nicht stornierbar, ohne Fill`);
   return { stand: 'frei' };
+}
+
+/** So oft wird nach einem angenommenen Storno nachgefragt … */
+export const STORNO_WARTE_VERSUCHE = 10;
+/** … mit dieser Pause dazwischen (zusammen höchstens ~3 s je Exit). */
+export const STORNO_WARTE_PAUSE_MS = 300;
+
+/**
+ * Nach einem ANGENOMMENEN Storno warten, bis die Order im Endzustand steht.
+ *
+ * `weg`: Alpaca kennt sie nicht mehr (404). `unbestaetigt`: Das Fenster ist
+ * um oder jede Nachfrage scheiterte — der Aufrufer versucht seinen Exit
+ * trotzdem. Sonst der Endstand, an dem der Aufrufer einen Fill erkennt, der
+ * dem Storno zuvorkam.
+ */
+async function warteAufStornoEnde(
+  verbindung: BrokerVerbindung,
+  orderId: string,
+  fetchImpl: FetchLike,
+  warte: { versuche?: number; pauseMs?: number },
+): Promise<AlpacaOrderStand | 'weg' | 'unbestaetigt'> {
+  const versuche = warte.versuche ?? STORNO_WARTE_VERSUCHE;
+  const pause = warte.pauseMs ?? STORNO_WARTE_PAUSE_MS;
+  for (let i = 0; i < versuche; i += 1) {
+    try {
+      const stand = await alpacaOrderAbfragen(verbindung.mode, orderId, verbindung.schluessel, fetchImpl);
+      if (stand === null) return 'weg';
+      if (ORDER_ENDZUSTAENDE.has(stand.status)) return stand;
+    } catch {
+      // Netzfehler ist kein Endzustand — weiter fragen.
+    }
+    if (i < versuche - 1 && pause > 0) await new Promise((r) => setTimeout(r, pause));
+  }
+  return 'unbestaetigt';
 }
 
 export type SchutzBefund =

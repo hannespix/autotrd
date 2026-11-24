@@ -157,10 +157,15 @@ describe('sollSchutzErsetzen (0,1-%-Schwelle gegen Dauerrauschen)', () => {
 });
 
 describe('schutzAufheben (die Regel, die nie brechen darf)', () => {
-  it('Storno frei (204 ohne Körper) → eigener Exit darf raus', async () => {
-    const f = folge({ ok: true, status: 200 }); // leerer Körper = 204-Fall
+  it('Storno angenommen (204 ohne Körper) UND vollzogen → eigener Exit darf raus', async () => {
+    // Seit 24.11.: „angenommen" reicht nicht — erst der Endzustand gibt die Stücke frei.
+    const f = folge(
+      { ok: true, status: 200 }, // leerer Körper = 204-Fall
+      { body: { id: 'o1', status: 'canceled', filled_qty: '0', filled_avg_price: null } },
+    );
     const b = await schutzAufheben(VERBINDUNG, 'u1', 'AAPL', { orderId: 'o1' }, f as never);
     expect(b.stand).toBe('frei');
+    expect(f).toHaveBeenCalledTimes(2);
   });
   it('Order schon weg (404) ist gleichwertig frei', async () => {
     const f = folge({ ok: false, status: 404, body: { message: 'not found' } });
@@ -530,6 +535,32 @@ describe('schutzAnlegen (Sockel-Nachzug, Task 29 — Red-Team 16.10.)', () => {
     const f = folge({ ok: false, status: 422, body: { message: 'order is not cancelable' } });
     await schutzAnlegen(VERBINDUNG, 'u1', 'AAPL', RISK, 'stocks_us', 'puls1', f as never);
     expect(f).toHaveBeenCalledTimes(1); // nur der Storno-Versuch, kein POST
+    expect(setzt).not.toHaveBeenCalled();
+  });
+
+  it('24.11.: alte Order storniert, aber erst nach dem ENDZUSTAND geht die neue raus', async () => {
+    holt.mockResolvedValue(posSnap({ ...POS, core: true, schutz: { orderId: 'alt1', stopPreis: 98, qty: 10 } }));
+    const f = folge(
+      { ok: true, status: 200 }, // DELETE angenommen
+      { body: { id: 'alt1', status: 'pending_cancel', filled_qty: '0' } },
+      { body: { id: 'alt1', status: 'canceled', filled_qty: '0' } },
+      { body: { id: 'neu4', status: 'accepted', client_order_id: 'x' } },
+    );
+    await schutzAnlegen(VERBINDUNG, 'u1', 'AAPL', RISK, 'stocks_us', 'puls1', f as never);
+    const methoden = f.mock.calls.map((c) => (c[1] as RequestInit | undefined)?.method ?? 'GET');
+    expect(methoden).toEqual(['DELETE', 'GET', 'GET', 'POST']);
+    const letzter = setzt.mock.calls.at(-1)?.[0] as { schutz?: { orderId: string } };
+    expect(letzter?.schutz).toMatchObject({ orderId: 'neu4' });
+  });
+
+  it('24.11.: alte Order füllt WÄHREND des Stornos ⇒ keine neue (die Stücke sind weg)', async () => {
+    holt.mockResolvedValue(posSnap({ ...POS, core: true, schutz: { orderId: 'alt1', stopPreis: 98, qty: 10 } }));
+    const f = folge(
+      { ok: true, status: 200 },
+      { body: { id: 'alt1', status: 'filled', filled_qty: '10', filled_avg_price: '97.9' } },
+    );
+    await schutzAnlegen(VERBINDUNG, 'u1', 'AAPL', RISK, 'stocks_us', 'puls1', f as never);
+    expect(f).toHaveBeenCalledTimes(2); // DELETE + Nachfrage, kein POST
     expect(setzt).not.toHaveBeenCalled();
   });
 

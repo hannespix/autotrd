@@ -375,6 +375,27 @@ export interface OffeneOrderVermerk {
 /** Endzustände einer Order — danach ändert sich `filled_qty` nicht mehr. */
 export const ORDER_ENDZUSTAENDE = new Set(['filled', 'canceled', 'expired', 'rejected', 'done_for_day']);
 
+/** So oft wird ein Exit wiederholt, dessen Stücke noch reserviert sind. */
+export const RESERVIERUNG_WIEDERHOLUNGEN = 2;
+/** Pause vor jeder Wiederholung. */
+export const RESERVIERUNG_PAUSE_MS = 1000;
+
+/**
+ * Hat Alpaca die Order abgewiesen, weil die Stücke für eine ANDERE offene
+ * Order reserviert sind (pur)? 403 mit „insufficient qty available for
+ * order" bzw. dem Feld `held_for_orders`. Erkannt am WORTLAUT, nicht am
+ * Code: 40310000 trägt bei Alpaca auch „insufficient buying power". Zu
+ * wenig Kaufkraft und andere 403er (Wash-Trade, Kontosperre) zählen nicht —
+ * die löst Warten nicht.
+ */
+export function stueckeReserviert(err: unknown): boolean {
+  return (
+    err instanceof AlpacaFehler &&
+    err.status === 403 &&
+    /insufficient qty available|held_for_orders/i.test(err.message)
+  );
+}
+
 /**
  * Rest einer teilgefüllten ERÖFFNENDEN Order stornieren und die endgültige
  * Menge ermitteln (Befund 05.10., CCG; Prüfbefund desselben Tages).
@@ -568,7 +589,7 @@ export async function routeOrder(
   );
 
   try {
-    const order = await alpacaOrder(
+    const sende = (): ReturnType<typeof alpacaOrder> => alpacaOrder(
       verbindung.mode,
       {
         symbol: auftrag.symbol,
@@ -580,6 +601,25 @@ export async function routeOrder(
       verbindung.schluessel,
       fetchImpl,
     );
+    /* Ein EXIT, den Alpaca abweist, weil die Stücke noch für eine andere
+     * Order reserviert sind (403 „insufficient qty available"), wird kurz danach
+     * wiederholt (24.11.). Die andere Order ist fast immer der eigene
+     * Schutz-Stop, dessen Storno Alpaca angenommen, aber noch nicht
+     * vollzogen hat. Am 24.11. scheiterten so 11 Umkehr-Ausstiege in einem
+     * Morgenlauf; die Positionen blieben einen Tag länger im Depot — ohne
+     * Stop, denn der war ja storniert. Nur für schließende Orders: Ein
+     * abgewiesener Exit hat nichts angelegt, die Wiederholung kann nichts
+     * verdoppeln. Bleibt die Reservierung, scheitert der Exit wie bisher. */
+    let order: Awaited<ReturnType<typeof alpacaOrder>> | null = null;
+    for (let versuch = 0; order === null; versuch += 1) {
+      try {
+        order = await sende();
+      } catch (err) {
+        if (auftrag.schliessend !== true || !stueckeReserviert(err) || versuch >= RESERVIERUNG_WIEDERHOLUNGEN) throw err;
+        logger.info(`routeOrder ${auftrag.symbol} ${auftrag.side}: Stücke noch reserviert — Wiederholung ${versuch + 1}/${RESERVIERUNG_WIEDERHOLUNGEN}`);
+        await new Promise((r) => setTimeout(r, warteOpts.pauseMs ?? RESERVIERUNG_PAUSE_MS));
+      }
+    }
     if (!order.id) return { ausgefuehrt: false, grund: 'keine_order_id' };
 
     const fill = await warteAufFill(
